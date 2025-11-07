@@ -18,6 +18,11 @@ create table filings (
   url text not null
 );
 
+create table cusip_issuer_map (
+  cusip text primary key,
+  issuer_cik text not null
+);
+
 create table positions_13f (
   entity_id uuid references entities,
   cusip text not null,

@@ -1,5 +1,5 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils.js';
 import type { EventStudyInput } from './eventStudy.workflow.js';
 
 const activities = proxyActivities<{
@@ -35,10 +35,24 @@ export interface RotationDetectInput {
   cik: string;
   cusips: string[];
   quarter: string;
+  ticker: string;
+  runKind: 'backfill' | 'daily';
+  quarterStart: string;
+  quarterEnd: string;
 }
 
 export async function rotationDetectWorkflow(input: RotationDetectInput) {
-  const bounds = quarterBounds(input.quarter);
+  const bounds = {
+    start: input.quarterStart,
+    end: input.quarterEnd,
+  };
+  await upsertWorkflowSearchAttributes({
+    ticker: input.ticker,
+    cik: input.cik,
+    runKind: input.runKind,
+    quarterStart: bounds.start,
+    quarterEnd: bounds.end,
+  });
   const anchors = await activities.detectDumpEvents(input.cik, bounds);
   const uptake = await activities.uptakeFromFilings(input.cik, bounds);
   const uhf = await activities.uhf(input.cik, bounds);
@@ -75,6 +89,10 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
         {
           anchorDate: anchor.anchorDate,
           cik: input.cik,
+          ticker: input.ticker,
+          runKind: input.runKind,
+          quarterStart: bounds.start,
+          quarterEnd: bounds.end,
         } satisfies EventStudyInput,
       ],
     });

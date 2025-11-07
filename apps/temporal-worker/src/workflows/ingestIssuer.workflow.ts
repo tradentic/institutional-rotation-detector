@@ -1,5 +1,5 @@
-import { continueAsNew, proxyActivities, startChild, upsertSearchAttributes } from '@temporalio/workflow';
-import { resolveQuarterRange } from './utils.js';
+import { continueAsNew, proxyActivities, startChild } from '@temporalio/workflow';
+import { quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils.js';
 import type { IngestQuarterInput } from './ingestQuarter.workflow.js';
 
 const { resolveCIK } = proxyActivities<{ resolveCIK: (ticker: string) => Promise<{ cik: string; cusips: string[] }> }>(
@@ -22,22 +22,30 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
   const quarterBatch = input.quarterBatch ?? 8;
   const quarters = input.quarters ?? resolveQuarterRange(input.from, input.to);
   const { cik, cusips } = await resolveCIK(input.ticker);
-  await upsertSearchAttributes({
-    ticker: [input.ticker],
-    cik: [cik],
-    run_kind: [input.runKind],
+  const currentBatch = quarters.slice(0, quarterBatch);
+  const remaining = quarters.slice(quarterBatch);
+  const firstQuarter = (currentBatch[0] ?? quarters[0]) ?? null;
+  const bounds = firstQuarter ? quarterBounds(firstQuarter) : { start: input.from, end: input.to };
+  await upsertWorkflowSearchAttributes({
+    ticker: input.ticker,
+    cik,
+    runKind: input.runKind,
+    quarterStart: bounds.start,
+    quarterEnd: bounds.end,
   });
 
-  const remaining = quarters.slice(quarterBatch);
-  const currentBatch = quarters.slice(0, quarterBatch);
-
   for (const quarter of currentBatch) {
+    const quarterBoundsForChild = quarterBounds(quarter);
     const child = await startChild<IngestQuarterInput>('ingestQuarterWorkflow', {
       args: [
         {
           cik,
           cusips,
           quarter,
+          ticker: input.ticker,
+          runKind: input.runKind,
+          quarterStart: quarterBoundsForChild.start,
+          quarterEnd: quarterBoundsForChild.end,
         } satisfies IngestQuarterInput,
       ],
     });

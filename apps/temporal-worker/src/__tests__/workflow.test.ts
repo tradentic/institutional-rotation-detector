@@ -1,9 +1,34 @@
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
+import { isGrpcServiceError } from '@temporalio/common';
+import { status as grpcStatus } from '@grpc/grpc-js';
+import { temporal } from '@temporalio/proto';
 import { IngestIssuerInput } from '../workflows/ingestIssuer.workflow.js';
+import type { TestProbeInput } from '../workflows/testProbe.workflow.js';
 
 let env: TestWorkflowEnvironment;
+
+async function ensureSearchAttributesRegistered() {
+  const { IndexedValueType } = temporal.api.enums.v1;
+  const searchAttributes = {
+    ticker: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    cik: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    run_kind: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    quarter_start: IndexedValueType.INDEXED_VALUE_TYPE_TEXT,
+    quarter_end: IndexedValueType.INDEXED_VALUE_TYPE_TEXT,
+  } as const;
+  try {
+    await env.client.connection.operatorService.addSearchAttributes({
+      namespace: env.client.namespace,
+      searchAttributes,
+    });
+  } catch (err) {
+    if (!isGrpcServiceError(err) || err.code !== grpcStatus.ALREADY_EXISTS) {
+      throw err;
+    }
+  }
+}
 
 const activities = {
   resolveCIK: async () => ({ cik: '0000000000', cusips: ['000000000'] }),
@@ -27,6 +52,7 @@ const activities = {
 describe('Temporal workflows', () => {
   beforeAll(async () => {
     env = await TestWorkflowEnvironment.createTimeSkipping();
+    await ensureSearchAttributesRegistered();
   });
 
   afterAll(async () => {
@@ -60,7 +86,7 @@ describe('Temporal workflows', () => {
               ticker: 'IRBT',
               minPct: 5,
               from: '2020-01-01',
-              to: '2020-12-31',
+              to: '2021-12-31',
               runKind: 'backfill',
               quarterBatch: 2,
             } satisfies IngestIssuerInput,
@@ -78,5 +104,50 @@ describe('Temporal workflows', () => {
       }
     },
     60000
+  );
+
+  test(
+    'search attribute helper exposes applied values',
+    async () => {
+      const worker = await Worker.create({
+        connection: env.nativeConnection,
+        namespace: env.client.namespace,
+        taskQueue: 'test-queue',
+        workflowsPath: new URL('../workflows/index.ts', import.meta.url).pathname,
+        activities,
+      });
+      const workerRun = worker.run();
+      try {
+        const handle = await env.client.workflow.start('testSearchAttributesWorkflow', {
+          taskQueue: 'test-queue',
+          workflowId: 'test-search-attrs',
+          args: [
+            {
+              ticker: 'IRBT',
+              cik: '0001084869',
+              runKind: 'backfill',
+              quarterStart: '2024-01-01',
+              quarterEnd: '2024-03-31',
+            } satisfies TestProbeInput,
+          ],
+        });
+
+        const viaQuery = await handle.query<Record<string, string[]>>('__workflow_search_attributes');
+        expect(viaQuery).toEqual({
+          ticker: ['IRBT'],
+          cik: ['0001084869'],
+          run_kind: ['backfill'],
+          quarter_start: ['2024-01-01'],
+          quarter_end: ['2024-03-31'],
+        });
+
+        const result = await handle.result();
+        expect(result).toEqual(viaQuery);
+      } finally {
+        await worker.shutdown();
+        await workerRun;
+      }
+    },
+    30000
   );
 });

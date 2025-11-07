@@ -1,5 +1,5 @@
-import { proxyActivities, setSearchAttributes, startChild } from '@temporalio/workflow';
-import { quarterBounds } from './utils.js';
+import { proxyActivities, startChild } from '@temporalio/workflow';
+import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
 import type { RotationDetectInput } from './rotationDetect.workflow.js';
 
 const activities = proxyActivities<{
@@ -20,13 +20,23 @@ export interface IngestQuarterInput {
   cik: string;
   cusips: string[];
   quarter: string;
+  ticker: string;
+  runKind: 'backfill' | 'daily';
+  quarterStart: string;
+  quarterEnd: string;
 }
 
 export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
-  const bounds = quarterBounds(input.quarter);
-  await setSearchAttributes({
-    quarter_start: bounds.start,
-    quarter_end: bounds.end,
+  const bounds = {
+    start: input.quarterStart,
+    end: input.quarterEnd,
+  };
+  await upsertWorkflowSearchAttributes({
+    ticker: input.ticker,
+    cik: input.cik,
+    runKind: input.runKind,
+    quarterStart: bounds.start,
+    quarterEnd: bounds.end,
   });
 
   const filings = await activities.fetchFilings(input.cik, bounds, [
@@ -43,7 +53,8 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   await activities.parse13FInfoTables(filings);
   await activities.parse13G13D(filings);
 
-  const months = [bounds.start.slice(0, 7), bounds.end.slice(0, 7)].map((month) => ({ month }));
+  const derivedBounds = quarterBounds(input.quarter);
+  const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
   await activities.fetchMonthly(input.cik, months);
   await activities.fetchDailyHoldings(input.cusips, process.env.ISHARES_FUNDS?.split(',') ?? []);
   await activities.fetchShortInterest(input.cik, [bounds.start]);
@@ -51,12 +62,16 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
 
   const child = await startChild<RotationDetectInput>('rotationDetectWorkflow', {
     args: [
-      {
-        cik: input.cik,
-        cusips: input.cusips,
-        quarter: input.quarter,
-      } satisfies RotationDetectInput,
-    ],
-  });
+        {
+          cik: input.cik,
+          cusips: input.cusips,
+          quarter: input.quarter,
+          ticker: input.ticker,
+          runKind: input.runKind,
+          quarterStart: bounds.start,
+          quarterEnd: bounds.end,
+        } satisfies RotationDetectInput,
+      ],
+    });
   await child.result();
 }
