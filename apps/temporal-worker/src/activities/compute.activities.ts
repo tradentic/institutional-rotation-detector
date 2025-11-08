@@ -21,7 +21,8 @@ function getSupabaseClient() {
   return supabaseFactory();
 }
 
-const DEFAULT_MIN_DUMP = 0.05;
+const DEFAULT_MIN_DUMP_PCT = 0.30;
+const DEFAULT_MIN_DUMP_FLOAT_PCT = 0.01;
 
 function parseDate(input: string) {
   return new Date(`${input}T00:00:00Z`);
@@ -53,6 +54,31 @@ function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value === 'string') return Number(value);
   return 0;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
+function medianAbsoluteDeviation(values: number[]): number {
+  if (values.length === 0) return 0;
+  const med = median(values);
+  const deviations = values.map((v) => Math.abs(v - med));
+  return median(deviations);
+}
+
+function robustZScore(value: number, values: number[]): number {
+  if (values.length < 2) return 0;
+  const med = median(values);
+  const mad = medianAbsoluteDeviation(values);
+  if (mad === 0) return 0;
+  return (value - med) / (mad * 1.4826);
 }
 
 interface PositionAggregate {
@@ -221,13 +247,68 @@ export interface DumpEvent {
   anchorDate: string;
   seller: string;
   delta: number;
+  dumpZ: number;
+  absShares: number;
+}
+
+async function computeDumpZ(
+  entityId: string,
+  cusips: string[],
+  currentDelta: number,
+  currentDate: string
+): Promise<number> {
+  if (cusips.length === 0) return 0;
+  const supabase = getSupabaseClient();
+  const lookbackDate = formatDate(
+    new Date(parseDate(currentDate).getTime() - 1095 * 24 * 60 * 60 * 1000)
+  );
+  const { data: historicalPositions, error } = await supabase
+    .from('positions_13f')
+    .select('entity_id,cusip,asof,shares')
+    .in('cusip', cusips)
+    .eq('entity_id', entityId)
+    .gte('asof', lookbackDate)
+    .lte('asof', currentDate);
+  if (error) throw error;
+  const byQuarter = new Map<string, Map<string, number>>();
+  for (const row of historicalPositions ?? []) {
+    const asof = row.asof;
+    if (!byQuarter.has(asof)) {
+      byQuarter.set(asof, new Map());
+    }
+    const quarterMap = byQuarter.get(asof)!;
+    const existing = quarterMap.get(row.cusip) ?? 0;
+    quarterMap.set(row.cusip, existing + toNumber(row.shares));
+  }
+  const quarters = Array.from(byQuarter.keys()).sort();
+  const deltas: number[] = [];
+  for (let i = 1; i < quarters.length; i++) {
+    const curr = byQuarter.get(quarters[i])!;
+    const prev = byQuarter.get(quarters[i - 1])!;
+    let totalDelta = 0;
+    for (const cusip of cusips) {
+      const currShares = curr.get(cusip) ?? 0;
+      const prevShares = prev.get(cusip) ?? 0;
+      const delta = currShares - prevShares;
+      if (delta < 0) {
+        totalDelta += Math.abs(delta);
+      }
+    }
+    if (totalDelta > 0) {
+      deltas.push(totalDelta);
+    }
+  }
+  if (deltas.length < 12) {
+    return Math.abs(currentDelta) >= DEFAULT_MIN_DUMP_PCT ? 2.0 : 0;
+  }
+  return Math.abs(robustZScore(Math.abs(currentDelta), deltas));
 }
 
 export async function detectDumpEvents(
   cik: string,
   quarter: QuarterBounds
 ): Promise<DumpEvent[]> {
-  const minDumpPct = Number(process.env.MIN_DUMP_PCT ?? '5') / 100 || DEFAULT_MIN_DUMP;
+  const minDumpPct = Number(process.env.MIN_DUMP_PCT ?? '30') / 100 || DEFAULT_MIN_DUMP_PCT;
   const context = await computeDumpContext(cik, quarter);
   const events: DumpEvent[] = [];
   for (const [entityId, deltas] of context.deltasByEntity.entries()) {
@@ -235,11 +316,15 @@ export async function detectDumpEvents(
       if (delta.prevShares <= 0) continue;
       if (delta.date < quarter.start || delta.date > quarter.end) continue;
       if (delta.pctDelta >= -minDumpPct) continue;
+      const absShares = Math.abs(delta.deltaShares);
+      const dumpZ = await computeDumpZ(entityId, context.cusips, delta.pctDelta, delta.date);
       events.push({
         clusterId: randomUUID(),
         anchorDate: delta.date,
         seller: entityId,
         delta: delta.pctDelta,
+        dumpZ,
+        absShares,
       });
     }
   }
@@ -282,11 +367,15 @@ export async function detectDumpEvents(
       }
       const pctDelta = (currValue - prevValue) / prevValue;
       if (row.event_date >= quarter.start && row.event_date <= quarter.end && pctDelta <= -minDumpPct) {
+        const absShares = Math.abs(currValue - prevValue);
+        const dumpZ = await computeDumpZ(holder, context.cusips, pctDelta, row.event_date);
         events.push({
           clusterId: randomUUID(),
           anchorDate: row.event_date,
           seller: holder,
           delta: pctDelta,
+          dumpZ,
+          absShares,
         });
       }
       previous = row;
