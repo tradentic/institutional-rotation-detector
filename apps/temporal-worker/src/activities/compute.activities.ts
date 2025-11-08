@@ -3,6 +3,214 @@ import { createSupabaseClient } from '../lib/supabase.js';
 import { computeRotationScore, ScoreInputs } from '../lib/scoring.js';
 import type { RotationEventRecord } from '../lib/schema.js';
 
+type SupabaseFactory = typeof createSupabaseClient;
+
+let supabaseFactory: SupabaseFactory = createSupabaseClient;
+const dumpContextCache = new Map<string, DumpComputationResult>();
+
+export function __setSupabaseClientFactory(factory: SupabaseFactory) {
+  supabaseFactory = factory;
+  dumpContextCache.clear();
+}
+
+export function __clearDumpContextCache() {
+  dumpContextCache.clear();
+}
+
+function getSupabaseClient() {
+  return supabaseFactory();
+}
+
+const DEFAULT_MIN_DUMP = 0.05;
+
+function parseDate(input: string) {
+  return new Date(`${input}T00:00:00Z`);
+}
+
+function formatDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getUTCDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function shiftQuarterEnd(date: string, quarters: number) {
+  const anchor = parseDate(date);
+  const firstOfNextMonth = Date.UTC(
+    anchor.getUTCFullYear(),
+    anchor.getUTCMonth() + 1 + quarters * 3,
+    1
+  );
+  const result = new Date(firstOfNextMonth - 24 * 60 * 60 * 1000);
+  return formatDate(result);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return Number(value);
+  return 0;
+}
+
+interface PositionAggregate {
+  shares: number;
+  optCall: number;
+  optPut: number;
+}
+
+interface EntityDelta {
+  date: string;
+  deltaShares: number;
+  pctDelta: number;
+  optDelta: number;
+  prevShares: number;
+}
+
+interface DumpComputationResult {
+  cusips: string[];
+  deltasByEntity: Map<string, EntityDelta[]>;
+  totalDumpShares: number;
+  totalPositiveSame: number;
+  totalPositiveNext: number;
+  optionsSame: number;
+  optionsNext: number;
+  prevQuarterEnd: string;
+  nextQuarterEnd: string;
+}
+
+async function computeDumpContext(cik: string, quarter: QuarterBounds): Promise<DumpComputationResult> {
+  const cacheKey = `${cik}:${quarter.start}:${quarter.end}`;
+  const cached = dumpContextCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+  const supabase = getSupabaseClient();
+  const { data: cusipRows, error: cusipError } = await supabase
+    .from('cusip_issuer_map')
+    .select('cusip')
+    .eq('issuer_cik', cik);
+  if (cusipError) throw cusipError;
+  const cusips = (cusipRows ?? []).map((row: any) => row.cusip).filter(Boolean);
+  if (cusips.length === 0) {
+    return {
+      cusips: [],
+      deltasByEntity: new Map(),
+      totalDumpShares: 0,
+      totalPositiveSame: 0,
+      totalPositiveNext: 0,
+      optionsSame: 0,
+      optionsNext: 0,
+      prevQuarterEnd: shiftQuarterEnd(quarter.end, -1),
+      nextQuarterEnd: shiftQuarterEnd(quarter.end, 1),
+    };
+  }
+
+  const prevQuarterEnd = shiftQuarterEnd(quarter.end, -1);
+  const nextQuarterEnd = shiftQuarterEnd(quarter.end, 1);
+
+  const { data: positionRows, error: positionError } = await supabase
+    .from('positions_13f')
+    .select('entity_id,cusip,asof,shares,opt_put_shares,opt_call_shares')
+    .in('cusip', cusips)
+    .gte('asof', prevQuarterEnd)
+    .lte('asof', nextQuarterEnd);
+  if (positionError) throw positionError;
+  const aggregates = new Map<string, Map<string, PositionAggregate>>();
+  for (const row of positionRows ?? []) {
+    const entityId = row.entity_id;
+    if (!entityId) continue;
+    const asof = row.asof;
+    if (!asof) continue;
+    let entityMap = aggregates.get(entityId);
+    if (!entityMap) {
+      entityMap = new Map();
+      aggregates.set(entityId, entityMap);
+    }
+    const existing = entityMap.get(asof) ?? { shares: 0, optCall: 0, optPut: 0 };
+    existing.shares += toNumber(row.shares);
+    existing.optCall += toNumber(row.opt_call_shares);
+    existing.optPut += toNumber(row.opt_put_shares);
+    entityMap.set(asof, existing);
+  }
+
+  const deltasByEntity = new Map<string, EntityDelta[]>();
+  let totalDumpShares = 0;
+  let totalPositiveSame = 0;
+  let totalPositiveNext = 0;
+  let optionsSame = 0;
+  let optionsNext = 0;
+  const quarterStart = quarter.start;
+  const quarterEnd = quarter.end;
+
+  for (const [entityId, snapshots] of aggregates.entries()) {
+    const entries = Array.from(snapshots.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const deltas: EntityDelta[] = [];
+    for (let i = 1; i < entries.length; i++) {
+      const [date, current] = entries[i];
+      const [, previous] = entries[i - 1];
+      const prevShares = previous.shares;
+      if (prevShares === 0) {
+        deltas.push({
+          date,
+          deltaShares: current.shares - previous.shares,
+          pctDelta: 0,
+          optDelta:
+            current.optCall - current.optPut - (previous.optCall - previous.optPut),
+          prevShares,
+        });
+        continue;
+      }
+      const deltaShares = current.shares - previous.shares;
+      const pctDelta = deltaShares / prevShares;
+      const optDelta =
+        current.optCall - current.optPut - (previous.optCall - previous.optPut);
+      const delta: EntityDelta = {
+        date,
+        deltaShares,
+        pctDelta,
+        optDelta,
+        prevShares,
+      };
+      deltas.push(delta);
+      if (date >= quarterStart && date <= quarterEnd) {
+        if (deltaShares < 0) {
+          totalDumpShares += Math.abs(deltaShares);
+        } else if (deltaShares > 0) {
+          totalPositiveSame += deltaShares;
+        }
+        if (optDelta > 0) {
+          optionsSame += optDelta;
+        }
+      } else if (date > quarterEnd && date <= nextQuarterEnd) {
+        if (deltaShares > 0) {
+          totalPositiveNext += deltaShares;
+        }
+        if (optDelta > 0) {
+          optionsNext += optDelta;
+        }
+      }
+    }
+    deltasByEntity.set(entityId, deltas);
+  }
+
+  const result: DumpComputationResult = {
+    cusips,
+    deltasByEntity,
+    totalDumpShares,
+    totalPositiveSame,
+    totalPositiveNext,
+    optionsSame,
+    optionsNext,
+    prevQuarterEnd,
+    nextQuarterEnd,
+  };
+  dumpContextCache.set(cacheKey, result);
+  return result;
+}
+
 export interface QuarterBounds {
   start: string;
   end: string;
@@ -19,30 +227,180 @@ export async function detectDumpEvents(
   cik: string,
   quarter: QuarterBounds
 ): Promise<DumpEvent[]> {
-  return [
-    {
-      clusterId: randomUUID(),
-      anchorDate: quarter.end,
-      seller: cik,
-      delta: -0.35,
-    },
-  ];
+  const minDumpPct = Number(process.env.MIN_DUMP_PCT ?? '5') / 100 || DEFAULT_MIN_DUMP;
+  const context = await computeDumpContext(cik, quarter);
+  const events: DumpEvent[] = [];
+  for (const [entityId, deltas] of context.deltasByEntity.entries()) {
+    for (const delta of deltas) {
+      if (delta.prevShares <= 0) continue;
+      if (delta.date < quarter.start || delta.date > quarter.end) continue;
+      if (delta.pctDelta >= -minDumpPct) continue;
+      events.push({
+        clusterId: randomUUID(),
+        anchorDate: delta.date,
+        seller: entityId,
+        delta: delta.pctDelta,
+      });
+    }
+  }
+
+  const supabase = getSupabaseClient();
+  const boWindowStart = formatDate(
+    new Date(parseDate(quarter.start).getTime() - 190 * 24 * 60 * 60 * 1000)
+  );
+  const { data: boRows, error: boError } = await supabase
+    .from('bo_snapshots')
+    .select('holder_cik,event_date,shares_est,pct_of_class')
+    .eq('issuer_cik', cik)
+    .gte('event_date', boWindowStart)
+    .lte('event_date', quarter.end);
+  if (boError) throw boError;
+
+  const boByHolder = new Map<string, any[]>();
+  for (const row of boRows ?? []) {
+    const holder = row.holder_cik;
+    if (!holder) continue;
+    if (!boByHolder.has(holder)) {
+      boByHolder.set(holder, []);
+    }
+    boByHolder.get(holder)!.push(row);
+  }
+
+  for (const [holder, rows] of boByHolder.entries()) {
+    rows.sort((a, b) => a.event_date.localeCompare(b.event_date));
+    let previous: any | null = null;
+    for (const row of rows) {
+      if (!previous) {
+        previous = row;
+        continue;
+      }
+      const prevValue = toNumber(previous.shares_est ?? previous.pct_of_class);
+      const currValue = toNumber(row.shares_est ?? row.pct_of_class);
+      if (prevValue <= 0) {
+        previous = row;
+        continue;
+      }
+      const pctDelta = (currValue - prevValue) / prevValue;
+      if (row.event_date >= quarter.start && row.event_date <= quarter.end && pctDelta <= -minDumpPct) {
+        events.push({
+          clusterId: randomUUID(),
+          anchorDate: row.event_date,
+          seller: holder,
+          delta: pctDelta,
+        });
+      }
+      previous = row;
+    }
+  }
+
+  return events;
 }
 
-export async function uptakeFromFilings() {
-  return { uSame: 0.5, uNext: 0.3 };
+export async function uptakeFromFilings(cik: string, quarter: QuarterBounds) {
+  const context = await computeDumpContext(cik, quarter);
+  if (context.totalDumpShares === 0) {
+    return { uSame: 0, uNext: 0 };
+  }
+  const uSame = clamp(context.totalPositiveSame / context.totalDumpShares, 0, 1);
+  const uNext = clamp(context.totalPositiveNext / context.totalDumpShares, 0, 1);
+  return { uSame, uNext };
 }
 
-export async function uhf() {
-  return { uhfSame: 0.4, uhfNext: 0.2 };
+export async function uhf(cik: string, quarter: QuarterBounds) {
+  const context = await computeDumpContext(cik, quarter);
+  if (context.totalDumpShares === 0 || context.cusips.length === 0) {
+    return { uhfSame: 0, uhfNext: 0 };
+  }
+  const supabase = getSupabaseClient();
+  const baselineStart = formatDate(
+    new Date(parseDate(quarter.start).getTime() - 31 * 24 * 60 * 60 * 1000)
+  );
+  const { data: uhfRows, error: uhfError } = await supabase
+    .from('uhf_positions')
+    .select('holder_id,cusip,asof,shares')
+    .in('cusip', context.cusips)
+    .gte('asof', baselineStart)
+    .lte('asof', context.nextQuarterEnd);
+  if (uhfError) throw uhfError;
+  const series = new Map<string, any[]>();
+  for (const row of uhfRows ?? []) {
+    const holder = row.holder_id;
+    if (!holder) continue;
+    if (!series.has(holder)) {
+      series.set(holder, []);
+    }
+    series.get(holder)!.push(row);
+  }
+  let same = 0;
+  let next = 0;
+  for (const rows of series.values()) {
+    rows.sort((a, b) => a.asof.localeCompare(b.asof));
+    for (let i = 1; i < rows.length; i++) {
+      const current = rows[i];
+      const previous = rows[i - 1];
+      const delta = toNumber(current.shares) - toNumber(previous.shares);
+      const date = current.asof;
+      if (delta <= 0) continue;
+      if (date >= quarter.start && date <= quarter.end) {
+        same += delta;
+      } else if (date > quarter.end && date <= context.nextQuarterEnd) {
+        next += delta;
+      }
+    }
+  }
+  return {
+    uhfSame: clamp(same / context.totalDumpShares, 0, 1),
+    uhfNext: clamp(next / context.totalDumpShares, 0, 1),
+  };
 }
 
-export async function optionsOverlay() {
-  return { optSame: 0.1, optNext: 0.05 };
+export async function optionsOverlay(cik: string, quarter: QuarterBounds) {
+  const context = await computeDumpContext(cik, quarter);
+  if (context.totalDumpShares === 0) {
+    return { optSame: 0, optNext: 0 };
+  }
+  return {
+    optSame: clamp(context.optionsSame / context.totalDumpShares, 0, 1),
+    optNext: clamp(context.optionsNext / context.totalDumpShares, 0, 1),
+  };
 }
 
-export async function shortReliefV2() {
-  return 0.25;
+export async function shortReliefV2(cik: string, quarter: QuarterBounds) {
+  const context = await computeDumpContext(cik, quarter);
+  const supabase = getSupabaseClient();
+  const { data: rows, error } = await supabase
+    .from('short_interest')
+    .select('settle_date,short_shares')
+    .eq('cik', cik)
+    .gte('settle_date', context.prevQuarterEnd)
+    .lte('settle_date', context.nextQuarterEnd);
+  if (error) throw error;
+  const sorted = [...(rows ?? [])].sort((a, b) => a.settle_date.localeCompare(b.settle_date));
+  const anchorDate = quarter.end;
+  let before: any | null = null;
+  let after: any | null = null;
+  for (const row of sorted) {
+    if (row.settle_date <= anchorDate) {
+      if (!before || row.settle_date > before.settle_date) {
+        before = row;
+      }
+    }
+    if (row.settle_date >= anchorDate) {
+      if (!after || row.settle_date < after.settle_date) {
+        after = row;
+      }
+    }
+  }
+  if (!before || !after) {
+    return 0;
+  }
+  const beforeShort = Math.max(toNumber(before.short_shares), 0);
+  const afterShort = Math.max(toNumber(after.short_shares), 0);
+  if (beforeShort <= 0) {
+    return 0;
+  }
+  const relief = Math.max(beforeShort - afterShort, 0);
+  return clamp(relief / beforeShort, 0, 1);
 }
 
 export async function scoreV4_1(
@@ -50,7 +408,7 @@ export async function scoreV4_1(
   anchor: DumpEvent,
   inputs: Omit<ScoreInputs, 'eow'> & { eow: boolean }
 ): Promise<RotationEventRecord> {
-  const supabase = createSupabaseClient();
+  const supabase = getSupabaseClient();
   const result = computeRotationScore(inputs);
   const event: RotationEventRecord = {
     cluster_id: anchor.clusterId,
@@ -77,11 +435,60 @@ export async function scoreV4_1(
   return event;
 }
 
-export async function eventStudy(anchorDate: string) {
+export async function eventStudy(anchorDate: string, cik: string) {
+  const supabase = getSupabaseClient();
+  const windowStart = formatDate(
+    new Date(parseDate(anchorDate).getTime() - 10 * 24 * 60 * 60 * 1000)
+  );
+  const windowEnd = formatDate(
+    new Date(parseDate(anchorDate).getTime() + 120 * 24 * 60 * 60 * 1000)
+  );
+  const { data, error } = await supabase
+    .from('daily_returns')
+    .select('trade_date,return,benchmark_return,cik')
+    .eq('cik', cik)
+    .gte('trade_date', windowStart)
+    .lte('trade_date', windowEnd);
+  if (error) throw error;
+  const rows = (data ?? []).filter((row: any) => row.cik).sort((a: any, b: any) => a.trade_date.localeCompare(b.trade_date));
+  const abnormal = rows.map((row: any) => ({
+    date: row.trade_date,
+    value: toNumber(row.return) - toNumber(row.benchmark_return),
+  }));
+  const anchorIndex = abnormal.findIndex((row) => row.date >= anchorDate);
+  if (anchorIndex === -1) {
+    return { anchorDate, car: 0, ttPlus20: 0, maxRet: 0 };
+  }
+  const startIndex = Math.max(0, anchorIndex - 5);
+  const endIndex = Math.min(abnormal.length - 1, anchorIndex + 20);
+  let car = 0;
+  for (let i = startIndex; i <= endIndex; i++) {
+    car += abnormal[i].value;
+  }
+  let ttPlus20 = 0;
+  if (anchorIndex + 20 < abnormal.length) {
+    const plus20Date = abnormal[anchorIndex + 20].date;
+    ttPlus20 = Math.max(
+      0,
+      Math.round(
+        (parseDate(plus20Date).getTime() - parseDate(anchorDate).getTime()) /
+          (24 * 60 * 60 * 1000)
+      )
+    );
+  }
+  let running = 0;
+  let maxRet = 0;
+  const maxIndex = Math.min(abnormal.length, anchorIndex + 65);
+  for (let i = anchorIndex; i < maxIndex; i++) {
+    running += abnormal[i].value;
+    if (running > maxRet) {
+      maxRet = running;
+    }
+  }
   return {
     anchorDate,
-    car: 0,
-    ttPlus20: 20,
-    maxRet: 0,
+    car,
+    ttPlus20,
+    maxRet,
   };
 }
