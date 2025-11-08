@@ -155,6 +155,27 @@ curl "http://localhost:3000/api/events?ticker=AAPL"
 - `t_to_plus20_days` - Days to reach +20 days
 - `max_ret_w13` - Maximum return in week 13
 
+**Manual Check:**
+
+1. Seed a test issuer event:
+
+   ```bash
+   psql "$DATABASE_URL" <<'SQL'
+   insert into rotation_events (cluster_id, issuer_cik, r_score)
+   values ('00000000-0000-0000-0000-000000000123', '0000000000', 12.34)
+   on conflict (cluster_id) do nothing;
+   SQL
+   ```
+
+2. Verify the API returns the stored row:
+
+   ```bash
+   curl -s "http://localhost:3000/api/events?cik=0000000000" \
+     | jq '.[] | select(.cluster_id == "00000000-0000-0000-0000-000000000123")'
+   ```
+
+   The command should print the seeded event, confirming the handler surfaces existing `rotation_events` data.
+
 **Status Codes:**
 - `200` - Success
 - `400` - Missing identifier (ticker or cik)

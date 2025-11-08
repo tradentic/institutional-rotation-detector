@@ -2,20 +2,27 @@ import { createSupabaseClient } from '../../temporal-worker/src/lib/supabase.js'
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const ticker = url.searchParams.get('ticker');
+  const tickerParam = url.searchParams.get('ticker');
   const cikParam = url.searchParams.get('cik');
-  if (!ticker && !cikParam) {
+  const ticker = tickerParam?.trim();
+  const issuerCikParam = cikParam?.trim();
+  if (!ticker && !issuerCikParam) {
     return new Response('Missing identifier', { status: 400 });
   }
   const supabase = createSupabaseClient();
-  let issuerCik: string | null = cikParam;
+  let issuerCik: string | null = issuerCikParam ?? null;
   if (!issuerCik && ticker) {
+    const normalizedTicker = ticker.toUpperCase();
     const { data: issuer, error: issuerError } = await supabase
-      .from('issuers')
+      .from('entities')
       .select('cik')
-      .eq('ticker', ticker.toUpperCase())
-      .single();
-    if (issuerError || !issuer) {
+      .eq('kind', 'issuer')
+      .eq('ticker', normalizedTicker)
+      .maybeSingle();
+    if (issuerError) {
+      return new Response(issuerError.message, { status: 500 });
+    }
+    if (!issuer) {
       return new Response('Unknown ticker', { status: 404 });
     }
     issuerCik = issuer.cik;
