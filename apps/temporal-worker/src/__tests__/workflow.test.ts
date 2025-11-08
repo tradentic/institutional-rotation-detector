@@ -50,7 +50,7 @@ const activities = {
   optionsOverlay: async () => ({ optSame: 0.1, optNext: 0.05 }),
   shortReliefV2: async () => 0.2,
   scoreV4_1: async () => ({}),
-  buildEdges: async () => ({}),
+  buildEdges: async (_seller: any[], _buyer: any[], _period: any, _root: string) => ({}),
   eventStudy: async () => ({}),
 };
 

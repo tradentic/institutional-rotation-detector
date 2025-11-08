@@ -21,7 +21,8 @@ export interface SankeyResult {
 export async function buildEdges(
   sellerFlows: FlowDelta[],
   buyerFlows: FlowDelta[],
-  period: { start: string; end: string }
+  period: { start: string; end: string },
+  rootIssuerCik: string | null
 ): Promise<SankeyResult> {
   const totalSell = sellerFlows.reduce((sum, s) => sum + Math.abs(s.equityDelta), 0);
   const totalBuy = buyerFlows.reduce((sum, s) => sum + s.equityDelta, 0);
@@ -77,6 +78,7 @@ export async function buildEdges(
         options_shares: Math.round(link.options),
         confidence: 0.8,
         notes: remainderId === link.target ? 'Other Absorption' : null,
+        root_issuer_cik: rootIssuerCik,
       },
       { onConflict: 'cluster_id,seller_id,buyer_id,cusip' }
     );
