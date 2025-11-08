@@ -26,9 +26,9 @@ major_version = 15
 
 [db.seed]
 # If enabled, you can use `supabase db reset` to run seed files
-enabled = true
+enabled = false
 # Paths to SQL seed files. Files are executed in alphabetical order.
-sql_paths = ['./seed']
+# sql_paths = ['./seed']
 
 [db.pooler]
 enabled = false
