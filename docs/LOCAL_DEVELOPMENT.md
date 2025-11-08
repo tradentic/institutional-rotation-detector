@@ -180,7 +180,7 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### Apply Database Migrations
 
-Migrations are stored in `db/migrations/` and accessed by Supabase CLI via symlink. Seed data is configured in `supabase/config.toml` to load from `db/seed/`.
+Both migrations and seed data paths are configured in `supabase/config.toml` to load from the `db/` directory.
 
 **Reset database with all migrations:**
 
@@ -190,8 +190,8 @@ supabase db reset
 
 This will:
 - Drop the database
-- Apply all migrations from `db/migrations/` in order (via `supabase/migrations` symlink)
-- Run any seed files from `db/seed/` in alphabetical order (via `sql_paths` config)
+- Apply all migrations from `db/migrations/` in order (configured via `[db.migrations]` `sql_paths`)
+- Run any seed files from `db/seed/` in alphabetical order (configured via `[db.seed]` `sql_paths`)
 
 ### Verify Database Setup
 
@@ -650,7 +650,7 @@ nodemon --watch src --exec "npm run build && node dist/worker.js"
 # Using Supabase CLI (recommended)
 supabase migration new add_new_table
 
-# This creates a timestamped file in db/migrations/ (via supabase/migrations symlink)
+# This creates a timestamped file in db/migrations/ (configured in supabase/config.toml)
 # Edit the generated file, then apply all migrations:
 supabase db reset
 ```

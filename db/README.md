@@ -24,9 +24,9 @@ db/
     └── .gitkeep
 ```
 
-**Note:** For local development with Supabase:
-- `supabase/migrations` is symlinked to `db/migrations/` (Supabase CLI requires migrations in this location)
-- Seed data is configured via `sql_paths` in `supabase/config.toml` pointing to `db/seed/`
+**Note:** For local development with Supabase, both migrations and seed data are configured in `supabase/config.toml`:
+- Migrations: `[db.migrations]` `sql_paths` points to `../db/migrations`
+- Seed data: `[db.seed]` `sql_paths` points to `../db/seed`
 
 ## Migrations
 
@@ -48,8 +48,8 @@ Migrations are numbered and must be applied in order.
 # Reset database with all migrations and seed data
 supabase db reset
 
-# Note: supabase/migrations is symlinked to db/migrations/
-# Migrations are applied in order, followed by any files in db/seed/
+# Note: Migration and seed paths are configured in supabase/config.toml
+# Migrations from db/migrations/ are applied in order, followed by seed files from db/seed/
 ```
 
 **Production or Direct PostgreSQL:**

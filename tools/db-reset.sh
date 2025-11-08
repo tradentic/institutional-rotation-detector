@@ -13,8 +13,9 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 # Reset database with migrations and seed data
-# Note: Migrations via symlink (supabase/migrations -> db/migrations)
-#       Seed data via sql_paths config in supabase/config.toml
+# Note: Both migrations and seed data paths configured in supabase/config.toml
+#       Migrations: [db.migrations] sql_paths = ['../db/migrations']
+#       Seed data: [db.seed] sql_paths = ['../db/seed']
 echo "Resetting database with migrations from db/migrations/..."
 if [ -d "db/seed" ] && [ "$(ls -A db/seed)" ]; then
   echo "Seed data from db/seed/ will also be applied..."
