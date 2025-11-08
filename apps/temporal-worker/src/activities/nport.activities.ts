@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase.js';
 import { createSecClient } from '../lib/secClient.js';
 
-type Month = { month: string };
+export type Month = { month: string };
 
 const AVAILABILITY_LAG_DAYS = Number(process.env.NPORT_AVAILABILITY_LAG_DAYS ?? '60');
 const HOLDINGS_CHUNK_SIZE = 500;
@@ -274,4 +274,93 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
   }
 
   return totalHoldings;
+}
+
+function formatMonth(date: Date): string {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function incrementMonth(month: string, delta = 1): string | null {
+  const parsed = parseMonth(month);
+  if (!parsed) return null;
+  parsed.setUTCMonth(parsed.getUTCMonth() + delta);
+  return formatMonth(parsed);
+}
+
+function findFirstAvailableMonth(now: Date): string | null {
+  let probe = formatMonth(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)));
+  for (let i = 0; i < 24; i += 1) {
+    if (isMonthAvailable(probe, now, AVAILABILITY_LAG_DAYS)) {
+      return probe;
+    }
+    const next = incrementMonth(probe, -1);
+    if (!next) {
+      break;
+    }
+    probe = next;
+  }
+  return null;
+}
+
+export interface NportMonthlyPlanInput {
+  lastMonth?: string | null;
+  now: string;
+  maxMonths?: number;
+}
+
+export interface NportMonthlyPlanResult {
+  months: Month[];
+  ciks: string[];
+  nextCursor: string | null;
+}
+
+export async function planNportMonthlySnapshots(
+  input: NportMonthlyPlanInput
+): Promise<NportMonthlyPlanResult> {
+  const supabase = createSupabaseClient();
+  const nowDate = new Date(`${input.now}T00:00:00Z`);
+  if (Number.isNaN(nowDate.getTime())) {
+    throw new Error(`Invalid reference date: ${input.now}`);
+  }
+
+  const { data, error } = await supabase
+    .from('entities')
+    .select('cik,kind')
+    .in('kind', ['fund', 'etf'])
+    .not('cik', 'is', null)
+    .order('cik', { ascending: true });
+  if (error) {
+    throw error;
+  }
+
+  const ciks = Array.from(
+    new Set(
+      ((data ?? []) as { cik: string | null }[])
+        .map((row) => (row.cik ? normalizeCik(row.cik) : null))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  if (ciks.length === 0) {
+    return { months: [], ciks: [], nextCursor: input.lastMonth ?? null };
+  }
+
+  const maxMonths = Math.max(1, input.maxMonths ?? 1);
+  const months: Month[] = [];
+  let candidate = input.lastMonth ? incrementMonth(input.lastMonth) : findFirstAvailableMonth(nowDate);
+  let guard = 0;
+  while (candidate && months.length < maxMonths) {
+    if (!isMonthAvailable(candidate, nowDate, AVAILABILITY_LAG_DAYS)) {
+      break;
+    }
+    months.push({ month: candidate });
+    candidate = incrementMonth(candidate);
+    guard += 1;
+    if (guard > 48) {
+      break;
+    }
+  }
+
+  const nextCursor = months.length > 0 ? months[months.length - 1]!.month : input.lastMonth ?? null;
+  return { months, ciks, nextCursor };
 }

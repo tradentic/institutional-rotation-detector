@@ -165,3 +165,73 @@ export async function fetchDailyHoldings(
 
   return totalUpserted;
 }
+
+function normalizeDateInput(asOf: string): string {
+  const parsed = new Date(`${asOf}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid as-of date: ${asOf}`);
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
+function addOneDay(asOf: string): string {
+  const parsed = new Date(`${asOf}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+export interface EtfDailyPlanInput {
+  asOf: string;
+  funds: string[];
+}
+
+export interface EtfDailyPlanResult {
+  asOf: string;
+  funds: string[];
+  cusips: string[];
+  nextAsOf: string;
+}
+
+export async function planEtfDailySnapshots(
+  input: EtfDailyPlanInput
+): Promise<EtfDailyPlanResult> {
+  const supabase = createSupabaseClient();
+  const asOf = normalizeDateInput(input.asOf);
+  const funds = input.funds.map((fund) => fund.toUpperCase());
+
+  const { data: cusipRows, error: cusipError } = await supabase.from('cusip_issuer_map').select('cusip');
+  if (cusipError) {
+    throw cusipError;
+  }
+
+  const cusips = Array.from(
+    new Set(
+      ((cusipRows ?? []) as { cusip: string | null }[])
+        .map((row) => (row.cusip ? normalizeCusip(row.cusip) : null))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  if (cusips.length === 0) {
+    return { asOf, funds: [], cusips: [], nextAsOf: addOneDay(asOf) };
+  }
+
+  if (funds.length === 0) {
+    return { asOf, funds: [], cusips, nextAsOf: addOneDay(asOf) };
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from('uhf_positions')
+    .select('holder_id')
+    .eq('source', 'ETF')
+    .eq('asof', asOf)
+    .in('holder_id', funds);
+  if (existingError) {
+    throw existingError;
+  }
+
+  const completed = new Set(((existing ?? []) as { holder_id: string }[]).map((row) => row.holder_id));
+  const pendingFunds = funds.filter((fund) => !completed.has(fund));
+
+  return { asOf, funds: pendingFunds, cusips, nextAsOf: addOneDay(asOf) };
+}

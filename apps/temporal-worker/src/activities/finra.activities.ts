@@ -257,3 +257,104 @@ export async function fetchATSWeekly(
   }
   return upserts;
 }
+
+function parseDate(value: string): Date {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date: ${value}`);
+  }
+  return parsed;
+}
+
+function formatDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function endOfMonth(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0));
+}
+
+function nextSettleAfter(date: Date): Date {
+  const day = date.getUTCDate();
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  if (day < 15) {
+    return new Date(Date.UTC(year, month, 15));
+  }
+  const end = endOfMonth(date);
+  if (date.getTime() < end.getTime()) {
+    return end;
+  }
+  return new Date(Date.UTC(year, month + 1, 15));
+}
+
+function previousSettleOnOrBefore(date: Date): Date {
+  const end = endOfMonth(date);
+  if (date.getTime() >= end.getTime()) {
+    return end;
+  }
+  const fifteenth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 15));
+  if (date.getTime() >= fifteenth.getTime()) {
+    return fifteenth;
+  }
+  const prevEnd = endOfMonth(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 0)));
+  return prevEnd;
+}
+
+export interface FinraShortPlanInput {
+  lastSettle?: string | null;
+  now: string;
+  windowSize?: number;
+}
+
+export interface FinraShortPlanResult {
+  settleDates: string[];
+  ciks: string[];
+  nextCursor: string | null;
+}
+
+export async function planFinraShortInterest(
+  input: FinraShortPlanInput
+): Promise<FinraShortPlanResult> {
+  const supabase = createSupabaseClient();
+  const nowDate = parseDate(input.now);
+
+  const { data, error } = await supabase.from('cusip_issuer_map').select('issuer_cik');
+  if (error) {
+    throw error;
+  }
+
+  const ciks = Array.from(
+    new Set(
+      ((data ?? []) as { issuer_cik: string | null }[])
+        .map((row) => normalizeIdentifier(row.issuer_cik))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  if (ciks.length === 0) {
+    return { settleDates: [], ciks: [], nextCursor: input.lastSettle ?? null };
+  }
+
+  const windowSize = Math.max(1, input.windowSize ?? 1);
+  const settleDates: string[] = [];
+  let candidate = input.lastSettle ? nextSettleAfter(parseDate(input.lastSettle)) : previousSettleOnOrBefore(nowDate);
+  let guard = 0;
+  while (candidate && settleDates.length < windowSize) {
+    if (candidate.getTime() > nowDate.getTime()) {
+      break;
+    }
+    const formatted = formatDate(candidate);
+    if (!settleDates.includes(formatted)) {
+      settleDates.push(formatted);
+    }
+    candidate = nextSettleAfter(candidate);
+    guard += 1;
+    if (guard > 24) {
+      break;
+    }
+  }
+
+  const nextCursor = settleDates.length > 0 ? settleDates[settleDates.length - 1] : input.lastSettle ?? null;
+  return { settleDates, ciks, nextCursor };
+}

@@ -417,3 +417,57 @@ export async function parse13G13D(accessions: FilingRecord[]) {
   }
   return accessions.length;
 }
+
+export interface EdgarSubmissionWindowInput {
+  windowStart: string;
+  windowEnd: string;
+  forms: string[];
+  batchSize: number;
+}
+
+export interface EdgarSubmissionWindowResult {
+  nextCursor: string;
+  processed: number;
+  accessions: string[];
+}
+
+function normalizeIsoDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid ISO date: ${value}`);
+  }
+  return date.toISOString();
+}
+
+export async function recordEdgarSubmissionWindow(
+  input: EdgarSubmissionWindowInput
+): Promise<EdgarSubmissionWindowResult> {
+  const supabase = createSupabaseClient();
+  const windowStart = normalizeIsoDate(input.windowStart);
+  const windowEnd = normalizeIsoDate(input.windowEnd);
+
+  if (input.forms.length === 0) {
+    return { nextCursor: windowEnd, processed: 0, accessions: [] };
+  }
+
+  const query = supabase
+    .from('filings')
+    .select('accession,filed_date', { head: false })
+    .in('form', input.forms)
+    .gte('filed_date', windowStart)
+    .lte('filed_date', windowEnd)
+    .order('filed_date', { ascending: true })
+    .limit(input.batchSize);
+
+  const { data, error } = await query;
+  if (error) {
+    throw error;
+  }
+
+  const rows = (data as { accession: string; filed_date: string }[] | null) ?? [];
+  const processed = rows.length;
+  const nextCursor = processed > 0 ? new Date(rows[processed - 1]!.filed_date).toISOString() : windowEnd;
+  const accessions = rows.map((row) => row.accession);
+
+  return { nextCursor, processed, accessions };
+}
