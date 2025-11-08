@@ -13,7 +13,6 @@
       "pnpmVersion": "10.17.1"
     }
   },
-  "updateContentCommand": "pnpm install",
   "postCreateCommand": ".devcontainer/scripts/post-create.sh",
   "postStartCommand": ".devcontainer/scripts/post-start.sh",
   "forwardPorts": [3000, 3100, 54321, 54322, 54323, 54324, 54326, 6379],
