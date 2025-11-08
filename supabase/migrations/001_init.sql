@@ -15,7 +15,15 @@ create table filings (
   filed_date date not null,
   period_end date,
   event_date date,
-  url text not null
+  url text not null,
+  cadence text check (
+    cadence is null
+    or cadence in ('annual', 'semiannual', 'quarterly', 'monthly', 'event', 'adhoc')
+  ),
+  expected_publish_at timestamptz,
+  published_at timestamptz,
+  is_amendment boolean not null default false,
+  amendment_of_accession text references filings(accession)
 );
 
 create table cusip_issuer_map (
@@ -88,6 +96,7 @@ create table rotation_edges (
   options_shares bigint default 0,
   confidence numeric check (confidence between 0 and 1) default 0.8,
   notes text,
+  root_issuer_cik text,
   primary key (cluster_id, seller_id, buyer_id, cusip)
 );
 
@@ -109,6 +118,15 @@ create table rotation_events (
   car_m5_p20 numeric,
   t_to_plus20_days int,
   max_ret_w13 numeric
+);
+
+create table rotation_event_provenance (
+  cluster_id uuid references rotation_events(cluster_id) on delete cascade,
+  accession text references filings(accession),
+  role text check (role in ('anchor', 'seller', 'buyer', 'uhf', 'context')) not null,
+  entity_id uuid references entities,
+  contribution_weight numeric default 0,
+  primary key (cluster_id, accession, role)
 );
 
 create table filing_chunks (
