@@ -180,29 +180,18 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### Apply Database Migrations
 
-**Method 1: Using Supabase CLI (Recommended)**
+The `supabase/migrations` directory is symlinked to `db/migrations`, so Supabase CLI automatically uses our project migrations.
 
-First, link migrations to Supabase:
+**Reset database with all migrations:**
 
 ```bash
-# Copy migrations to Supabase directory
-cp db/migrations/001_init.sql supabase/migrations/20240101000001_init.sql
-cp db/migrations/002_indexes.sql supabase/migrations/20240101000002_indexes.sql
-cp db/migrations/010_graphrag_init.sql supabase/migrations/20240101000010_graphrag_init.sql
-cp db/migrations/011_graphrag_indexes.sql supabase/migrations/20240101000011_graphrag_indexes.sql
-
-# Reset database with migrations
 supabase db reset
 ```
 
-**Method 2: Using psql Directly**
-
-```bash
-psql postgresql://postgres:postgres@localhost:54322/postgres -f db/migrations/001_init.sql
-psql postgresql://postgres:postgres@localhost:54322/postgres -f db/migrations/002_indexes.sql
-psql postgresql://postgres:postgres@localhost:54322/postgres -f db/migrations/010_graphrag_init.sql
-psql postgresql://postgres:postgres@localhost:54322/postgres -f db/migrations/011_graphrag_indexes.sql
-```
+This will:
+- Drop the database
+- Apply all migrations from `db/migrations/` in order
+- Run any seed files from `db/seed/` in alphabetical order
 
 ### Verify Database Setup
 
@@ -386,10 +375,10 @@ OPENAI_API_KEY=sk-your-actual-openai-api-key-here
 # ⚠️ MUST CHANGE: Add your SEC User-Agent
 SEC_USER_AGENT=YourName your.email@domain.com
 
-# These should work as-is for local development:
+# Copy these from `supabase start` output:
 SUPABASE_URL=http://localhost:54321
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+SUPABASE_ANON_KEY=<your_anon_key_from_supabase_start_output>
+SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key_from_supabase_start_output>
 DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres
 TEMPORAL_NAMESPACE=default
 TEMPORAL_TASK_QUEUE=rotation-detector
@@ -658,27 +647,27 @@ nodemon --watch src --exec "npm run build && node dist/worker.js"
 **Create new migration:**
 
 ```bash
-# Using Supabase CLI
+# Using Supabase CLI (recommended)
 supabase migration new add_new_table
 
-# Edit the generated file in supabase/migrations/
-# Then apply
+# This creates a timestamped file in supabase/migrations/ (which is symlinked to db/migrations/)
+# Edit the generated file, then apply all migrations:
 supabase db reset
 ```
 
-**Or manually:**
+**Seed Data:**
+
+Place SQL seed files in `db/seed/`. They'll be executed alphabetically after migrations when running `supabase db reset`.
 
 ```bash
-# Create migration file
-cat > db/migrations/012_my_changes.sql << 'EOF'
-CREATE TABLE my_new_table (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  name text NOT NULL
-);
+# Example: Create a seed file
+cat > db/seed/01_example_data.sql << 'EOF'
+INSERT INTO entities (cik, name, entity_type) VALUES
+  ('0001234567', 'Example Fund', 'institutional_investor');
 EOF
 
-# Apply
-psql postgresql://postgres:postgres@localhost:54322/postgres -f db/migrations/012_my_changes.sql
+# Apply migrations and seed data
+supabase db reset
 ```
 
 ---

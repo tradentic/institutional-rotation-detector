@@ -3,7 +3,7 @@ set -e
 
 echo "🗄️  Resetting database..."
 echo ""
-echo "⚠️  WARNING: This will delete all data!"
+echo "⚠️  WARNING: This will delete all data and re-apply migrations!"
 read -p "Are you sure? (y/N) " -n 1 -r
 echo
 
@@ -12,21 +12,22 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
-# Copy migrations to Supabase directory
-echo "Copying migrations..."
-mkdir -p supabase/migrations
+# Reset database with migrations and seed data
+# Note: supabase/migrations and supabase/seed are symlinked to db/migrations and db/seed
+echo "Resetting database with migrations from db/migrations/..."
+if [ -d "db/seed" ] && [ "$(ls -A db/seed)" ]; then
+  echo "Seed data from db/seed/ will also be applied..."
+fi
 
-cp db/migrations/001_init.sql supabase/migrations/20240101000001_init.sql
-cp db/migrations/002_indexes.sql supabase/migrations/20240101000002_indexes.sql
-cp db/migrations/010_graphrag_init.sql supabase/migrations/20240101000010_graphrag_init.sql
-cp db/migrations/011_graphrag_indexes.sql supabase/migrations/20240101000011_graphrag_indexes.sql
-
-# Reset database
-echo "Resetting database..."
 supabase db reset
 
 echo ""
 echo "✅ Database reset complete"
+echo ""
+echo "Migrations applied from: db/migrations/"
+if [ -d "db/seed" ] && [ "$(ls -A db/seed)" ]; then
+  echo "Seed data applied from: db/seed/"
+fi
 echo ""
 echo "Verify with:"
 echo "  psql postgresql://postgres:postgres@localhost:54322/postgres -c '\dt'"

@@ -2,6 +2,9 @@
 # working directory name when running `supabase init`.
 project_id = "institutional-rotation-detector"
 
+# Note: supabase/migrations and supabase/seed are symlinked to db/migrations and db/seed
+# This allows seamless integration with Supabase CLI while maintaining our project structure
+
 [api]
 enabled = true
 # Port to use for the API URL.

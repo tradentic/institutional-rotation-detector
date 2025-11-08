@@ -15,12 +15,16 @@ The database uses **PostgreSQL 15+** with the **pgvector** extension for storing
 
 ```
 db/
-└── migrations/
-    ├── 001_init.sql              # Core schema (entities, filings, positions)
-    ├── 002_indexes.sql           # Performance indexes
-    ├── 010_graphrag_init.sql     # GraphRAG tables
-    └── 011_graphrag_indexes.sql  # GraphRAG indexes
+├── migrations/               # Database schema migrations (applied in order)
+│   ├── 001_init.sql         # Core schema (entities, filings, positions)
+│   ├── 002_indexes.sql      # Performance indexes
+│   ├── 010_graphrag_init.sql # GraphRAG tables
+│   └── 011_graphrag_indexes.sql # GraphRAG indexes
+└── seed/                    # Optional seed data (applied after migrations)
+    └── .gitkeep
 ```
+
+**Note:** For local development with Supabase, `supabase/migrations` and `supabase/seed` are symlinked to these directories.
 
 ## Migrations
 
@@ -37,7 +41,16 @@ Migrations are numbered and must be applied in order.
 
 ### Applying Migrations
 
-**Using psql:**
+**Local Development (Supabase CLI):**
+```bash
+# Reset database with all migrations and seed data
+supabase db reset
+
+# Note: supabase/migrations is symlinked to db/migrations/
+# Migrations are applied in order, followed by any files in db/seed/
+```
+
+**Production or Direct PostgreSQL:**
 ```bash
 # Apply all migrations in order
 psql -d rotation_detector -f db/migrations/001_init.sql
@@ -46,7 +59,7 @@ psql -d rotation_detector -f db/migrations/010_graphrag_init.sql
 psql -d rotation_detector -f db/migrations/011_graphrag_indexes.sql
 ```
 
-**Using Supabase:**
+**Production Supabase:**
 ```bash
 # Connect to Supabase database
 psql "postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres"
@@ -68,6 +81,50 @@ ORDER BY table_name;
 -- Verify pgvector extension
 SELECT * FROM pg_extension WHERE extname = 'vector';
 ```
+
+## Seed Data
+
+The `db/seed/` directory contains optional SQL files for populating the database with initial or test data.
+
+### Creating Seed Files
+
+Seed files are executed in alphabetical order after migrations:
+
+```bash
+# Example: Create a seed file with test data
+cat > db/seed/01_test_entities.sql << 'EOF'
+-- Insert test entities
+INSERT INTO entities (cik, name, kind) VALUES
+  ('0000320193', 'Apple Inc.', 'issuer'),
+  ('0001067983', 'Berkshire Hathaway', 'manager')
+ON CONFLICT (cik, kind) DO NOTHING;
+
+-- Insert CUSIP mapping
+INSERT INTO cusip_issuer_map (cusip, issuer_cik) VALUES
+  ('037833100', '0000320193')
+ON CONFLICT (cusip) DO NOTHING;
+EOF
+```
+
+### Applying Seed Data
+
+**Local Development:**
+```bash
+# Seed data is automatically applied with migrations
+supabase db reset
+```
+
+**Production:**
+```bash
+# Apply seed files manually if needed
+psql -d rotation_detector -f db/seed/01_test_entities.sql
+```
+
+**Best Practices:**
+- Use `ON CONFLICT ... DO NOTHING` for idempotent inserts
+- Prefix files with numbers for ordering (01_, 02_, etc.)
+- Keep seed data separate from migrations
+- Use seed data for reference data, test data, or initial configuration
 
 ## Schema Overview
 
