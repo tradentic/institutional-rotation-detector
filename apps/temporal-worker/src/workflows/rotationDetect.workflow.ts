@@ -1,6 +1,8 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
 import type { EventStudyInput } from './eventStudy.workflow.js';
+import type { IndexPenaltyResult } from '../activities/index.activities.js';
+import { isQuarterEndEOWString } from '../lib/tradingCalendar.js';
 
 const activities = proxyActivities<{
   detectDumpEvents: (cik: string, quarter: { start: string; end: string }) => Promise<any[]>;
@@ -8,6 +10,8 @@ const activities = proxyActivities<{
   uhf: (cik: string, quarter: { start: string; end: string }) => Promise<{ uhfSame: number; uhfNext: number }>;
   optionsOverlay: (cik: string, quarter: { start: string; end: string }) => Promise<{ optSame: number; optNext: number }>;
   shortReliefV2: (cik: string, quarter: { start: string; end: string }) => Promise<number>;
+  indexPenalty: (input: { filingDate: string; cik: string }) => Promise<IndexPenaltyResult>;
+  persistIndexPenalty: (clusterId: string, penalty: number, matchedWindows: IndexPenaltyResult['matchedWindows']) => Promise<void>;
   scoreV4_1: (
     cik: string,
     anchor: any,
@@ -66,7 +70,15 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
   const shortRelief = await activities.shortReliefV2(input.cik, bounds);
 
   for (const anchor of anchors) {
-    const eow = isWithinLastFiveDays(anchor.anchorDate, bounds.end);
+    // Use proper trading calendar to detect end-of-window dumps
+    const eow = isQuarterEndEOWString(anchor.anchorDate, 5);
+
+    // Compute index penalty based on anchor filing date
+    const penaltyResult = await activities.indexPenalty({
+      filingDate: anchor.anchorDate,
+      cik: input.cik,
+    });
+
     await activities.scoreV4_1(input.cik, anchor, {
       dumpZ: anchor.dumpZ,
       uSame: uptake.uSame,
@@ -76,9 +88,16 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       optSame: options.optSame,
       optNext: options.optNext,
       shortReliefV2: shortRelief,
-      indexPenalty: 0.1,
+      indexPenalty: penaltyResult.penalty,
       eow,
     });
+
+    // Persist index penalty with provenance
+    await activities.persistIndexPenalty(
+      anchor.clusterId,
+      penaltyResult.penalty,
+      penaltyResult.matchedWindows
+    );
 
     await activities.buildEdges(
       [
@@ -107,9 +126,5 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
   }
 }
 
-function isWithinLastFiveDays(anchor: string, quarterEnd: string) {
-  const anchorDate = new Date(anchor);
-  const end = new Date(quarterEnd);
-  const diff = (end.getTime() - anchorDate.getTime()) / (1000 * 60 * 60 * 24);
-  return diff <= 5;
-}
+// Note: isQuarterEndEOWString is now used instead of this function.
+// Kept for reference but can be removed in future cleanup.

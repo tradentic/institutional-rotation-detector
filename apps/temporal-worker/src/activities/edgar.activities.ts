@@ -234,6 +234,44 @@ export async function fetchFilings(
   });
 
   const supabase = createSupabaseClient();
+
+  // Link amendments to their original filings
+  // For each amendment, try to find the original filing it amends
+  for (const record of records) {
+    if (record.is_amendment && record.amendment_of_accession === null) {
+      // Find the original filing by matching:
+      // - Same CIK
+      // - Same period_end (for periodic reports) or event_date (for 8-K)
+      // - Base form type (without /A suffix)
+      const baseForm = record.form.replace(/\/A$|\/A-$/i, '');
+
+      const { data: originals, error } = await supabase
+        .from('filings')
+        .select('accession, filed_date')
+        .eq('cik', record.cik)
+        .eq('form', baseForm)
+        .eq('is_amendment', false)
+        .order('filed_date', { ascending: false })
+        .limit(10);
+
+      if (!error && originals && originals.length > 0) {
+        // Match by period_end or event_date
+        const matchingOriginal = originals.find((orig: any) => {
+          // For now, use simple filed_date proximity (within 90 days before amendment)
+          // A more sophisticated approach would parse the amendment text
+          const origDate = new Date(orig.filed_date);
+          const amendDate = new Date(record.filed_date);
+          const daysDiff = (amendDate.getTime() - origDate.getTime()) / (1000 * 60 * 60 * 24);
+          return daysDiff > 0 && daysDiff <= 90;
+        });
+
+        if (matchingOriginal) {
+          record.amendment_of_accession = matchingOriginal.accession;
+        }
+      }
+    }
+  }
+
   await supabase.from('filings').upsert(records, { onConflict: 'accession' });
   return records;
 }

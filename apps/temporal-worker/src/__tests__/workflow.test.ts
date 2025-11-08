@@ -49,9 +49,11 @@ const activities = {
   uhf: async () => ({ uhfSame: 0.2, uhfNext: 0.1 }),
   optionsOverlay: async () => ({ optSame: 0.1, optNext: 0.05 }),
   shortReliefV2: async () => 0.2,
+  indexPenalty: async () => ({ penalty: 0, matchedWindows: [] }),
+  persistIndexPenalty: async () => {},
   scoreV4_1: async () => ({}),
   buildEdges: async (_seller: any[], _buyer: any[], _period: any, _root: string) => ({}),
-  eventStudy: async () => ({}),
+  eventStudy: async () => ({ anchorDate: '2020-06-30', cik: '0000000000', ticker: 'TEST', car_m5_p20: 0, max_ret_w13: 0, t_to_plus20_days: -1, max_dd: 0, abnormal_returns: [] }),
 };
 
 describe('Temporal workflows', () => {

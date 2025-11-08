@@ -1,5 +1,6 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
 import type {
   EdgarSubmissionWindowInput,
   EdgarSubmissionWindowResult,
@@ -22,6 +23,8 @@ export interface EdgarSubmissionsPollerInput {
   lookbackMs?: number;
   since?: string | null;
   batchSize?: number;
+  iterationCount?: number;
+  maxIterations?: number;
 }
 
 function computeWindowStart(now: Date, lookbackMs: number, since?: string | null): string {
@@ -37,6 +40,8 @@ export async function edgarSubmissionsPollerWorkflow(input: EdgarSubmissionsPoll
   const cadenceMs = input.cadenceMs ?? DEFAULT_CADENCE_MS;
   const lookbackMs = input.lookbackMs ?? DEFAULT_LOOKBACK_MS;
   const batchSize = input.batchSize ?? DEFAULT_BATCH_SIZE;
+  const maxIterations = input.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const iterationCount = incrementIteration(input.iterationCount, maxIterations);
 
   const now = new Date();
   const windowEnd = now.toISOString();
@@ -53,11 +58,12 @@ export async function edgarSubmissionsPollerWorkflow(input: EdgarSubmissionsPoll
     runKind: 'daily',
     windowKey: `edgar:${windowStart}`,
     periodEnd: windowEnd,
-    batchId: 'edgar-submissions',
+    batchId: `edgar-submissions:${iterationCount}`,
   });
 
   await sleep(cadenceMs);
 
+  // Continue-As-New to prevent unbounded history growth
   await continueAsNew<typeof edgarSubmissionsPollerWorkflow>({
     ...input,
     since: result.nextCursor ?? windowEnd,
@@ -65,5 +71,7 @@ export async function edgarSubmissionsPollerWorkflow(input: EdgarSubmissionsPoll
     cadenceMs,
     lookbackMs,
     batchSize,
+    iterationCount,
+    maxIterations,
   });
 }
