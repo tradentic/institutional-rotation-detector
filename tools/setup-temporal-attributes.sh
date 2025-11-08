@@ -18,23 +18,39 @@ echo "Creating search attributes..."
 
 temporal operator search-attribute create \
   --namespace default \
-  --name ticker --type Keyword || echo "  ticker already exists"
+  --name Ticker --type Keyword || echo "  Ticker already exists"
 
 temporal operator search-attribute create \
   --namespace default \
-  --name cik --type Keyword || echo "  cik already exists"
+  --name CIK --type Keyword || echo "  CIK already exists"
 
 temporal operator search-attribute create \
   --namespace default \
-  --name quarter_start --type Datetime || echo "  quarter_start already exists"
+  --name FilerCIK --type Keyword || echo "  FilerCIK already exists"
 
 temporal operator search-attribute create \
   --namespace default \
-  --name quarter_end --type Datetime || echo "  quarter_end already exists"
+  --name Form --type Keyword || echo "  Form already exists"
 
 temporal operator search-attribute create \
   --namespace default \
-  --name run_kind --type Keyword || echo "  run_kind already exists"
+  --name Accession --type Keyword || echo "  Accession already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name PeriodEnd --type Datetime || echo "  PeriodEnd already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name WindowKey --type Keyword || echo "  WindowKey already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name BatchId --type Keyword || echo "  BatchId already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name RunKind --type Keyword || echo "  RunKind already exists"
 
 echo ""
 echo "✅ Search attributes configured"

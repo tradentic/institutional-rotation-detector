@@ -164,8 +164,10 @@ Workflows are durable, fault-tolerant orchestrations that coordinate activities.
    await upsertWorkflowSearchAttributes({
      ticker: input.ticker,
      cik: input.cik,
-     quarterStart: bounds.start,
-     quarterEnd: bounds.end,
+     runKind: input.runKind,
+     windowKey: input.quarter,
+     periodEnd: bounds.end,
+     batchId: `issuer:${input.quarter}`,
    });
    ```
 

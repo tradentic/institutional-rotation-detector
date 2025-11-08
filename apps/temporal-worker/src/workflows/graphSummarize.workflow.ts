@@ -29,8 +29,9 @@ export async function graphSummarizeWorkflow(input: GraphSummarizeInput): Promis
     cik: input.cik,
     ticker: input.ticker,
     runKind: input.runKind,
-    quarterStart: bounds.start,
-    quarterEnd: bounds.end,
+    windowKey: input.quarter,
+    periodEnd: bounds.end,
+    batchId: `graph-summarize:${input.runKind}:${input.quarter}`,
   });
   const result = await computeCommunities({
     periodStart: bounds.start,

@@ -156,25 +156,7 @@ The migrations create the following table groups:
    The system requires custom search attributes for workflow visibility:
 
    ```bash
-   temporal operator search-attribute create \
-     --namespace default \
-     --name ticker --type Keyword
-
-   temporal operator search-attribute create \
-     --namespace default \
-     --name cik --type Keyword
-
-   temporal operator search-attribute create \
-     --namespace default \
-     --name quarter_start --type Datetime
-
-   temporal operator search-attribute create \
-     --namespace default \
-     --name quarter_end --type Datetime
-
-   temporal operator search-attribute create \
-     --namespace default \
-     --name run_kind --type Keyword
+   ./tools/setup-temporal-attributes.sh
    ```
 
 4. **Verify Search Attributes**
@@ -379,13 +361,12 @@ tail -f ~/.temporal/server.log
 
 ### Search Attribute Not Found
 
-**Issue**: `search attribute "ticker" is not defined`
+**Issue**: `search attribute "Ticker" is not defined`
 
 **Solution**:
 ```bash
 # Create missing search attributes
-temporal operator search-attribute create --namespace default --name ticker --type Keyword
-# Repeat for cik, quarter_start, quarter_end, run_kind
+./tools/setup-temporal-attributes.sh
 ```
 
 ### SEC EDGAR Rate Limiting

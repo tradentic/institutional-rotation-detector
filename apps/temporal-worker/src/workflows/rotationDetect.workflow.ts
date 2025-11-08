@@ -50,8 +50,9 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
     ticker: input.ticker,
     cik: input.cik,
     runKind: input.runKind,
-    quarterStart: bounds.start,
-    quarterEnd: bounds.end,
+    windowKey: input.quarter,
+    periodEnd: bounds.end,
+    batchId: `rotation:${input.runKind}:${input.quarter}`,
   });
   const anchors = await activities.detectDumpEvents(input.cik, bounds);
   const uptake = await activities.uptakeFromFilings(input.cik, bounds);

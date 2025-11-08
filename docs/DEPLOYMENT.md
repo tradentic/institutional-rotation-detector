@@ -249,23 +249,39 @@ TEMPORAL_CLIENT_KEY_PATH=~/.temporal/certs/client.key
 ```bash
 temporal operator search-attribute create \
   --namespace rotation-detector-prod \
-  --name ticker --type Keyword
+  --name Ticker --type Keyword
 
 temporal operator search-attribute create \
   --namespace rotation-detector-prod \
-  --name cik --type Keyword
+  --name CIK --type Keyword
 
 temporal operator search-attribute create \
   --namespace rotation-detector-prod \
-  --name quarter_start --type Datetime
+  --name FilerCIK --type Keyword
 
 temporal operator search-attribute create \
   --namespace rotation-detector-prod \
-  --name quarter_end --type Datetime
+  --name Form --type Keyword
 
 temporal operator search-attribute create \
   --namespace rotation-detector-prod \
-  --name run_kind --type Keyword
+  --name Accession --type Keyword
+
+temporal operator search-attribute create \
+  --namespace rotation-detector-prod \
+  --name PeriodEnd --type Datetime
+
+temporal operator search-attribute create \
+  --namespace rotation-detector-prod \
+  --name WindowKey --type Keyword
+
+temporal operator search-attribute create \
+  --namespace rotation-detector-prod \
+  --name BatchId --type Keyword
+
+temporal operator search-attribute create \
+  --namespace rotation-detector-prod \
+  --name RunKind --type Keyword
 ```
 
 ---

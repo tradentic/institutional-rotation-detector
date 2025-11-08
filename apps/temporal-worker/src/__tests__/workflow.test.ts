@@ -13,11 +13,15 @@ let env: TestWorkflowEnvironment;
 async function ensureSearchAttributesRegistered() {
   const { IndexedValueType } = temporal.api.enums.v1;
   const searchAttributes = {
-    ticker: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
-    cik: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
-    run_kind: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
-    quarter_start: IndexedValueType.INDEXED_VALUE_TYPE_TEXT,
-    quarter_end: IndexedValueType.INDEXED_VALUE_TYPE_TEXT,
+    Ticker: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    CIK: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    FilerCIK: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    Form: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    Accession: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    PeriodEnd: IndexedValueType.INDEXED_VALUE_TYPE_DATETIME,
+    WindowKey: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    BatchId: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    RunKind: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
   } as const;
   try {
     await env.client.connection.operatorService.addSearchAttributes({
@@ -133,19 +137,27 @@ describe('Temporal workflows', () => {
               ticker: 'IRBT',
               cik: '0001084869',
               runKind: 'backfill',
-              quarterStart: '2024-01-01',
-              quarterEnd: '2024-03-31',
+              windowKey: '2024Q1',
+              periodEnd: '2024-03-31',
+              batchId: 'test-batch',
+              filerCik: '0000123456',
+              form: '13F-HR',
+              accession: '0000123456-24-000001',
             } satisfies TestProbeInput,
           ],
         });
 
         const viaQuery = await handle.query<Record<string, string[]>>('__workflow_search_attributes');
         expect(viaQuery).toEqual({
-          ticker: ['IRBT'],
-          cik: ['0001084869'],
-          run_kind: ['backfill'],
-          quarter_start: ['2024-01-01'],
-          quarter_end: ['2024-03-31'],
+          Ticker: ['IRBT'],
+          CIK: ['0001084869'],
+          RunKind: ['backfill'],
+          WindowKey: ['2024Q1'],
+          PeriodEnd: ['2024-03-31T00:00:00.000Z'],
+          BatchId: ['test-batch'],
+          FilerCIK: ['0000123456'],
+          Form: ['13F-HR'],
+          Accession: ['0000123456-24-000001'],
         });
 
         const result = await handle.result();

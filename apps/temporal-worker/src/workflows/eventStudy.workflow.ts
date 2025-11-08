@@ -21,8 +21,9 @@ export async function eventStudyWorkflow(input: EventStudyInput) {
     ticker: input.ticker,
     cik: input.cik,
     runKind: input.runKind,
-    quarterStart: input.quarterStart,
-    quarterEnd: input.quarterEnd,
+    windowKey: `event:${input.anchorDate}`,
+    periodEnd: input.anchorDate,
+    batchId: `event-study:${input.cik}:${input.anchorDate}`,
   });
   return eventStudy(input.anchorDate, input.cik);
 }

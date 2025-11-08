@@ -49,14 +49,18 @@ export interface GraphQueryOutput {
 export async function graphQueryWorkflow(input: GraphQueryInput): Promise<GraphQueryOutput> {
   let issuer: ResolveIssuerNodeResult;
   let neighborhood: NeighborhoodResult = { nodes: [], edges: [], paths: [] };
+  const windowKey = `graph:${input.from}:${input.to}`;
+  const runKind = input.runKind ?? 'query';
+  const batchId = `graph-query:${runKind}:${input.hops}`;
   if (input.ticker || input.cik) {
     issuer = await resolveIssuerNode({ ticker: input.ticker, cik: input.cik });
     await upsertWorkflowSearchAttributes({
       cik: issuer.cik,
-      ticker: input.ticker,
-      runKind: input.runKind ?? 'query',
-      quarterStart: input.from,
-      quarterEnd: input.to,
+      ticker: input.ticker ?? issuer.ticker,
+      runKind,
+      windowKey,
+      periodEnd: input.to,
+      batchId,
     });
     neighborhood = await kHopNeighborhood({
       rootNodeId: issuer.nodeId,
@@ -67,11 +71,11 @@ export async function graphQueryWorkflow(input: GraphQueryInput): Promise<GraphQ
   } else {
     issuer = { nodeId: 'unknown', cik: 'unknown', ticker: undefined };
     await upsertWorkflowSearchAttributes({
-      cik: issuer.cik,
-      ticker: undefined,
-      runKind: input.runKind ?? 'query',
-      quarterStart: input.from,
-      quarterEnd: input.to,
+      cik: issuer.cik !== 'unknown' ? issuer.cik : undefined,
+      runKind,
+      windowKey,
+      periodEnd: input.to,
+      batchId,
     });
   }
   let explanation: SynthesizeResult | undefined;

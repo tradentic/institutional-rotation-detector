@@ -1,9 +1,5 @@
-import { defineQuery, setHandler, upsertSearchAttributes, workflowInfo } from '@temporalio/workflow';
-import {
-  defineSearchAttributeKey,
-  SearchAttributeType,
-  type SearchAttributeUpdatePair,
-} from '@temporalio/common';
+import { defineQuery, setHandler, upsertSearchAttributes } from '@temporalio/workflow';
+import { defineSearchAttributeKey, SearchAttributeType, type SearchAttributeUpdatePair } from '@temporalio/common';
 
 export function resolveQuarterRange(from: string, to: string): string[] {
   const start = new Date(from);
@@ -21,15 +17,42 @@ export function resolveQuarterRange(from: string, to: string): string[] {
 
 export interface WorkflowSearchAttributes {
   ticker?: string;
-  cik: string;
-  runKind: 'backfill' | 'daily';
-  quarterStart: string;
-  quarterEnd: string;
+  cik?: string;
+  filerCik?: string;
+  form?: string;
+  accession?: string;
+  periodEnd?: string | Date;
+  windowKey?: string;
+  batchId?: string;
+  runKind?: 'backfill' | 'daily' | 'query';
 }
 
 const searchAttributesQuery = defineQuery<Record<string, string[]>>('__workflow_search_attributes');
 let queryRegistered = false;
 let lastAppliedAttributes: Record<string, string[]> = {};
+
+const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }> = {
+  ticker: { name: 'Ticker', type: SearchAttributeType.KEYWORD },
+  cik: { name: 'CIK', type: SearchAttributeType.KEYWORD },
+  filerCik: { name: 'FilerCIK', type: SearchAttributeType.KEYWORD },
+  form: { name: 'Form', type: SearchAttributeType.KEYWORD },
+  accession: { name: 'Accession', type: SearchAttributeType.KEYWORD },
+  periodEnd: { name: 'PeriodEnd', type: SearchAttributeType.DATETIME },
+  windowKey: { name: 'WindowKey', type: SearchAttributeType.KEYWORD },
+  batchId: { name: 'BatchId', type: SearchAttributeType.KEYWORD },
+  runKind: { name: 'RunKind', type: SearchAttributeType.KEYWORD },
+};
+
+const cachedKeys = new Map<string, ReturnType<typeof defineSearchAttributeKey>>();
+
+function getSearchAttributeKey(name: string, type: SearchAttributeType) {
+  const cacheKey = `${name}:${type}`;
+  const cached = cachedKeys.get(cacheKey);
+  if (cached) return cached;
+  const key = defineSearchAttributeKey(name, type);
+  cachedKeys.set(cacheKey, key);
+  return key;
+}
 
 export async function upsertWorkflowSearchAttributes(
   attrs: WorkflowSearchAttributes
@@ -38,25 +61,42 @@ export async function upsertWorkflowSearchAttributes(
     setHandler(searchAttributesQuery, () => lastAppliedAttributes);
     queryRegistered = true;
   }
-  const updates: SearchAttributeUpdatePair[] = [
-    { key: defineSearchAttributeKey('cik', SearchAttributeType.KEYWORD), value: attrs.cik },
-    { key: defineSearchAttributeKey('run_kind', SearchAttributeType.KEYWORD), value: attrs.runKind },
-    { key: defineSearchAttributeKey('quarter_start', SearchAttributeType.TEXT), value: attrs.quarterStart },
-    { key: defineSearchAttributeKey('quarter_end', SearchAttributeType.TEXT), value: attrs.quarterEnd },
-  ];
-  if (attrs.ticker) {
-    updates.push({ key: defineSearchAttributeKey('ticker', SearchAttributeType.KEYWORD), value: attrs.ticker });
+
+  const updates: SearchAttributeUpdatePair[] = [];
+  const applied: Record<string, string[]> = { ...lastAppliedAttributes };
+
+  const entries = Object.entries(attrs) as [
+    keyof WorkflowSearchAttributes,
+    WorkflowSearchAttributes[keyof WorkflowSearchAttributes]
+  ][];
+
+  for (const [prop, value] of entries) {
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    const config = attributeConfig[prop as keyof Required<WorkflowSearchAttributes>];
+    if (!config) continue;
+
+    if (config.type === SearchAttributeType.DATETIME) {
+      const dateValue = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(dateValue.getTime())) {
+        continue;
+      }
+      applied[config.name] = [dateValue.toISOString()];
+      updates.push({ key: getSearchAttributeKey(config.name, config.type), value: dateValue });
+      continue;
+    }
+
+    const textValue = String(value);
+    applied[config.name] = [textValue];
+    updates.push({ key: getSearchAttributeKey(config.name, config.type), value: textValue });
   }
-  lastAppliedAttributes = {
-    cik: [attrs.cik],
-    run_kind: [attrs.runKind],
-    quarter_start: [attrs.quarterStart],
-    quarter_end: [attrs.quarterEnd],
-  };
-  if (attrs.ticker) {
-    lastAppliedAttributes.ticker = [attrs.ticker];
+
+  if (updates.length > 0) {
+    await upsertSearchAttributes(updates);
+    lastAppliedAttributes = applied;
   }
-  await upsertSearchAttributes(updates);
+
   return lastAppliedAttributes;
 }
 

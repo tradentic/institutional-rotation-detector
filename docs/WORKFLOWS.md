@@ -484,47 +484,29 @@ Search attributes enable querying workflows in Temporal UI and CLI.
 These must be created before running workflows:
 
 ```bash
-temporal operator search-attribute create \
-  --namespace default \
-  --name ticker --type Keyword
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name cik --type Keyword
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name quarter_start --type Datetime
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name quarter_end --type Datetime
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name run_kind --type Keyword
+./tools/setup-temporal-attributes.sh
 ```
 
 ### Querying Workflows
 
 **By ticker:**
 ```bash
-temporal workflow list --query 'ticker="AAPL"'
+temporal workflow list --query 'Ticker="AAPL"'
 ```
 
 **By run kind:**
 ```bash
-temporal workflow list --query 'runKind="backfill"'
+temporal workflow list --query 'RunKind="backfill"'
 ```
 
 **By date range:**
 ```bash
-temporal workflow list --query 'quarterStart >= "2024-01-01" AND quarterEnd <= "2024-12-31"'
+temporal workflow list --query 'PeriodEnd >= "2024-01-01T00:00:00Z" AND PeriodEnd <= "2024-12-31T23:59:59Z"'
 ```
 
 **Complex query:**
 ```bash
-temporal workflow list --query 'ticker="AAPL" AND runKind="daily" AND quarterStart >= "2024-01-01"'
+temporal workflow list --query 'Ticker="AAPL" AND RunKind="daily" AND WindowKey="2024Q1"'
 ```
 
 ---

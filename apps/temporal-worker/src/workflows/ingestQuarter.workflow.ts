@@ -36,8 +36,9 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
     ticker: input.ticker,
     cik: input.cik,
     runKind: input.runKind,
-    quarterStart: bounds.start,
-    quarterEnd: bounds.end,
+    windowKey: input.quarter,
+    periodEnd: bounds.end,
+    batchId: `quarter:${input.runKind}:${input.quarter}`,
   });
 
   const filings = await activities.fetchFilings(input.cik, bounds, [

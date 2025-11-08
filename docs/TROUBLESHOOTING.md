@@ -421,16 +421,14 @@ temporal workflow cancel --workflow-id <id>
 
 **Symptoms:**
 ```
-Error: search attribute "ticker" is not defined
+Error: search attribute "Ticker" is not defined
 ```
 
 **Solutions:**
 
 **1. Create search attributes:**
 ```bash
-temporal operator search-attribute create \
-  --namespace default \
-  --name ticker --type Keyword
+./tools/setup-temporal-attributes.sh
 
 # Verify
 temporal operator search-attribute list --namespace default
@@ -438,13 +436,16 @@ temporal operator search-attribute list --namespace default
 
 **2. Upsert in workflow:**
 ```typescript
-import { upsertSearchAttributes } from '@temporalio/workflow';
+import { upsertWorkflowSearchAttributes } from '../workflows/utils.js';
 
 export async function myWorkflow(input: Input) {
-  // Must be called before any activities
-  await upsertSearchAttributes({
-    ticker: [input.ticker],
-    cik: [input.cik],
+  await upsertWorkflowSearchAttributes({
+    ticker: input.ticker,
+    cik: input.cik,
+    runKind: input.runKind,
+    windowKey: input.windowKey,
+    periodEnd: input.periodEnd,
+    batchId: input.batchId,
   });
 
   // Rest of workflow...
@@ -454,10 +455,10 @@ export async function myWorkflow(input: Input) {
 **3. Query syntax:**
 ```bash
 # Correct
-temporal workflow list --query 'ticker="AAPL"'
+temporal workflow list --query 'Ticker="AAPL"'
 
 # Incorrect
-temporal workflow list --query 'ticker=AAPL'  # Missing quotes
+temporal workflow list --query 'Ticker=AAPL'  # Missing quotes
 ```
 
 ---

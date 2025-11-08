@@ -31,8 +31,9 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
     ticker: input.ticker,
     cik,
     runKind: input.runKind,
-    quarterStart: bounds.start,
-    quarterEnd: bounds.end,
+    windowKey: firstQuarter ?? `${bounds.start}:${bounds.end}`,
+    periodEnd: bounds.end,
+    batchId: `issuer:${input.runKind}:${input.ticker}:${currentBatch.length}`,
   });
 
   for (const quarter of currentBatch) {

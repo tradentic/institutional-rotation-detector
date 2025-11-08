@@ -125,11 +125,7 @@ supabase db reset
 temporal server start-dev
 
 # 7. Create search attributes (in Terminal 3)
-temporal operator search-attribute create --namespace default --name ticker --type Keyword
-temporal operator search-attribute create --namespace default --name cik --type Keyword
-temporal operator search-attribute create --namespace default --name quarter_start --type Datetime
-temporal operator search-attribute create --namespace default --name quarter_end --type Datetime
-temporal operator search-attribute create --namespace default --name run_kind --type Keyword
+./tools/setup-temporal-attributes.sh
 
 # 8. Install dependencies and build
 cd apps/temporal-worker
@@ -294,25 +290,7 @@ Search attributes must be created before running workflows:
 
 ```bash
 # In a new terminal
-temporal operator search-attribute create \
-  --namespace default \
-  --name ticker --type Keyword
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name cik --type Keyword
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name quarter_start --type Datetime
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name quarter_end --type Datetime
-
-temporal operator search-attribute create \
-  --namespace default \
-  --name run_kind --type Keyword
+./tools/setup-temporal-attributes.sh
 ```
 
 **Verify:**
@@ -322,15 +300,19 @@ temporal operator search-attribute list --namespace default
 
 **Expected Output:**
 ```
-+------------------+----------+
-|       NAME       |   TYPE   |
-+------------------+----------+
-| ticker           | Keyword  |
-| cik              | Keyword  |
-| quarter_start    | Datetime |
-| quarter_end      | Datetime |
-| run_kind         | Keyword  |
-+------------------+----------+
++-------------+----------+
+|    NAME     |   TYPE   |
++-------------+----------+
+| Accession   | Keyword  |
+| BatchId     | Keyword  |
+| CIK         | Keyword  |
+| FilerCIK    | Keyword  |
+| Form        | Keyword  |
+| PeriodEnd   | Datetime |
+| RunKind     | Keyword  |
+| Ticker      | Keyword  |
+| WindowKey   | Keyword  |
++-------------+----------+
 ```
 
 ### Temporal Web UI
@@ -473,11 +455,7 @@ sleep 5
 
 # Create search attributes
 echo "🔍 Creating search attributes..."
-temporal operator search-attribute create --namespace default --name ticker --type Keyword || true
-temporal operator search-attribute create --namespace default --name cik --type Keyword || true
-temporal operator search-attribute create --namespace default --name quarter_start --type Datetime || true
-temporal operator search-attribute create --namespace default --name quarter_end --type Datetime || true
-temporal operator search-attribute create --namespace default --name run_kind --type Keyword || true
+./tools/setup-temporal-attributes.sh
 
 echo "✅ Development environment ready!"
 echo ""

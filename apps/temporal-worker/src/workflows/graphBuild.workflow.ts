@@ -25,8 +25,9 @@ export async function graphBuildWorkflow(input: GraphBuildInput): Promise<GraphB
     cik: input.cik,
     ticker: input.ticker,
     runKind: input.runKind,
-    quarterStart: bounds.start,
-    quarterEnd: bounds.end,
+    windowKey: input.quarter,
+    periodEnd: bounds.end,
+    batchId: `graph-build:${input.runKind}:${input.quarter}`,
   });
   const result = await buildGraphForQuarter({
     cik: input.cik,

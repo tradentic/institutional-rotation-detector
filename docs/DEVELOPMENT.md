@@ -48,11 +48,7 @@ psql -d rotation_detector -f db/migrations/011_graphrag_indexes.sql
 temporal server start-dev
 
 # Create search attributes
-temporal operator search-attribute create --namespace default --name ticker --type Keyword
-temporal operator search-attribute create --namespace default --name cik --type Keyword
-temporal operator search-attribute create --namespace default --name quarter_start --type Datetime
-temporal operator search-attribute create --namespace default --name quarter_end --type Datetime
-temporal operator search-attribute create --namespace default --name run_kind --type Keyword
+./tools/setup-temporal-attributes.sh
 
 # Build project
 npm run build

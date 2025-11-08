@@ -74,11 +74,15 @@ Creates Temporal search attributes for the project.
 **What it does:**
 1. Waits for Temporal server to be healthy
 2. Creates search attributes:
-   - ticker (Keyword)
-   - cik (Keyword)
-   - quarter_start (Datetime)
-   - quarter_end (Datetime)
-   - run_kind (Keyword)
+   - Ticker (Keyword)
+   - CIK (Keyword)
+   - FilerCIK (Keyword)
+   - Form (Keyword)
+   - Accession (Keyword)
+   - PeriodEnd (Datetime)
+   - WindowKey (Keyword)
+   - BatchId (Keyword)
+   - RunKind (Keyword)
 
 ---
 
