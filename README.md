@@ -121,7 +121,7 @@ cp .env.example apps/temporal-worker/.env
 temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}'
+  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily"}'
 
 # Or via API (if API server is running)
 curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
@@ -156,7 +156,7 @@ institutional-rotation-detector/
 
 The system identifies institutional rotation through a multi-step process:
 
-1. **Dump Detection**: Identifies large institutional sell-offs (>5% position reduction)
+1. **Dump Detection**: Identifies large institutional sell-offs (≥30% position reduction or ≥1.0% of float) with robust z-score analysis
 2. **Uptake Analysis**: Measures subsequent buying by other institutions
 3. **Signal Integration**: Combines ultra-high-frequency trading patterns, options overlay, and short interest relief
 4. **Scoring**: Generates R-score indicating rotation probability and magnitude

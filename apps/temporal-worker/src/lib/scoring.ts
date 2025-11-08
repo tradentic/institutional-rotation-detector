@@ -29,6 +29,12 @@ export const SCORE_WEIGHTS = {
 
 const DUMP_GATE_Z = 1.5;
 
+const EOW_MULTIPLIERS = {
+  uNext: 0.95,
+  uhfNext: 0.9,
+  optNext: 0.5,
+};
+
 export function computeRotationScore(inputs: ScoreInputs): ScoreResult {
   const gate =
     inputs.dumpZ >= DUMP_GATE_Z &&
@@ -41,15 +47,18 @@ export function computeRotationScore(inputs: ScoreInputs): ScoreResult {
     return { rScore: 0, gated: false };
   }
 
-  const eowMultiplier = inputs.eow ? 1.2 : 1;
+  const uNextMultiplier = inputs.eow ? EOW_MULTIPLIERS.uNext : 1;
+  const uhfNextMultiplier = inputs.eow ? EOW_MULTIPLIERS.uhfNext : 1;
+  const optNextMultiplier = inputs.eow ? EOW_MULTIPLIERS.optNext : 1;
+
   const score =
     SCORE_WEIGHTS.dump * inputs.dumpZ +
     SCORE_WEIGHTS.uSame * inputs.uSame +
-    SCORE_WEIGHTS.uNext * inputs.uNext * eowMultiplier +
+    SCORE_WEIGHTS.uNext * inputs.uNext * uNextMultiplier +
     SCORE_WEIGHTS.uhfSame * inputs.uhfSame +
-    SCORE_WEIGHTS.uhfNext * inputs.uhfNext * eowMultiplier +
+    SCORE_WEIGHTS.uhfNext * inputs.uhfNext * uhfNextMultiplier +
     SCORE_WEIGHTS.optSame * inputs.optSame +
-    SCORE_WEIGHTS.optNext * inputs.optNext * eowMultiplier +
+    SCORE_WEIGHTS.optNext * inputs.optNext * optNextMultiplier +
     SCORE_WEIGHTS.shortRelief * inputs.shortReliefV2 -
     inputs.indexPenalty;
 

@@ -68,7 +68,7 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
   for (const anchor of anchors) {
     const eow = isWithinLastFiveDays(anchor.anchorDate, bounds.end);
     await activities.scoreV4_1(input.cik, anchor, {
-      dumpZ: Math.abs(anchor.delta) * 5,
+      dumpZ: anchor.dumpZ,
       uSame: uptake.uSame,
       uNext: uptake.uNext,
       uhfSame: uhf.uhfSame,
