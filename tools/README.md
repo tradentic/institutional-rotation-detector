@@ -13,6 +13,100 @@ This directory contains standalone scripts for administrative tasks that are run
 
 ## Available Tools
 
+### Development Helper Scripts
+
+#### `dev-start.sh`
+
+Starts the complete local development environment (Supabase + Temporal).
+
+**Purpose:**
+- One-command startup for development
+- Handles dependency checks
+- Provides helpful access URLs
+
+**Usage:**
+```bash
+./tools/dev-start.sh
+```
+
+**What it does:**
+1. Checks for required CLI tools (supabase, temporal, docker)
+2. Starts Supabase locally
+3. Starts Temporal server (foreground)
+4. Displays access URLs and next steps
+
+**Access Points:**
+- Supabase Studio: http://localhost:54323
+- Temporal UI: http://localhost:8233
+- PostgreSQL: postgresql://postgres:postgres@localhost:54322/postgres
+
+---
+
+#### `dev-stop.sh`
+
+Stops all local development services.
+
+**Usage:**
+```bash
+./tools/dev-stop.sh
+```
+
+**What it does:**
+1. Stops Supabase
+2. Kills Temporal server process
+
+---
+
+#### `setup-temporal-attributes.sh`
+
+Creates Temporal search attributes for the project.
+
+**Purpose:**
+- One-time setup for Temporal search attributes
+- Idempotent (safe to run multiple times)
+- Waits for Temporal to be ready
+
+**Usage:**
+```bash
+./tools/setup-temporal-attributes.sh
+```
+
+**What it does:**
+1. Waits for Temporal server to be healthy
+2. Creates search attributes:
+   - ticker (Keyword)
+   - cik (Keyword)
+   - quarter_start (Datetime)
+   - quarter_end (Datetime)
+   - run_kind (Keyword)
+
+---
+
+#### `db-reset.sh`
+
+Resets the local database with all migrations.
+
+**Purpose:**
+- Fresh database state for testing
+- Apply all migrations in correct order
+- Confirm before destroying data
+
+**Usage:**
+```bash
+./tools/db-reset.sh
+```
+
+**What it does:**
+1. Prompts for confirmation (destructive!)
+2. Copies migrations to supabase/migrations/
+3. Runs `supabase db reset`
+
+**⚠️ WARNING:** This deletes all local data!
+
+---
+
+### Data Management Tools
+
 ### `backfill-2019-2025.ts`
 
 Triggers a backfill workflow to ingest historical data for a ticker from 2019 to 2025.

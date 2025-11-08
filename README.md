@@ -53,50 +53,83 @@ This project identifies when institutional investors (hedge funds, mutual funds,
 
 ## Quick Start
 
-### Prerequisites
+### Local Development (Recommended)
 
-- Node.js 20+
-- PostgreSQL 15+ with pgvector extension
-- Temporal.io server (local or cloud)
-- Supabase account (or PostgreSQL with compatible API)
+For a complete local development environment with Supabase and Temporal running locally:
+
+```bash
+# 1. Clone repository
+git clone https://github.com/yourusername/institutional-rotation-detector.git
+cd institutional-rotation-detector
+
+# 2. Install Supabase CLI and Temporal CLI
+brew install supabase/tap/supabase temporal
+
+# 3. Start development environment
+./tools/dev-start.sh
+
+# 4. In a new terminal, set up environment
+cp .env.example apps/temporal-worker/.env
+# Edit .env: Add OPENAI_API_KEY and SEC_USER_AGENT
+
+# 5. Apply database migrations
+./tools/db-reset.sh
+
+# 6. Set up Temporal search attributes
+./tools/setup-temporal-attributes.sh
+
+# 7. Install dependencies and start worker
+cd apps/temporal-worker
+npm install
+npm run build
+node dist/worker.js
+```
+
+**See [Local Development Guide](docs/LOCAL_DEVELOPMENT.md) for detailed setup instructions.**
+
+### Cloud Deployment
+
+For production deployment with Supabase Cloud and Temporal Cloud:
+
+**Prerequisites:**
+- Supabase Cloud account
+- Temporal Cloud account (or self-hosted Temporal)
 - OpenAI API key
-
-### Installation
+- Cloud provider account (AWS/GCP/Azure)
 
 ```bash
 # Clone repository
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# Install dependencies
-cd apps/temporal-worker
-npm install
+# Configure for cloud (see docs/SETUP.md and docs/DEPLOYMENT.md)
+cp .env.example apps/temporal-worker/.env
+# Edit .env with cloud credentials
 
-# Set up database (see docs/SETUP.md for details)
-psql -d your_database -f db/migrations/001_init.sql
-psql -d your_database -f db/migrations/002_indexes.sql
-psql -d your_database -f db/migrations/010_graphrag_init.sql
-psql -d your_database -f db/migrations/011_graphrag_indexes.sql
-
-# Configure environment variables
-cp .env.example .env
-# Edit .env with your credentials
-
-# Start Temporal worker
-npm run build
-node dist/worker.js
+# Deploy worker (see docs/DEPLOYMENT.md for options)
+# - AWS ECS Fargate
+# - Google Cloud Run
+# - Kubernetes
 ```
+
+**See [Setup Guide](docs/SETUP.md) and [Deployment Guide](docs/DEPLOYMENT.md) for details.**
 
 ### Run Your First Analysis
 
 ```bash
-# Analyze Apple (AAPL) for Q1 2024
+# Start a workflow via Temporal CLI
+temporal workflow start \
+  --task-queue rotation-detector \
+  --type ingestIssuerWorkflow \
+  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}'
+
+# Or via API (if API server is running)
 curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
 
 # Query rotation events
 curl "http://localhost:3000/api/events?ticker=AAPL"
 
-# Get rotation graph for a period
+# Get rotation graph
 curl "http://localhost:3000/api/graph?ticker=AAPL&period=2024-01"
 ```
 
@@ -146,12 +179,26 @@ The system identifies institutional rotation through a multi-step process:
 
 ## Documentation
 
-- **[Setup Guide](docs/SETUP.md)** - Detailed installation and configuration
+### Getting Started
+- **[Local Development](docs/LOCAL_DEVELOPMENT.md)** - Complete local setup with Supabase and Temporal
+- **[Setup Guide](docs/SETUP.md)** - Production installation and configuration
+- **[Quick Start Examples](docs/WORKFLOWS.md#running-workflows)** - Run your first workflows
+
+### System Documentation
 - **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[API Reference](docs/API.md)** - REST endpoint documentation (Phase 2)
-- **[Workflows](docs/WORKFLOWS.md)** - Temporal workflow catalog (Phase 2)
-- **[Data Model](docs/DATA_MODEL.md)** - Database schema reference (Phase 2)
-- **[Development](docs/DEVELOPMENT.md)** - Contributing and development guide (Phase 2)
+- **[Workflows](docs/WORKFLOWS.md)** - Temporal workflow reference and patterns
+- **[API Reference](docs/API.md)** - REST endpoint documentation
+- **[Data Model](docs/DATA_MODEL.md)** - Database schema and relationships
+
+### Domain Knowledge
+- **[Rotation Detection](docs/ROTATION_DETECTION.md)** - Algorithm and methodology
+- **[GraphRAG](docs/GRAPHRAG.md)** - Graph-based analysis and AI synthesis
+- **[Data Sources](docs/DATA_SOURCES.md)** - SEC EDGAR, FINRA, ETF integrations
+
+### Operations
+- **[Deployment](docs/DEPLOYMENT.md)** - Production deployment guide
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Development](docs/DEVELOPMENT.md)** - Contributing and development guide
 
 ## Technology Stack
 
