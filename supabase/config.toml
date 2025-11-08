@@ -24,15 +24,11 @@ shadow_port = 54320
 # server_version;` on the remote database to check.
 major_version = 15
 
-[db.migrations]
-# Paths to migration files. Files are executed in timestamp order.
-sql_paths = ['../db/migrations']
-
 [db.seed]
 # If enabled, you can use `supabase db reset` to run seed files
 enabled = true
 # Paths to SQL seed files. Files are executed in alphabetical order.
-sql_paths = ['../db/seed']
+sql_paths = ['./seed']
 
 [db.pooler]
 enabled = false
