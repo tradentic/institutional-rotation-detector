@@ -1,5 +1,5 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { quarterWindowKey, upsertWorkflowSearchAttributes } from './utils.js';
 import type { EventStudyInput } from './eventStudy.workflow.js';
 
 const activities = proxyActivities<{
@@ -50,7 +50,7 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
     ticker: input.ticker,
     cik: input.cik,
     runKind: input.runKind,
-    windowKey: input.quarter,
+    windowKey: quarterWindowKey(input.quarter),
     periodEnd: bounds.end,
     batchId: `rotation:${input.runKind}:${input.quarter}`,
   });

@@ -1,6 +1,40 @@
 import { defineQuery, setHandler, upsertSearchAttributes } from '@temporalio/workflow';
 import { defineSearchAttributeKey, SearchAttributeType, type SearchAttributeUpdatePair } from '@temporalio/common';
 
+function normalizeScope(scope: string) {
+  return scope
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-');
+}
+
+function normalizeValue(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/:+/g, '_');
+}
+
+function buildWindowKey(scope: string, value: string) {
+  return `${normalizeScope(scope)}:${normalizeValue(value)}`;
+}
+
+export function quarterWindowKey(quarter: string) {
+  return buildWindowKey('quarter', quarter);
+}
+
+export function rangeWindowKey(start: string, end: string, scope = 'range') {
+  return buildWindowKey(scope, `${start}_${end}`);
+}
+
+export function eventWindowKey(anchor: string) {
+  return buildWindowKey('event', anchor);
+}
+
+export function scopedWindowKey(scope: string, value: string) {
+  return buildWindowKey(scope, value);
+}
+
 export function resolveQuarterRange(from: string, to: string): string[] {
   const start = new Date(from);
   const end = new Date(to);

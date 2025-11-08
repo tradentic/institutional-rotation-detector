@@ -315,6 +315,9 @@ temporal operator search-attribute list --namespace default
 +-------------+----------+
 ```
 
+`WindowKey` values encode the cadence using a `scope:value` token. For example, quarterly
+workflows emit `quarter:2024Q1`, while ad-hoc graph queries use `graph:2024-01-01_2024-03-31`.
+
 ### Temporal Web UI
 
 Access at http://localhost:8233

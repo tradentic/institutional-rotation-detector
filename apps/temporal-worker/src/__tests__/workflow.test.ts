@@ -6,6 +6,7 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { status as grpcStatus } from '@grpc/grpc-js';
 import { temporal } from '@temporalio/proto';
 import { IngestIssuerInput } from '../workflows/ingestIssuer.workflow.js';
+import { quarterWindowKey } from '../workflows/utils.js';
 import type { TestProbeInput } from '../workflows/testProbe.workflow.js';
 
 let env: TestWorkflowEnvironment;
@@ -137,7 +138,7 @@ describe('Temporal workflows', () => {
               ticker: 'IRBT',
               cik: '0001084869',
               runKind: 'backfill',
-              windowKey: '2024Q1',
+              windowKey: quarterWindowKey('2024Q1'),
               periodEnd: '2024-03-31',
               batchId: 'test-batch',
               filerCik: '0000123456',
@@ -152,7 +153,7 @@ describe('Temporal workflows', () => {
           Ticker: ['IRBT'],
           CIK: ['0001084869'],
           RunKind: ['backfill'],
-          WindowKey: ['2024Q1'],
+          WindowKey: [quarterWindowKey('2024Q1')],
           PeriodEnd: ['2024-03-31T00:00:00.000Z'],
           BatchId: ['test-batch'],
           FilerCIK: ['0000123456'],

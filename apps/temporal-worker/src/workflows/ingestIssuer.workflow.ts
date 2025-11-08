@@ -1,5 +1,11 @@
 import { continueAsNew, proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils.js';
+import {
+  quarterBounds,
+  quarterWindowKey,
+  rangeWindowKey,
+  resolveQuarterRange,
+  upsertWorkflowSearchAttributes,
+} from './utils.js';
 import type { IngestQuarterInput } from './ingestQuarter.workflow.js';
 
 const { resolveCIK } = proxyActivities<{ resolveCIK: (ticker: string) => Promise<{ cik: string; cusips: string[] }> }>(
@@ -27,11 +33,15 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
   const remaining = quarters.slice(quarterBatch);
   const firstQuarter = (currentBatch[0] ?? quarters[0]) ?? null;
   const bounds = firstQuarter ? quarterBounds(firstQuarter) : { start: input.from, end: input.to };
+  const windowKey = firstQuarter
+    ? quarterWindowKey(firstQuarter)
+    : rangeWindowKey(bounds.start, bounds.end, 'issuer-range');
+
   await upsertWorkflowSearchAttributes({
     ticker: input.ticker,
     cik,
     runKind: input.runKind,
-    windowKey: firstQuarter ?? `${bounds.start}:${bounds.end}`,
+    windowKey,
     periodEnd: bounds.end,
     batchId: `issuer:${input.runKind}:${input.ticker}:${currentBatch.length}`,
   });

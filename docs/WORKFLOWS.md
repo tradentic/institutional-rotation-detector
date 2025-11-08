@@ -504,9 +504,11 @@ temporal workflow list --query 'RunKind="backfill"'
 temporal workflow list --query 'PeriodEnd >= "2024-01-01T00:00:00Z" AND PeriodEnd <= "2024-12-31T23:59:59Z"'
 ```
 
+`WindowKey` encodes cadence using a `scope:value` token (for example `quarter:2024Q1`, `issuer-range:2020-01-01_2020-12-31`).
+
 **Complex query:**
 ```bash
-temporal workflow list --query 'Ticker="AAPL" AND RunKind="daily" AND WindowKey="2024Q1"'
+temporal workflow list --query 'Ticker="AAPL" AND RunKind="daily" AND WindowKey="quarter:2024Q1"'
 ```
 
 ---

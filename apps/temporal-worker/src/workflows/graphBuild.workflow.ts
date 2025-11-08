@@ -1,5 +1,5 @@
 import { proxyActivities, continueAsNew } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
+import { quarterBounds, quarterWindowKey, upsertWorkflowSearchAttributes } from './utils.js';
 import type { GraphBuilderResult } from '../lib/graph.js';
 import type { GraphBuildActivityInput } from '../activities/graph.activities.js';
 
@@ -25,7 +25,7 @@ export async function graphBuildWorkflow(input: GraphBuildInput): Promise<GraphB
     cik: input.cik,
     ticker: input.ticker,
     runKind: input.runKind,
-    windowKey: input.quarter,
+    windowKey: quarterWindowKey(input.quarter),
     periodEnd: bounds.end,
     batchId: `graph-build:${input.runKind}:${input.quarter}`,
   });

@@ -1,5 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
+import { quarterBounds, quarterWindowKey, upsertWorkflowSearchAttributes } from './utils.js';
 import type { ComputeCommunitiesInput, SummarizeCommunityInput } from '../activities/graphrag.activities.js';
 
 const {
@@ -29,7 +29,7 @@ export async function graphSummarizeWorkflow(input: GraphSummarizeInput): Promis
     cik: input.cik,
     ticker: input.ticker,
     runKind: input.runKind,
-    windowKey: input.quarter,
+    windowKey: quarterWindowKey(input.quarter),
     periodEnd: bounds.end,
     batchId: `graph-summarize:${input.runKind}:${input.quarter}`,
   });

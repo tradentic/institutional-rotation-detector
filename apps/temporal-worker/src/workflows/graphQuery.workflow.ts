@@ -1,5 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { rangeWindowKey, upsertWorkflowSearchAttributes } from './utils.js';
 import type {
   ResolveIssuerNodeInput,
   ResolveIssuerNodeResult,
@@ -49,7 +49,7 @@ export interface GraphQueryOutput {
 export async function graphQueryWorkflow(input: GraphQueryInput): Promise<GraphQueryOutput> {
   let issuer: ResolveIssuerNodeResult;
   let neighborhood: NeighborhoodResult = { nodes: [], edges: [], paths: [] };
-  const windowKey = `graph:${input.from}:${input.to}`;
+  const windowKey = rangeWindowKey(input.from, input.to, 'graph');
   const runKind = input.runKind ?? 'query';
   const batchId = `graph-query:${runKind}:${input.hops}`;
   if (input.ticker || input.cik) {
