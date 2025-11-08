@@ -7,9 +7,6 @@ services:
     init: true
     volumes:
       - ..:/workspaces/institutional-rotation-detector:cached
-    depends_on:
-      redis:
-        condition: service_healthy
 
   redis:
     image: redis:7-alpine
