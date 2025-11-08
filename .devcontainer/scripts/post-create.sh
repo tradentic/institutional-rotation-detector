@@ -63,4 +63,7 @@ fi
 log "Installing Supabase CLI..."
 "$HERE/install-supabase-cli.sh"
 
+log "Installing Temporal CLI..."
+"$HERE/install-temporal-cli.sh"
+
 log "post-create complete."
