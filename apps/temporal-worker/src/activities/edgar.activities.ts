@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
 import { createSupabaseClient } from '../lib/supabase.js';
 import { createSecClient } from '../lib/secClient.js';
-import type { FilingRecord } from '../lib/schema.js';
+import type { FilingCadence, FilingRecord } from '../lib/schema.js';
 
 const tickerSearchSchema = z.object({
   hits: z
@@ -70,6 +70,83 @@ function toArray<T>(value: T | T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+type ExpectedDateSource = 'filed_date' | 'period_end' | 'event_date';
+
+interface FilingFormRule {
+  cadence: FilingCadence;
+  expectedLagDays?: number;
+  expectedBase?: ExpectedDateSource;
+  isAmendment?: boolean;
+}
+
+const DEFAULT_FORM_RULE: FilingFormRule = {
+  cadence: 'adhoc',
+  expectedBase: 'filed_date',
+};
+
+const FILING_FORM_RULES: Record<string, FilingFormRule> = {
+  '13F-HR': { cadence: 'quarterly', expectedLagDays: 45, expectedBase: 'period_end' },
+  '13F-HR/A': { cadence: 'quarterly', expectedLagDays: 45, expectedBase: 'period_end', isAmendment: true },
+  '13F-HR-A': { cadence: 'quarterly', expectedLagDays: 45, expectedBase: 'period_end', isAmendment: true },
+  '13G': { cadence: 'annual', expectedLagDays: 45, expectedBase: 'period_end' },
+  '13G-A': { cadence: 'annual', expectedLagDays: 45, expectedBase: 'period_end', isAmendment: true },
+  '13G/A': { cadence: 'annual', expectedLagDays: 45, expectedBase: 'period_end', isAmendment: true },
+  '13D': { cadence: 'event', expectedLagDays: 10, expectedBase: 'event_date' },
+  '13D-A': { cadence: 'event', expectedLagDays: 10, expectedBase: 'event_date', isAmendment: true },
+  '13D/A': { cadence: 'event', expectedLagDays: 10, expectedBase: 'event_date', isAmendment: true },
+  '10-K': { cadence: 'annual', expectedLagDays: 60, expectedBase: 'period_end' },
+  '10-K/A': { cadence: 'annual', expectedLagDays: 60, expectedBase: 'period_end', isAmendment: true },
+  '10-Q': { cadence: 'quarterly', expectedLagDays: 45, expectedBase: 'period_end' },
+  '10-Q/A': { cadence: 'quarterly', expectedLagDays: 45, expectedBase: 'period_end', isAmendment: true },
+  '8-K': { cadence: 'event', expectedLagDays: 4, expectedBase: 'event_date' },
+  '8-K/A': { cadence: 'event', expectedLagDays: 4, expectedBase: 'event_date', isAmendment: true },
+};
+
+function getFormRule(formType: string): FilingFormRule {
+  const normalized = formType.toUpperCase();
+  const override = FILING_FORM_RULES[normalized];
+  if (override) {
+    return { ...DEFAULT_FORM_RULE, ...override };
+  }
+  return DEFAULT_FORM_RULE;
+}
+
+function isAmendmentForm(formType: string): boolean {
+  return /(?:\/-A|\/A|-A)$/.test(formType);
+}
+
+function parseIsoDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const iso = value.length === 10 ? `${value}T00:00:00Z` : value;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function resolveExpectedPublishAt(
+  rule: FilingFormRule,
+  dates: { filedDate: string; periodEnd: string | null; eventDate: string | null }
+): string | null {
+  const baseSource = rule.expectedBase ?? DEFAULT_FORM_RULE.expectedBase!;
+  const baseDate =
+    baseSource === 'period_end'
+      ? parseIsoDate(dates.periodEnd)
+      : baseSource === 'event_date'
+      ? parseIsoDate(dates.eventDate) ?? parseIsoDate(dates.periodEnd)
+      : parseIsoDate(dates.filedDate);
+  if (!baseDate) return null;
+  const expected = rule.expectedLagDays ? addDays(baseDate, rule.expectedLagDays) : baseDate;
+  return expected.toISOString();
+}
+
 export async function resolveCIK(ticker: string) {
   const tickerUpper = ticker.toUpperCase();
   const client = createSecClient();
@@ -126,15 +203,35 @@ export async function fetchFilings(
     return filed >= start && filed <= end && forms.includes(filing.formType);
   });
 
-  const records: FilingRecord[] = filtered.map((filing) => ({
-    accession: filing.accessionNumber.replace(/-/g, ''),
-    cik: normalizedCik,
-    form: filing.formType,
-    filed_date: filing.filingDate,
-    period_end: filing.reportDate ?? null,
-    event_date: filing.acceptanceDateTime?.slice(0, 10) ?? null,
-    url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${filing.accessionNumber.replace(/-/g, '')}/${filing.primaryDocument}`,
-  }));
+  const records: FilingRecord[] = filtered.map((filing) => {
+    const accession = filing.accessionNumber.replace(/-/g, '');
+    const formRule = getFormRule(filing.formType);
+    const periodEnd = filing.reportDate ?? null;
+    const reportedEventDate = filing.reportDate ?? null;
+    const acceptanceDate = filing.acceptanceDateTime ?? null;
+    const eventDate = reportedEventDate ?? acceptanceDate?.slice(0, 10) ?? null;
+    const publishedAt = parseIsoDate(acceptanceDate) ?? parseIsoDate(filing.filingDate);
+    const expectedPublishAt = resolveExpectedPublishAt(formRule, {
+      filedDate: filing.filingDate,
+      periodEnd,
+      eventDate,
+    });
+    const isAmendment = formRule.isAmendment ?? isAmendmentForm(filing.formType);
+    return {
+      accession,
+      cik: normalizedCik,
+      form: filing.formType,
+      filed_date: filing.filingDate,
+      period_end: periodEnd,
+      event_date: eventDate,
+      url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${filing.primaryDocument}`,
+      cadence: formRule.cadence,
+      expected_publish_at: expectedPublishAt,
+      published_at: publishedAt?.toISOString() ?? null,
+      is_amendment: isAmendment,
+      amendment_of_accession: null,
+    } satisfies FilingRecord;
+  });
 
   const supabase = createSupabaseClient();
   await supabase.from('filings').upsert(records, { onConflict: 'accession' });

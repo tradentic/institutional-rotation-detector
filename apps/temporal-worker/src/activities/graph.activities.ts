@@ -98,7 +98,9 @@ function createSupabaseGraphStore(): SupabaseGraphStore {
         supabase.from('cusip_issuer_map').select('cusip,issuer_cik'),
         supabase
           .from('filings')
-          .select('accession,cik,form,filed_date,period_end,event_date')
+          .select(
+            'accession,cik,form,filed_date,period_end,event_date,cadence,expected_publish_at,published_at,is_amendment,amendment_of_accession'
+          )
           .gte('filed_date', input.quarterStart)
           .lte('filed_date', input.quarterEnd),
         supabase

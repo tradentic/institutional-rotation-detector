@@ -1,3 +1,5 @@
+export type FilingCadence = 'annual' | 'semiannual' | 'quarterly' | 'monthly' | 'event' | 'adhoc';
+
 export interface FilingRecord {
   accession: string;
   cik: string;
@@ -6,6 +8,11 @@ export interface FilingRecord {
   period_end?: string | null;
   event_date?: string | null;
   url: string;
+  cadence?: FilingCadence | null;
+  expected_publish_at?: string | null;
+  published_at?: string | null;
+  is_amendment?: boolean;
+  amendment_of_accession?: string | null;
 }
 
 export interface Position13FRecord {
