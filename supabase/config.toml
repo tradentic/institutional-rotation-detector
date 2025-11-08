@@ -2,9 +2,6 @@
 # working directory name when running `supabase init`.
 project_id = "institutional-rotation-detector"
 
-# Note: supabase/migrations and supabase/seed are symlinked to db/migrations and db/seed
-# This allows seamless integration with Supabase CLI while maintaining our project structure
-
 [api]
 enabled = true
 # Port to use for the API URL.
@@ -26,6 +23,12 @@ shadow_port = 54320
 # The database major version to use. This has to be the same as your remote database's. Run `SHOW
 # server_version;` on the remote database to check.
 major_version = 15
+
+[db.seed]
+# If enabled, you can use `supabase db reset` to run seed files
+enabled = true
+# Paths to SQL seed files. Files are executed in alphabetical order.
+sql_paths = ['../db/seed']
 
 [db.pooler]
 enabled = false

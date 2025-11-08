@@ -24,7 +24,9 @@ db/
     └── .gitkeep
 ```
 
-**Note:** For local development with Supabase, `supabase/migrations` and `supabase/seed` are symlinked to these directories.
+**Note:** For local development with Supabase:
+- `supabase/migrations` is symlinked to `db/migrations/` (Supabase CLI requires migrations in this location)
+- Seed data is configured via `sql_paths` in `supabase/config.toml` pointing to `db/seed/`
 
 ## Migrations
 
