@@ -254,8 +254,8 @@ const gate =
 ### Pre-Deploy
 - [ ] Run `npm install` in `apps/temporal-worker`
 - [ ] Run `npm run build` and fix remaining TypeScript errors
+- [ ] Apply migration: `supabase db push` or `supabase migration up`
 - [ ] Run `tools/seed-index-calendar.ts` to populate index windows
-- [ ] Apply migration `013_rotation_event_provenance.sql`
 
 ### Post-Deploy
 - [ ] Verify environment variable `MIN_DUMP_PCT` is not set (defaults to 30)
