@@ -16,6 +16,7 @@ export function resolveQuarterRange(from: string, to: string): string[] {
 }
 
 export interface WorkflowSearchAttributes {
+  symbol?: string;
   ticker?: string;
   cik?: string;
   filerCik?: string;
@@ -25,6 +26,11 @@ export interface WorkflowSearchAttributes {
   windowKey?: string;
   batchId?: string;
   runKind?: 'backfill' | 'daily' | 'query';
+  dataset?: string;
+  granularity?: string;
+  weekEnd?: string | Date;
+  tradeDate?: string | Date;
+  provenance?: string;
 }
 
 const searchAttributesQuery = defineQuery<Record<string, string[]>>('__workflow_search_attributes');
@@ -32,6 +38,7 @@ let queryRegistered = false;
 let lastAppliedAttributes: Record<string, string[]> = {};
 
 const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }> = {
+  symbol: { name: 'Symbol', type: SearchAttributeType.KEYWORD },
   ticker: { name: 'Ticker', type: SearchAttributeType.KEYWORD },
   cik: { name: 'CIK', type: SearchAttributeType.KEYWORD },
   filerCik: { name: 'FilerCIK', type: SearchAttributeType.KEYWORD },
@@ -41,6 +48,11 @@ const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: 
   windowKey: { name: 'WindowKey', type: SearchAttributeType.KEYWORD },
   batchId: { name: 'BatchId', type: SearchAttributeType.KEYWORD },
   runKind: { name: 'RunKind', type: SearchAttributeType.KEYWORD },
+  dataset: { name: 'Dataset', type: SearchAttributeType.KEYWORD },
+  granularity: { name: 'Granularity', type: SearchAttributeType.KEYWORD },
+  weekEnd: { name: 'WeekEnd', type: SearchAttributeType.DATETIME },
+  tradeDate: { name: 'TradeDate', type: SearchAttributeType.DATETIME },
+  provenance: { name: 'Provenance', type: SearchAttributeType.KEYWORD },
 };
 
 const cachedKeys = new Map<string, ReturnType<typeof defineSearchAttributeKey>>();

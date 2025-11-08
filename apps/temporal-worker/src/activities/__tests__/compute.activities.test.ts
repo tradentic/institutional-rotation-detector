@@ -19,6 +19,7 @@ interface MockDatabase {
 
 const BASE_QUARTER = { start: '2024-01-01', end: '2024-03-31' } as const;
 const ISSUER_CIK = '000TEST';
+const TEST_TICKER = 'TEST';
 
 let mockDb: MockDatabase;
 
@@ -248,6 +249,41 @@ function resetDatabase() {
     ],
     daily_returns: generateDailyReturns(),
     rotation_events: [],
+    micro_offex_ratio: [
+      {
+        symbol: TEST_TICKER,
+        as_of: '2024-03-30',
+        granularity: 'daily',
+        offex_pct: 0.55,
+        offex_shares: 550000,
+        on_ex_shares: 450000,
+        quality_flag: 'approx',
+      },
+      {
+        symbol: TEST_TICKER,
+        as_of: '2024-03-31',
+        granularity: 'daily',
+        offex_pct: 0.48,
+        offex_shares: 480000,
+        on_ex_shares: 520000,
+        quality_flag: 'approx',
+      },
+      {
+        symbol: TEST_TICKER,
+        as_of: '2024-04-01',
+        granularity: 'daily',
+        offex_pct: 0.46,
+        offex_shares: 460000,
+        on_ex_shares: 540000,
+        quality_flag: 'approx',
+      },
+    ],
+    micro_short_interest_points: [
+      { symbol: TEST_TICKER, settlement_date: '2024-03-15', short_interest: 1000000 },
+      { symbol: TEST_TICKER, settlement_date: '2024-03-31', short_interest: 900000 },
+      { symbol: TEST_TICKER, settlement_date: '2024-04-15', short_interest: 850000 },
+    ],
+    micro_event_study_results: [],
   };
 }
 
@@ -330,10 +366,15 @@ describe('compute activities integration', () => {
     expect(shiftedScore).toBeLessThan(baseScore);
   });
 
-  test('eventStudy derives CAR metrics from ingested returns', async () => {
-    const study = await eventStudy(BASE_QUARTER.end, ISSUER_CIK);
+  test('eventStudy derives CAR metrics and covariates from ingested returns', async () => {
+    const study = await eventStudy(BASE_QUARTER.end, ISSUER_CIK, TEST_TICKER);
     expect(study.car).toBeGreaterThan(0);
     expect(study.ttPlus20).toBeGreaterThan(0);
     expect(study.maxRet).toBeGreaterThan(0);
+    expect(study.plus1w).toBeGreaterThan(0);
+    expect(study.offexCovariates['d+0']).toBeCloseTo(0.48, 2);
+    expect(study.shortInterestChange).toBeLessThan(0);
+    expect(study.iexShare).toBeGreaterThan(0);
+    expect(mockDb.micro_event_study_results.length).toBe(1);
   });
 });

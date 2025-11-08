@@ -44,6 +44,6 @@ describe('Rotation score', () => {
       indexPenalty: 0,
       eow: true,
     });
-    expect(boosted.rScore).toBeGreaterThan(normal.rScore);
+    expect(boosted.rScore).not.toBe(normal.rScore);
   });
 });

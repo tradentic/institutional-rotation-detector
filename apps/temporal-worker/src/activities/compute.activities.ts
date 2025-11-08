@@ -524,7 +524,21 @@ export async function scoreV4_1(
   return event;
 }
 
-export async function eventStudy(anchorDate: string, cik: string) {
+function addDays(date: string, offset: number) {
+  const base = parseDate(date);
+  const shifted = new Date(base.getTime() + offset * 24 * 60 * 60 * 1000);
+  return formatDate(shifted);
+}
+
+function cumulative(values: { date: string; value: number }[], startIndex: number, endIndex: number) {
+  let total = 0;
+  for (let i = startIndex; i <= endIndex; i++) {
+    total += values[i]!.value;
+  }
+  return total;
+}
+
+export async function eventStudy(anchorDate: string, cik: string, ticker?: string) {
   const supabase = getSupabaseClient();
   const windowStart = formatDate(
     new Date(parseDate(anchorDate).getTime() - 10 * 24 * 60 * 60 * 1000)
@@ -550,10 +564,7 @@ export async function eventStudy(anchorDate: string, cik: string) {
   }
   const startIndex = Math.max(0, anchorIndex - 5);
   const endIndex = Math.min(abnormal.length - 1, anchorIndex + 20);
-  let car = 0;
-  for (let i = startIndex; i <= endIndex; i++) {
-    car += abnormal[i].value;
-  }
+  const car = cumulative(abnormal, startIndex, endIndex);
   let ttPlus20 = 0;
   if (anchorIndex + 20 < abnormal.length) {
     const plus20Date = abnormal[anchorIndex + 20].date;
@@ -567,17 +578,120 @@ export async function eventStudy(anchorDate: string, cik: string) {
   }
   let running = 0;
   let maxRet = 0;
+  let maxDrawdown = 0;
   const maxIndex = Math.min(abnormal.length, anchorIndex + 65);
   for (let i = anchorIndex; i < maxIndex; i++) {
     running += abnormal[i].value;
     if (running > maxRet) {
       maxRet = running;
     }
+    if (running < maxDrawdown) {
+      maxDrawdown = running;
+    }
   }
+
+  const horizons = [5, 10, 20, 40, 65];
+  const horizonTotals = horizons.map((offset) => {
+    const end = Math.min(abnormal.length - 1, anchorIndex + offset);
+    return end >= anchorIndex ? cumulative(abnormal, anchorIndex, end) : 0;
+  });
+
+  let offexCovariates: Record<string, number | null> = {};
+  let shortInterestChange: number | null = null;
+  let iexShare: number | null = null;
+
+  if (ticker) {
+    const symbol = ticker.toUpperCase();
+    const ratioQuery = await supabase
+      .from('micro_offex_ratio')
+      .select('as_of,offex_pct,offex_shares,on_ex_shares,quality_flag')
+      .eq('symbol', symbol)
+      .eq('granularity', 'daily')
+      .gte('as_of', addDays(anchorDate, -1))
+      .lte('as_of', addDays(anchorDate, 20))
+      .order('as_of', { ascending: true });
+    if (ratioQuery.error) throw ratioQuery.error;
+    offexCovariates = {};
+    for (const row of ratioQuery.data ?? []) {
+      const diff = Math.round(
+        (parseDate(row.as_of as string).getTime() - parseDate(anchorDate).getTime()) /
+          (24 * 60 * 60 * 1000)
+      );
+      const key = diff >= 0 ? `d+${diff}` : `d${diff}`;
+      offexCovariates[key] = row.offex_pct as number | null;
+      if (row.as_of === anchorDate && row.offex_shares !== null && row.on_ex_shares !== null) {
+        const total = toNumber(row.offex_shares) + toNumber(row.on_ex_shares);
+        if (total > 0) {
+          iexShare = toNumber(row.on_ex_shares) / total;
+        }
+      }
+    }
+    const shortQuery = await supabase
+      .from('micro_short_interest_points')
+      .select('settlement_date,short_interest')
+      .eq('symbol', symbol)
+      .lte('settlement_date', addDays(anchorDate, 90))
+      .order('settlement_date', { ascending: true });
+    if (shortQuery.error) throw shortQuery.error;
+    const shortRows = shortQuery.data ?? [];
+    let before: any = null;
+    let after: any = null;
+    for (const row of shortRows) {
+      if (row.settlement_date < anchorDate) {
+        before = row;
+      }
+      if (!after && row.settlement_date >= anchorDate) {
+        after = row;
+      }
+    }
+    if (before && after) {
+      shortInterestChange = toNumber(after.short_interest) - toNumber(before.short_interest);
+    }
+  }
+
+  if (ticker) {
+    const upsertResult = await supabase
+      .from('micro_event_study_results')
+      .upsert(
+        [
+          {
+            symbol: ticker.toUpperCase(),
+            event_type: 'Rotation',
+            anchor_date: anchorDate,
+            cik: cik ?? '',
+            car_m5_p20: car,
+            tt_plus20_days: ttPlus20,
+            max_ret_w13: maxRet,
+            plus_1w: horizonTotals[0] ?? 0,
+            plus_2w: horizonTotals[1] ?? 0,
+            plus_4w: horizonTotals[2] ?? 0,
+            plus_8w: horizonTotals[3] ?? 0,
+            plus_13w: horizonTotals[4] ?? 0,
+            offex_covariates: offexCovariates,
+            short_interest_covariate: shortInterestChange,
+            iex_share: iexShare,
+          },
+        ],
+        { onConflict: 'symbol,event_type,anchor_date,cik' }
+      );
+    if (upsertResult.error) {
+      throw upsertResult.error;
+    }
+  }
+
   return {
     anchorDate,
     car,
     ttPlus20,
     maxRet,
+    maxDrawdown,
+    plus1w: horizonTotals[0] ?? 0,
+    plus2w: horizonTotals[1] ?? 0,
+    plus4w: horizonTotals[2] ?? 0,
+    plus8w: horizonTotals[3] ?? 0,
+    plus13w: horizonTotals[4] ?? 0,
+    offexCovariates,
+    shortInterestChange,
+    iexShare,
   };
 }

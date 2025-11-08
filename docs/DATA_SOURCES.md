@@ -7,6 +7,7 @@ Comprehensive guide to external data sources, APIs, and integration patterns.
 - [Overview](#overview)
 - [SEC EDGAR](#sec-edgar)
 - [FINRA](#finra)
+- [IEX Exchange](#iex-exchange)
 - [ETF Holdings](#etf-holdings)
 - [OpenAI](#openai)
 - [Rate Limiting](#rate-limiting)
@@ -20,7 +21,9 @@ The Institutional Rotation Detector integrates data from multiple external sourc
 | Source | Data Type | Frequency | Latency | Cost |
 |--------|-----------|-----------|---------|------|
 | SEC EDGAR | 13F, N-PORT, 13G/D | Quarterly/Monthly | 45 days (13F) | Free |
-| FINRA | Short interest | Bi-weekly | 1 week | Free |
+| FINRA OTC Transparency | Off-exchange volumes (ATS & non-ATS) | Weekly | ~2 weeks | Free |
+| IEX Exchange | Matched on-exchange volume (HIST) | Daily (T+1) | 1 day | Free |
+| FINRA | Short interest | Semi-monthly | ~8 business days | Free |
 | ETF Providers | Daily holdings | Daily | 1 day | Free |
 | OpenAI | Text generation | On-demand | Real-time | Paid |
 
@@ -267,62 +270,47 @@ export class SECClient {
 
 ### Overview
 
-**FINRA** (Financial Industry Regulatory Authority) provides short interest data.
+**FINRA** (Financial Industry Regulatory Authority) publishes multiple microstructure datasets that power off-exchange analytics and short-interest overlays. We integrate both the **OTC Transparency** program (ATS + non-ATS) and **Rule 4560 short-interest** reports.
 
-**Base URL:** `https://www.finra.org/`
+### OTC Transparency (ATS & Non-ATS)
 
-**Data:** Short interest by security (bi-weekly).
+- **Program page:** https://otctransparency.finra.org/
+- **Cadence:** Weekly (reports publish roughly two weeks after the trade week ends).
+- **Deliverables:** Venue-level share/trade totals for ATS and non-ATS activity plus symbol aggregates.
+- **Transport:** CSV files (often zipped). Filenames encode report type and week end (e.g., `ATS_20240503.csv`).
+- **Implementation:** `finraOtcWeeklyIngestWorkflow` orchestrates `listWeeklyFiles → downloadWeeklyFile → parseVenueCsv → aggregateSymbolWeek`. All network access happens in `finra.otc.activities.ts`, which respects `MAX_RPS_EXTERNAL` via a `RateLimiter` and stamps provenance (`micro_source_files` keeps URL + SHA-256).
+- **Storage:**
+  - `micro_offex_venue_weekly` stores venue rows with `finra_file_id`/`finra_sha256`.
+  - `micro_offex_symbol_weekly` materializes per-symbol totals.
+  - `micro_offex_ratio` contains official weekly percentages (`quality_flag='official'` when consolidated totals exist, `'official_partial'` otherwise) and daily approximations (`'approx'` for consolidated distributions, `'iex_proxy'` when using IEX matched volume).
 
-### Short Interest Data
+### Short Interest (Rule 4560)
 
-**Reporting Schedule:**
-- Settlement dates: 15th and last day of each month
-- Published: ~1 week after settlement
+- **Program page:** https://www.finra.org/rules-guidance/rulebooks/finra-rules/4560
+- **Cadence:** Semi-monthly. Settlement dates fall on the 15th and the last business day of each month; publication occurs ~8 business days later.
+- **Transport:** FINRA Data API (`group=shortSale`, `name=shortInterest`) via `FinraClient`.
+- **Implementation:** `shortInterestIngestWorkflow` loads the FINRA calendar (`shortinterest.activities.ts#loadCalendar`) and fetches symbol-level shares with `fetchShortInterest`, writing to `micro_short_interest_points` with provenance metadata.
+- **Usage:** Event-study covariates use the latest and next publication surrounding an anchor to compute `short_interest_change`.
 
-**Format:** CSV or Excel download.
+### Provenance & Compliance
 
-**Fields:**
-- Symbol
-- Company name
-- Settlement date
-- Short interest (shares)
-- Average daily volume
-- Days to cover
+- Every downloaded artifact is hashed (`sha256`) and recorded in `micro_source_files` for auditability.
+- Activities set the `EDGAR_USER_AGENT` header (configure via environment) and throttle against `MAX_RPS_EXTERNAL` to respect FINRA's robots guidance.
 
-**Example Data:**
-```csv
-Symbol,Company,SettlementDate,ShortInterest,AvgDailyVolume,DaysToCover
-AAPL,Apple Inc,2024-03-15,115000000,62000000,1.85
-MSFT,Microsoft Corp,2024-03-15,78000000,25000000,3.12
-```
+---
 
-### Access Methods
+## IEX Exchange
 
-**Manual Download:**
-1. Visit https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data
-2. Select date range
-3. Download CSV
+### Overview
 
-**Automated (Unofficial API):**
+The Investors Exchange (IEX) publishes **HIST** matched-volume files that capture on-exchange executions for all listed symbols.
 
-**Note:** FINRA does not provide an official API. Scraping may violate terms of service.
-
-**Alternative:** Use third-party data providers (Quandl, Alpha Vantage) that aggregate FINRA data.
-
-### Implementation
-
-```typescript
-export async function fetchShortInterest(
-  cik: string,
-  settleDates: string[]
-): Promise<number> {
-  // In production, use a licensed data provider
-  // For development, use cached or mock data
-
-  const shortInterest = await getCachedShortInterest(cik, settleDates[0]);
-  return shortInterest ?? 0;
-}
-```
+- **Program page:** https://www.iexexchange.io/products/market-data
+- **Cadence:** Daily (T+1, business days).
+- **Transport:** CSV files (`hist/stocks/YYYYMMDD.csv`) occasionally bundled in ZIP archives.
+- **Implementation:** `iexDailyIngestWorkflow` drives `downloadDaily → parseDailyVolume`. Activities live in `iex.hist.activities.ts` and reuse the shared rate limiter + provenance store (`micro_source_files`).
+- **Storage:** `micro_iex_volume_daily` persists per-symbol matched shares with file identifiers and hashes.
+- **Usage:** Acts as the default on-exchange proxy when consolidated totals are unavailable (`micro_offex_ratio.quality_flag='iex_proxy'`).
 
 ---
 

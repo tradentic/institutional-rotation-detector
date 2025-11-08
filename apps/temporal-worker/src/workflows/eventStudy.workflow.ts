@@ -1,7 +1,7 @@
 import { proxyActivities } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
 
-const { eventStudy } = proxyActivities<{ eventStudy: (anchorDate: string, cik: string) => Promise<any> }>(
+const { eventStudy } = proxyActivities<{ eventStudy: (anchorDate: string, cik: string, ticker?: string) => Promise<any> }>(
   {
     startToCloseTimeout: '1 minute',
   }
@@ -25,5 +25,5 @@ export async function eventStudyWorkflow(input: EventStudyInput) {
     periodEnd: input.anchorDate,
     batchId: `event-study:${input.cik}:${input.anchorDate}`,
   });
-  return eventStudy(input.anchorDate, input.cik);
+  return eventStudy(input.anchorDate, input.cik, input.ticker);
 }

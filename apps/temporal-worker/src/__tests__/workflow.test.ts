@@ -14,6 +14,12 @@ async function ensureSearchAttributesRegistered() {
   const { IndexedValueType } = temporal.api.enums.v1;
   const searchAttributes = {
     Ticker: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    Symbol: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    Dataset: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    Granularity: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
+    WeekEnd: IndexedValueType.INDEXED_VALUE_TYPE_DATETIME,
+    TradeDate: IndexedValueType.INDEXED_VALUE_TYPE_DATETIME,
+    Provenance: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
     CIK: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
     FilerCIK: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
     Form: IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD,
