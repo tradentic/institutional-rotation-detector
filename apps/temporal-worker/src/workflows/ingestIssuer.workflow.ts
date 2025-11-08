@@ -22,6 +22,7 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
   const quarterBatch = input.quarterBatch ?? 8;
   const quarters = input.quarters ?? resolveQuarterRange(input.from, input.to);
   const { cik, cusips } = await resolveCIK(input.ticker);
+  const etfUniverse = ['IWB', 'IWM', 'IWN', 'IWC'];
   const currentBatch = quarters.slice(0, quarterBatch);
   const remaining = quarters.slice(quarterBatch);
   const firstQuarter = (currentBatch[0] ?? quarters[0]) ?? null;
@@ -46,6 +47,7 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
           runKind: input.runKind,
           quarterStart: quarterBoundsForChild.start,
           quarterEnd: quarterBoundsForChild.end,
+          etfUniverse,
         } satisfies IngestQuarterInput,
       ],
     });

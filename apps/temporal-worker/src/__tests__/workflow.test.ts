@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 import { isGrpcServiceError } from '@temporalio/common';
+import { WorkflowNotFoundError } from '@temporalio/client';
 import { status as grpcStatus } from '@grpc/grpc-js';
 import { temporal } from '@temporalio/proto';
 import { IngestIssuerInput } from '../workflows/ingestIssuer.workflow.js';
@@ -96,7 +97,13 @@ describe('Temporal workflows', () => {
         const info = await handle.describe();
         expect(info.execution?.runId).not.toBe(handle.firstExecutionRunId);
         expect(fetchCalls.length).toBe(0);
-        await handle.terminate('test complete');
+        try {
+          await handle.terminate('test complete');
+        } catch (err) {
+          if (!(err instanceof WorkflowNotFoundError)) {
+            throw err;
+          }
+        }
       } finally {
         (global as any).fetch = originalFetch;
         await worker.shutdown();

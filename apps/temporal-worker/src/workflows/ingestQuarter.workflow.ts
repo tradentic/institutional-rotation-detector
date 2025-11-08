@@ -24,6 +24,7 @@ export interface IngestQuarterInput {
   runKind: 'backfill' | 'daily';
   quarterStart: string;
   quarterEnd: string;
+  etfUniverse?: string[];
 }
 
 export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
@@ -56,7 +57,7 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   const derivedBounds = quarterBounds(input.quarter);
   const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
   await activities.fetchMonthly(input.cik, months);
-  await activities.fetchDailyHoldings(input.cusips, process.env.ISHARES_FUNDS?.split(',') ?? []);
+  await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? ['IWB', 'IWM', 'IWN', 'IWC']);
   await activities.fetchShortInterest(input.cik, [bounds.start]);
   await activities.fetchATSWeekly(input.cik, [bounds.end]);
 
