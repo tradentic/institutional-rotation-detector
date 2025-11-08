@@ -24,7 +24,12 @@ const activities = proxyActivities<{
       eow: boolean;
     }
   ) => Promise<any>;
-  buildEdges: (seller: any[], buyer: any[], period: { start: string; end: string }) => Promise<any>;
+  buildEdges: (
+    seller: any[],
+    buyer: any[],
+    period: { start: string; end: string },
+    rootIssuerCik: string
+  ) => Promise<any>;
 }>(
   {
     startToCloseTimeout: '5 minutes',
@@ -82,7 +87,8 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       [
         { entityId: 'buyer', cusip: input.cusips[0], equityDelta: Math.abs(anchor.delta), optionsDelta: 0 },
       ],
-      bounds
+      bounds,
+      input.cik
     );
 
     const child = await startChild<EventStudyInput>('eventStudyWorkflow', {

@@ -14,12 +14,14 @@ export async function GET(request: Request): Promise<Response> {
   const supabase = createSupabaseClient();
   let issuerCik: string | null = cikParam;
   if (!issuerCik && ticker) {
+    const normalizedTicker = ticker.toUpperCase();
     const { data: issuer, error: issuerError } = await supabase
-      .from('issuers')
+      .from('entities')
       .select('cik')
-      .eq('ticker', ticker.toUpperCase())
-      .single();
-    if (issuerError || !issuer) {
+      .eq('kind', 'issuer')
+      .ilike('name', `%${normalizedTicker}%`)
+      .maybeSingle();
+    if (issuerError || !issuer?.cik) {
       return new Response('Unknown ticker', { status: 404 });
     }
     issuerCik = issuer.cik;
