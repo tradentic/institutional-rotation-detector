@@ -1,0 +1,2 @@
+# This directory contains SQL seed files for local development
+# Files are executed in alphabetical order by `supabase db reset`
