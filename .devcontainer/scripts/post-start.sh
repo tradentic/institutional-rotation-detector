@@ -141,6 +141,77 @@ fi
 
 supabase_ready="$supabase_stack_ready"
 
+temporal_cli_present=false
+temporal_server_ready=false
+
+if command -v temporal >/dev/null 2>&1; then
+  temporal_cli_present=true
+else
+  log "Temporal CLI not found on PATH; Temporal startup will be skipped."
+fi
+
+temporal_server_running() {
+  if pgrep -f "temporal server start-dev" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+start_temporal_server() {
+  if temporal_server_running; then
+    log "Temporal server is already running."
+    return 0
+  fi
+
+  log "Starting Temporal development server in the background..."
+  nohup temporal server start-dev >/tmp/temporal-server.log 2>&1 &
+  local temporal_pid=$!
+
+  log "Temporal server started with PID $temporal_pid. Logs available at /tmp/temporal-server.log"
+  return 0
+}
+
+wait_for_temporal_ready() {
+  local max_attempts="${1:-30}"
+  local sleep_seconds="${2:-2}"
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if temporal_server_running; then
+      return 0
+    fi
+
+    if [[ "$attempt" -eq 1 ]]; then
+      log "Waiting for Temporal server to become ready..."
+    fi
+
+    sleep "$sleep_seconds"
+  done
+
+  return 1
+}
+
+if [[ "$temporal_cli_present" == "true" ]]; then
+  log "Checking Temporal server status..."
+  if temporal_server_running; then
+    log "Temporal server already running."
+    temporal_server_ready=true
+  else
+    log "Temporal server not running; starting now..."
+    if start_temporal_server; then
+      if wait_for_temporal_ready 30 2; then
+        log "Temporal server is ready."
+        temporal_server_ready=true
+      else
+        log "Temporal server did not become ready in time."
+      fi
+    else
+      log "Failed to start Temporal server."
+    fi
+  fi
+else
+  log "Skipping Temporal startup because the Temporal CLI is unavailable."
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
   if [[ "${supabase_ready}" == "true" ]]; then
     echo "[post-start] Syncing local environment files from Supabase status..."
