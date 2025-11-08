@@ -54,6 +54,11 @@ export interface FilingRecord {
   filed_date: string;
   event_date: string | null;
   period_end: string | null;
+  cadence?: 'annual' | 'semiannual' | 'quarterly' | 'monthly' | 'event' | 'adhoc' | null;
+  expected_publish_at?: string | null;
+  published_at?: string | null;
+  is_amendment?: boolean;
+  amendment_of_accession?: string | null;
 }
 
 export interface BoSnapshotRecord {
