@@ -1,0 +1,66 @@
+{
+  "name": "Instituitional Rotation Detector",
+  "dockerComposeFile": [
+    "./docker-compose.yml"
+  ],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/institutional-rotation-detector",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24",
+      "installPnpm": true,
+      "pnpmVersion": "10.17.1"
+    }
+  },
+  "updateContentCommand": "pnpm install",
+  "postCreateCommand": ".devcontainer/scripts/post-create.sh",
+  "postStartCommand": ".devcontainer/scripts/post-start.sh",
+  "forwardPorts": [3000, 3100, 54321, 54322, 54323, 54324, 54326, 6379],
+  "portsAttributes": {
+    "3000": {
+      "label": "Web app"
+    },
+    "3100": {
+      "label": "Admin app"
+    },
+    "54321": {
+      "label": "Supabase API"
+    },
+    "54322": {
+      "label": "Supabase Postgres"
+    },
+    "54323": {
+      "label": "Supabase Studio"
+    },
+    "54324": {
+      "label": "Supabase Inbucket"
+    },
+    "54326": {
+      "label": "Supabase Storage"
+    },
+    "6379": {
+      "label": "Redis"
+    }
+  },
+    "customizations": {
+    "vscode": {
+      "settings": {
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-playwright.playwright",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "streetsidesoftware.code-spell-checker",
+        "bradlc.vscode-tailwindcss",
+        "openai.chatgpt",
+        "Supabase.vscode-supabase-extension",
+        "github.vscode-github-actions",
+        "GitHub.vscode-pull-request-github"
+      ]
+    }
+  }
+}

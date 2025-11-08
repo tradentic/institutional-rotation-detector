@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  devcontainer:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+    command: sleep infinity
+    init: true
+    volumes:
+      - ..:/workspaces/institutional-rotation-detector:cached
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 2s
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
