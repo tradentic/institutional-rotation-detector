@@ -1,0 +1,61 @@
+{
+  "aaData": [
+    [
+      "AAPL",
+      "APPLE INC",
+      "Information Technology",
+      "Equity",
+      { "display": "$2,797,971,081.07", "raw": 2797971081.07 },
+      { "display": "6.37", "raw": 6.37 },
+      { "display": "2,797,971,081.07", "raw": 2797971081.07 },
+      { "display": "10,371,691.00", "raw": 10371691 },
+      "037833100",
+      "US0378331005",
+      "2046251",
+      { "display": "269.77", "raw": 269.77 },
+      "United States",
+      "NASDAQ",
+      "USD",
+      "1.00",
+      "-"
+    ],
+    [
+      "MSFT",
+      "MICROSOFT CORP",
+      "Information Technology",
+      "Equity",
+      { "display": "$2,622,815,424.30", "raw": 2622815424.3 },
+      { "display": "5.97", "raw": 5.97 },
+      { "display": "2,622,815,424.30", "raw": 2622815424.3 },
+      { "display": "5,276,233.00", "raw": 5276233 },
+      "594918104",
+      "US5949181045",
+      "2588173",
+      { "display": "497.10", "raw": 497.1 },
+      "United States",
+      "NASDAQ",
+      "USD",
+      "1.00",
+      "-"
+    ],
+    [
+      "NVDA",
+      "NVIDIA CORP",
+      "Information Technology",
+      "Equity",
+      { "display": "$3,131,587,295.52", "raw": 3131587295.52 },
+      { "display": "7.13", "raw": 7.12693 },
+      { "display": "3,131,587,295.52", "raw": 3131587295.52 },
+      { "display": "16,650,294.00", "raw": 16650294 },
+      "67066G104",
+      "US67066G1040",
+      "2379504",
+      { "display": "188.08", "raw": 188.08 },
+      "United States",
+      "NASDAQ",
+      "USD",
+      "1.00",
+      "-"
+    ]
+  ]
+}
