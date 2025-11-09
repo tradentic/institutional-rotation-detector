@@ -27,6 +27,8 @@ export { form4IngestWorkflow, form4DailyCronWorkflow } from './form4Ingest.workf
 // Options flow workflows
 export {
   optionsIngestWorkflow,
+  optionsMinimalIngestWorkflow,
   unusualOptionsActivityCronWorkflow,
   optionsBatchIngestWorkflow,
+  optionsDeepAnalysisWorkflow,
 } from './optionsIngest.workflow.js';
