@@ -185,10 +185,10 @@ Activities are stateless functions that interact with external systems.
 | `etf.activities.ts` | ETF holdings processing | Internal DB |
 | `compute.activities.ts` | Rotation scoring | Internal DB |
 | `graph.activities.ts` | Graph construction | Internal DB |
-| `graphrag.activities.ts` | Community detection | Internal DB, OpenAI |
-| `rag.activities.ts` | RAG operations | OpenAI, pgvector |
+| `graphrag.activities.ts` | Graph algorithms (Louvain, PageRank, k-hop) | Internal DB, OpenAI |
+| `rag.activities.ts` | RAG operations (embedding-based) | OpenAI, pgvector |
 | `sankey.activities.ts` | Flow visualization | Internal DB |
-| `longcontext.activities.ts` | Long-context synthesis | OpenAI |
+| `longcontext.activities.ts` | Long-context synthesis (128K window) | OpenAI |
 
 **Activity Design Patterns:**
 
@@ -276,29 +276,34 @@ User Request (ticker, date range)
 Rotation Events (in database)
          │
          ▼
-┌────────────────────┐
-│ graphBuildWorkflow │
-│ • Create nodes     │
-│ • Create edges     │
-│ • Compute weights  │
-└────────┬───────────┘
+┌────────────────────────────────────────────┐
+│         graphBuildWorkflow                 │
+│  [Graph Algorithms Only]                   │
+│  • Create nodes from entities              │
+│  • Create edges from rotation flows        │
+│  • Compute edge weights                    │
+└────────┬───────────────────────────────────┘
          │
          ▼
-┌────────────────────┐
-│graphSummarizeWorkflow│
-│ 1. Run PageRank    │
-│ 2. Detect communities│
-│ 3. Summarize each  │
-│    community (AI)  │
-└────────┬───────────┘
+┌────────────────────────────────────────────┐
+│      graphSummarizeWorkflow                │
+│  [Graph Algorithms + Short AI Summaries]   │
+│  1. Run Louvain (community detection)      │
+│  2. Compute PageRank (node importance)     │
+│  3. Generate AI summary per community      │
+│     (uses GPT-4, short prompt)             │
+└────────┬───────────────────────────────────┘
          │
          ▼
-┌────────────────────┐
-│ graphQueryWorkflow │
-│ • Path finding     │
-│ • Subgraph extract │
-│ • Pattern matching │
-└────────────────────┘
+┌────────────────────────────────────────────┐
+│        graphQueryWorkflow                  │
+│  [Graph Algorithms + Long Context]         │
+│  1. K-hop neighborhood traversal           │
+│  2. Path finding (graph algorithms)        │
+│  3. Bundle edges + filing chunks           │
+│  4. Long context synthesis (128K window)   │
+│     → Natural language explanation         │
+└────────────────────────────────────────────┘
 ```
 
 ### Query Flow
@@ -532,6 +537,33 @@ const { data, error } = await supabase
 - Interpretable (can visualize graph)
 - Community detection adds structure
 - Combines graph algorithms + LLM strengths
+
+**Implementation Details:**
+
+GraphRAG in this system uses a **dual approach**:
+
+1. **Graph Algorithms** (`graphrag.activities.ts`):
+   - **Louvain algorithm** for community detection (clusters of coordinated investors)
+   - **PageRank** for identifying influential nodes
+   - **K-hop neighborhood** for graph traversal and relationship discovery
+   - **Pure algorithmic** - no LLM required for graph operations
+   - Results stored in `graph_nodes`, `graph_edges`, `graph_communities` tables
+
+2. **Long Context Synthesis** (`longcontext.activities.ts`):
+   - Uses OpenAI's **128K context window** (GPT-4 Turbo)
+   - Bundles graph edges with filing text chunks
+   - Generates natural language explanations from structured + unstructured data
+   - Enables answering complex questions about rotation patterns
+   - Results stored in `graph_explanations` table
+
+**When Each is Used:**
+- `graphBuildWorkflow`: Pure graph algorithms (no LLM)
+- `graphSummarizeWorkflow`: Graph algorithms + short LLM summaries per community
+- `graphQueryWorkflow`: **Both** - graph traversal finds relevant data, then long context synthesizes explanation
+
+This hybrid approach provides:
+- **Structure** from graph algorithms (who's connected to whom)
+- **Context** from long context synthesis (why it matters, what it means)
 
 ---
 

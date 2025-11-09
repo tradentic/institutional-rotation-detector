@@ -5,11 +5,15 @@ Comprehensive guide to knowledge graph construction, community detection, and AI
 ## Table of Contents
 
 - [Overview](#overview)
+- [Two-Part Architecture](#two-part-architecture)
 - [Why GraphRAG?](#why-graphrag)
-- [Graph Construction](#graph-construction)
-- [Community Detection](#community-detection)
-- [Graph Queries](#graph-queries)
-- [RAG Synthesis](#rag-synthesis)
+- [Part 1: Graph Algorithms](#part-1-graph-algorithms)
+  - [Graph Construction](#graph-construction)
+  - [Community Detection](#community-detection)
+  - [Graph Queries](#graph-queries)
+- [Part 2: Long Context Synthesis](#part-2-long-context-synthesis)
+  - [Context Bundling](#context-bundling)
+  - [Synthesis Process](#synthesis-process)
 - [Use Cases](#use-cases)
 - [Performance](#performance)
 
@@ -17,11 +21,56 @@ Comprehensive guide to knowledge graph construction, community detection, and AI
 
 GraphRAG combines **knowledge graphs** with **retrieval augmented generation** (RAG) to provide explainable, contextual insights about institutional rotation patterns.
 
-**Components:**
-1. **Knowledge Graph** - Nodes and edges representing entities and relationships
-2. **Community Detection** - Louvain algorithm identifies clusters of coordinated behavior
-3. **Graph Traversal** - K-hop neighborhood queries find related entities
-4. **AI Synthesis** - GPT-4 generates natural language explanations from graph data
+**This system implements GraphRAG using a dual approach:**
+
+1. **Graph Algorithms** - Pure algorithmic operations on graph data
+2. **Long Context Synthesis** - AI-powered natural language generation using large context windows
+
+Both components work together but serve distinct purposes and can be used independently.
+
+---
+
+## Two-Part Architecture
+
+### Part 1: Graph Algorithms (No LLM Required)
+
+**Files:** `apps/temporal-worker/src/activities/graphrag.activities.ts`
+
+**Operations:**
+- **Community Detection** - Louvain algorithm identifies clusters
+- **PageRank** - Ranks node importance
+- **K-Hop Neighborhood** - Traverses graph relationships
+- **Path Finding** - Discovers connections between entities
+
+**Storage:** `graph_nodes`, `graph_edges`, `graph_communities` tables
+
+**Benefits:**
+- **Fast** - Pure algorithmic, no API calls
+- **Deterministic** - Same input → same output
+- **Scalable** - Handles millions of nodes/edges
+- **Cost-effective** - No per-query costs
+
+### Part 2: Long Context Synthesis (LLM-Powered)
+
+**Files:** `apps/temporal-worker/src/activities/longcontext.activities.ts`
+
+**Operations:**
+- **Context Bundling** - Combines graph edges with filing text chunks
+- **Synthesis** - Uses OpenAI's 128K context window to generate explanations
+- **Question Answering** - Responds to natural language queries
+
+**Storage:** `graph_explanations` table, `filing_chunks` table (with embeddings)
+
+**Benefits:**
+- **Natural language** - Human-readable explanations
+- **Contextual** - Combines structured (graph) + unstructured (text) data
+- **Flexible** - Adapts to different question types
+- **Evidence-based** - Cites specific filings and edges
+
+**When to Use Each:**
+- **Graph algorithms alone**: Fast queries, visualizations, network analysis
+- **Long context synthesis**: Explanations, summaries, question answering
+- **Both together**: `graphQueryWorkflow` - find relevant data via graph, explain via LLM
 
 **Benefits:**
 - **Explainable**: Visual graph shows relationships
@@ -66,7 +115,13 @@ GraphRAG combines **knowledge graphs** with **retrieval augmented generation** (
 
 ---
 
-## Graph Construction
+## Part 1: Graph Algorithms
+
+This section covers the **pure algorithmic** operations that structure institutional flow data into a queryable knowledge graph.
+
+**No LLM required** - these operations are deterministic and fast.
+
+### Graph Construction
 
 ### Node Types
 
@@ -481,22 +536,63 @@ SELECT * FROM subgraph;
 
 ---
 
-## RAG Synthesis
+## Part 2: Long Context Synthesis
 
-### Process
+This section covers the **LLM-powered** synthesis operations that generate natural language explanations from graph data + filing text.
+
+**Uses OpenAI GPT-4 Turbo** with 128K context window.
+
+### Context Bundling
+
+**Activity:** `bundleForSynthesis` (in `longcontext.activities.ts`)
+
+**Purpose:** Prepare structured data for LLM consumption.
+
+**Process:**
+
+1. **Extract Edge Data**
+   - Fetch edges by IDs from `graph_edges`
+   - Extract relation types, weights, attributes
+
+2. **Collect Filing References**
+   - Extract accession numbers from edge attributes
+   - Deduplicate filing list
+
+3. **Retrieve Filing Chunks**
+   - Fetch chunks from `filing_chunks` table
+   - Limit to top 20 chunks per filing (token budget)
+   - Each chunk includes text content
+
+4. **Apply Token Budget**
+   - Default: 12K tokens for filing text
+   - Distribute evenly across filings
+   - Truncate long chunks to fit budget
+
+5. **Bundle Output**
+   - Edges (structured data)
+   - Filing excerpts (unstructured text)
+   - User question (optional)
+
+**Implementation:** `apps/temporal-worker/src/activities/longcontext.activities.ts:25-90`
+
+### Synthesis Process
+
+**Activity:** `synthesizeWithOpenAI` (in `longcontext.activities.ts`)
+
+**Purpose:** Generate natural language explanation from bundled context.
 
 **Workflow:** `graphQueryWorkflow`
 
 **Steps:**
 
-1. **Graph Query**
+1. **Graph Query** (from Part 1)
    - Execute k-hop neighborhood or path finding
    - Retrieve relevant nodes and edges
 
-2. **Bundle Context**
+2. **Bundle Context** (from Part 2)
    - Extract node metadata
    - Include edge attributes
-   - Fetch referenced filings
+   - Fetch referenced filings (via `bundleForSynthesis`)
 
 3. **Prepare Prompt**
    - Structure graph data as context
@@ -504,14 +600,17 @@ SELECT * FROM subgraph;
    - Add system instructions
 
 4. **Call OpenAI**
-   - Use GPT-4 Turbo for synthesis
+   - Model: GPT-4 Turbo (128K context window)
    - Temperature: 0.7 (balanced creativity/precision)
    - Max tokens: 2000
+   - Includes both edges (structured) and filing text (unstructured)
 
 5. **Store Explanation**
    - Save to `graph_explanations` table
    - Link to edge IDs and accessions
    - Return to user
+
+**Implementation:** `apps/temporal-worker/src/activities/longcontext.activities.ts:92-156`
 
 ### Prompt Engineering
 

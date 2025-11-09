@@ -310,6 +310,8 @@ temporal workflow start \
 
 **Purpose:** Constructs knowledge graph from rotation edges.
 
+**Approach:** **Pure graph algorithms** - no LLM/AI required.
+
 **Input:**
 ```typescript
 interface GraphBuildInput {
@@ -323,10 +325,12 @@ interface GraphBuildInput {
 ```
 
 **Workflow Logic:**
-1. Build graph nodes (entities, securities)
-2. Build graph edges (holds, bought, sold relationships)
+1. Build graph nodes (entities, securities) - from `rotation_edges` table
+2. Build graph edges (holds, bought, sold relationships) - from position deltas
 3. Compute edge weights based on position sizes
 4. If edges exceed threshold, use **continue-as-new**
+
+**No AI/LLM Used:** This is pure data transformation and graph construction.
 
 **Example:**
 ```bash
@@ -370,6 +374,8 @@ if (result.edgesUpserted >= threshold) {
 
 **Purpose:** Detects communities in graph and generates AI summaries.
 
+**Approach:** **Graph algorithms + Short AI summaries** (hybrid).
+
 **Input:**
 ```typescript
 interface GraphSummarizeInput {
@@ -382,11 +388,15 @@ interface GraphSummarizeInput {
 ```
 
 **Workflow Logic:**
-1. **Compute Communities** - Run Louvain algorithm on graph
+1. **Compute Communities** - Run **Louvain algorithm** on graph (pure algorithm, no LLM)
 2. **For each community:**
-   - Extract top nodes by PageRank
-   - Generate AI summary using OpenAI
+   - Extract top nodes by **PageRank** (pure algorithm)
+   - Generate AI summary using OpenAI (**short prompt**, not long context)
    - Store in `graph_communities` table
+
+**Uses:**
+- **Graph algorithms**: Louvain community detection, PageRank
+- **Short AI summaries**: GPT-4 with ~1K token prompts (not long context)
 
 **Example:**
 ```bash
@@ -421,6 +431,8 @@ interface GraphSummarizeResult {
 
 **Purpose:** Traverses graph to find k-hop neighborhoods and generate explanations.
 
+**Approach:** **Both graph algorithms AND long context synthesis** (full GraphRAG).
+
 **Input:**
 ```typescript
 interface GraphQueryInput {
@@ -436,11 +448,21 @@ interface GraphQueryInput {
 ```
 
 **Workflow Logic:**
+
+**Part 1: Graph Algorithms** (activities from `graphrag.activities.ts`)
 1. **Resolve Issuer** - Get node ID from ticker/CIK
-2. **K-Hop Neighborhood** - Traverse graph k hops from root
-3. **Extract Paths** - Find important paths in subgraph
-4. **Bundle for Synthesis** - Prepare data for AI
-5. **Generate Explanation** - OpenAI explanation (if question provided)
+2. **K-Hop Neighborhood** - Traverse graph k hops from root (pure algorithm)
+3. **Extract Paths** - Find important paths in subgraph (pure algorithm)
+
+**Part 2: Long Context Synthesis** (activities from `longcontext.activities.ts`)
+4. **Bundle for Synthesis** - Combine graph edges + filing chunks (12K token budget)
+5. **Generate Explanation** - OpenAI with **128K context window** (if question provided)
+
+**Uses:**
+- **Graph algorithms**: K-hop traversal, path finding (fast, no API calls)
+- **Long context synthesis**: GPT-4 Turbo with bundled edges + filing text (slow, API cost)
+
+**This is the only workflow that uses BOTH approaches together.**
 
 **Example:**
 ```bash
