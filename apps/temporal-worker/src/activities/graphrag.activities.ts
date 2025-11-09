@@ -124,7 +124,12 @@ Write two paragraphs highlighting the drivers. Cite accessions if present.`;
     client,
     input: {
       model: 'gpt-4.1',
-      input: prompt,
+      input: [
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
     },
   });
   const update = await supabase

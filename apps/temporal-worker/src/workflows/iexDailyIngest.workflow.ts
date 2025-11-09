@@ -1,12 +1,12 @@
 import { proxyActivities } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
 import type {
-  IexDailyIngestInput,
+  IexDailyIngestInput as ActivityInput,
   IexDailyIngestResult,
 } from '../activities/iex.activities.js';
 
 const activities = proxyActivities<{
-  downloadIexDaily: (input: IexDailyIngestInput) => Promise<IexDailyIngestResult>;
+  downloadIexDaily: (input: ActivityInput) => Promise<IexDailyIngestResult>;
   listIexHistDates: (fromDate: string, toDate: string) => Promise<string[]>;
 }>({
   startToCloseTimeout: '5 minutes',
