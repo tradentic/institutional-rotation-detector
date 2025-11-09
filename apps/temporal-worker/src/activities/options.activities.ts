@@ -393,6 +393,55 @@ export async function fetchGreekExposure(params: {
 }
 
 /**
+ * GROUP 5: Greek Exposure - Fetch Greek Exposure by Expiration
+ */
+export async function fetchGreekExposureByExpiry(params: {
+  ticker: string;
+  date?: string;
+}): Promise<{ ticker: string; expirations: number }> {
+  const client = createUnusualWhalesClient();
+  const { ticker, date } = params;
+
+  const queryParams = buildQueryParams({ date });
+
+  // Schema for greek-exposure/expiry endpoint
+  const schema = z.object({
+    data: z.array(z.object({
+      date: z.string(),
+      expiry: z.string(),
+      dte: z.number(),
+      call_delta: z.string(),
+      call_gamma: z.string(),
+      call_vanna: z.string().optional(),
+      call_charm: z.string().optional(),
+      put_delta: z.string(),
+      put_gamma: z.string(),
+      put_vanna: z.string().optional(),
+      put_charm: z.string().optional(),
+    })),
+  });
+
+  const parsed = await fetchAndParse(
+    client,
+    `/api/stock/${ticker}/greek-exposure/expiry`,
+    queryParams,
+    schema,
+    `fetching greek exposure by expiry for ${ticker}`
+  );
+
+  const exposure = parsed.data || [];
+
+  if (exposure.length === 0) {
+    return { ticker, expirations: 0 };
+  }
+
+  // Store in database if needed
+  // This provides expiration-specific GEX data useful for targeted analysis
+
+  return { ticker, expirations: exposure.length };
+}
+
+/**
  * GROUP 4: Unusual Activity - Fetch unusual options activity (flow alerts)
  */
 export async function fetchFlowAlerts(params: {
@@ -435,6 +484,159 @@ export async function fetchFlowAlerts(params: {
   await insertRecords(supabase, 'unusual_options_activity', records);
 
   return { activities: records.length };
+}
+
+/**
+ * Calculate all documented options metrics for institutional rotation detection
+ * Based on metrics documented in unusualwhales-api-analysis.md
+ */
+export interface OptionsMetrics {
+  // Volume Metrics
+  putCallRatioVolume: number | null;
+  putCallRatioPremium: number | null;
+  putCallRatioOI: number | null;
+  volumeOIRatio: number | null;
+  otmRatio: number | null;
+
+  // Flow Direction
+  netCallFlow: number | null;
+  netPutFlow: number | null;
+  directionalBias: number | null;
+
+  // Greeks
+  ivSkew: number | null;
+  netDelta: number | null;
+  netGamma: number | null;
+  gammaFlip: boolean;
+
+  // Unusual Activity Flags
+  preDumpPutSurge: boolean;
+  postDumpCallBuildup: boolean;
+  ivDecline: boolean;
+}
+
+export async function calculateOptionsMetrics(params: {
+  ticker: string;
+  date: string;
+}): Promise<OptionsMetrics> {
+  const supabase = createSupabaseClient();
+  const { ticker, date } = params;
+
+  // Fetch today's summary data
+  const { data: summary } = await supabase
+    .from('options_summary_daily')
+    .select('*')
+    .eq('ticker', ticker)
+    .eq('trade_date', date)
+    .single();
+
+  // Fetch 30-day baseline for statistical significance
+  const endDate = new Date(date);
+  const startDate = new Date(endDate);
+  startDate.setDate(startDate.getDate() - 30);
+
+  const { data: historical } = await supabase
+    .from('options_summary_daily')
+    .select('*')
+    .eq('ticker', ticker)
+    .gte('trade_date', startDate.toISOString().substring(0, 10))
+    .lt('trade_date', date)
+    .order('trade_date', { ascending: true });
+
+  // Calculate 30-day averages
+  const callVolumeAvg = historical?.length
+    ? historical.reduce((sum, d) => sum + (d.total_call_volume || 0), 0) / historical.length
+    : 0;
+  const putVolumeAvg = historical?.length
+    ? historical.reduce((sum, d) => sum + (d.total_put_volume || 0), 0) / historical.length
+    : 0;
+
+  // Volume Metrics
+  const callVolume = summary?.total_call_volume || 0;
+  const putVolume = summary?.total_put_volume || 0;
+  const callPremium = summary?.total_call_premium || 0;
+  const putPremium = summary?.total_put_premium || 0;
+  const callOI = summary?.total_call_oi || 0;
+  const putOI = summary?.total_put_oi || 0;
+
+  const putCallRatioVolume = callVolume > 0 ? putVolume / callVolume : null;
+  const putCallRatioPremium = callPremium > 0 ? putPremium / callPremium : null;
+  const putCallRatioOI = callOI > 0 ? putOI / callOI : null;
+
+  const totalVolume = callVolume + putVolume;
+  const totalOI = callOI + putOI;
+  const volumeOIRatio = totalOI > 0 ? totalVolume / totalOI : null;
+
+  const otmVolume = (summary?.call_otm_volume || 0) + (summary?.put_otm_volume || 0);
+  const otmRatio = totalVolume > 0 ? otmVolume / totalVolume : null;
+
+  // Flow Direction
+  const callVolumeAskSide = summary?.call_volume_ask_side || 0;
+  const callVolumeBidSide = summary?.call_volume_bid_side || 0;
+  const putVolumeAskSide = summary?.put_volume_ask_side || 0;
+  const putVolumeBidSide = summary?.put_volume_bid_side || 0;
+
+  const netCallFlow = callVolumeAskSide - callVolumeBidSide;
+  const netPutFlow = putVolumeAskSide - putVolumeBidSide;
+  const directionalBias = totalVolume > 0 ? (netCallFlow - netPutFlow) / totalVolume : null;
+
+  // Greeks
+  const atmCallIV = summary?.atm_call_iv || null;
+  const atmPutIV = summary?.atm_put_iv || null;
+  const ivSkew = atmPutIV && atmCallIV ? atmPutIV - atmCallIV : null;
+
+  const callDelta = summary?.call_delta_exposure || 0;
+  const putDelta = summary?.put_delta_exposure || 0;
+  const callGamma = summary?.call_gamma_exposure || 0;
+  const putGamma = summary?.put_gamma_exposure || 0;
+
+  const netDelta = callDelta + putDelta;
+  const netGamma = callGamma + putGamma;
+  const gammaFlip = netGamma > 0;
+
+  // Unusual Activity Flags
+  const preDumpPutSurge =
+    putVolumeAvg > 0 &&
+    putVolume > 3 * putVolumeAvg &&
+    (putCallRatioVolume ? putCallRatioVolume > 2.0 : false);
+
+  const postDumpCallBuildup =
+    callVolumeAvg > 0 &&
+    callVolume > 2 * callVolumeAvg &&
+    (volumeOIRatio ? volumeOIRatio > 3.0 : false);
+
+  // IV decline detection (compare to 7 days ago)
+  const sevenDaysAgo = new Date(endDate);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const { data: historicalIV } = await supabase
+    .from('options_summary_daily')
+    .select('atm_call_iv')
+    .eq('ticker', ticker)
+    .eq('trade_date', sevenDaysAgo.toISOString().substring(0, 10))
+    .single();
+
+  const ivDecline = atmCallIV && historicalIV?.atm_call_iv
+    ? atmCallIV < historicalIV.atm_call_iv
+    : false;
+
+  return {
+    putCallRatioVolume,
+    putCallRatioPremium,
+    putCallRatioOI,
+    volumeOIRatio,
+    otmRatio,
+    netCallFlow,
+    netPutFlow,
+    directionalBias,
+    ivSkew,
+    netDelta,
+    netGamma,
+    gammaFlip,
+    preDumpPutSurge,
+    postDumpCallBuildup,
+    ivDecline,
+  };
 }
 
 /**

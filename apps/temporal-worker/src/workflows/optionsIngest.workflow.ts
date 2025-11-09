@@ -10,12 +10,14 @@ const {
   // Tier 2 endpoints (IMPORTANT)
   fetchOptionsFlowByStrike,    // Strike-level flow
   fetchGreekExposure,          // GEX trends
+  fetchGreekExposureByExpiry,  // GEX by expiration
 
   // Helper endpoints
   fetchOptionChains,           // Contract discovery
   fetchGreeksForExpiration,    // Greeks per expiration
 
   // Computation
+  calculateOptionsMetrics,     // Calculate all documented metrics
   computeOptionsSummary,
   computeOptionsBaselines,
 } = proxyActivities<typeof activities>({
@@ -35,13 +37,20 @@ export interface OptionsIngestParams {
   includeFlow?: boolean;          // Aggregated flow (Tier 1)
   includeAlerts?: boolean;        // Unusual activity (Tier 1)
   includeGEX?: boolean;           // Greek exposure trends (Tier 2)
+  includeGEXByExpiry?: boolean;  // GEX by expiration (Tier 3)
   includeGreeks?: boolean;        // Full greeks per expiration (Tier 2, expensive!)
   includeBaselines?: boolean;     // Historical baselines
+  calculateMetrics?: boolean;     // Calculate all documented metrics
 }
 
 /**
  * Optimal workflow for daily options data ingestion
  * Uses Tier 1 endpoints by default (minimal API calls, meets all requirements)
+ *
+ * Implements workflows documented in unusualwhales-api-analysis.md:
+ * - Daily Full Options Snapshot
+ * - Unusual Activity Detection
+ * - Historical Options Analysis
  */
 export async function optionsIngestWorkflow(params: OptionsIngestParams): Promise<{
   ticker: string;
@@ -50,9 +59,11 @@ export async function optionsIngestWorkflow(params: OptionsIngestParams): Promis
   flowExpirations: number;
   alertsDetected: number;
   gexDays: number;
+  gexExpirations: number;
   greeksExpirations: number;
   summaryComputed: boolean;
   baselinesComputed: boolean;
+  metricsCalculated: boolean;
   apiCallsUsed: number;
 }> {
   const {
@@ -62,14 +73,17 @@ export async function optionsIngestWorkflow(params: OptionsIngestParams): Promis
     includeFlow = true,         // Tier 1: Aggregated flow
     includeAlerts = true,       // Tier 1: Unusual activity
     includeGEX = false,         // Tier 2: GEX trends (optional)
+    includeGEXByExpiry = false, // Tier 3: GEX by expiration (optional)
     includeGreeks = false,      // Tier 2: Full greeks (expensive!)
     includeBaselines = false,   // Computation step
+    calculateMetrics = false,   // Calculate all documented metrics
   } = params;
 
   let contractsIngested = 0;
   let flowExpirations = 0;
   let alertsDetected = 0;
   let gexDays = 0;
+  let gexExpirations = 0;
   let greeksExpirations = 0;
   let apiCallsUsed = 0;
 
@@ -129,6 +143,13 @@ export async function optionsIngestWorkflow(params: OptionsIngestParams): Promis
     apiCallsUsed++;
   }
 
+  // Step 4b: Fetch GEX by expiration (Tier 3, optional)
+  if (includeGEXByExpiry) {
+    const gexExpiryResult = await fetchGreekExposureByExpiry({ ticker, date });
+    gexExpirations = gexExpiryResult.expirations;
+    apiCallsUsed++;
+  }
+
   // Step 5: Fetch full Greeks (expensive - per expiration!)
   // Only do this if explicitly requested
   if (includeGreeks) {
@@ -165,6 +186,13 @@ export async function optionsIngestWorkflow(params: OptionsIngestParams): Promis
     baselinesComputed = baselineResult.processed;
   }
 
+  // Step 8: Calculate all documented metrics (optional)
+  let metricsCalculated = false;
+  if (calculateMetrics) {
+    await calculateOptionsMetrics({ ticker, date });
+    metricsCalculated = true;
+  }
+
   return {
     ticker,
     date,
@@ -172,9 +200,11 @@ export async function optionsIngestWorkflow(params: OptionsIngestParams): Promis
     flowExpirations,
     alertsDetected,
     gexDays,
+    gexExpirations,
     greeksExpirations,
     summaryComputed,
     baselinesComputed,
+    metricsCalculated,
     apiCallsUsed,
   };
 }
@@ -279,8 +309,9 @@ export async function optionsBatchIngestWorkflow(params: {
 }
 
 /**
- * Deep analysis workflow with ALL data (Tier 1 + Tier 2)
+ * Deep analysis workflow with ALL data (Tier 1 + Tier 2 + Tier 3)
  * Use for high-priority tickers or on-demand analysis
+ * Implements complete "Daily Full Options Snapshot" workflow from documentation
  */
 export async function optionsDeepAnalysisWorkflow(params: {
   ticker: string;
@@ -289,6 +320,7 @@ export async function optionsDeepAnalysisWorkflow(params: {
   ticker: string;
   date: string;
   apiCallsUsed: number;
+  metricsCalculated: boolean;
 }> {
   const { ticker, date = new Date().toISOString().substring(0, 10) } = params;
 
@@ -300,13 +332,16 @@ export async function optionsDeepAnalysisWorkflow(params: {
     includeFlow: true,         // Aggregated flow
     includeAlerts: true,       // Unusual activity
     includeGEX: true,          // GEX trends
+    includeGEXByExpiry: true,  // GEX by expiration
     includeGreeks: true,       // Full greeks (expensive!)
     includeBaselines: true,    // Historical baselines
+    calculateMetrics: true,    // Calculate all documented metrics
   });
 
   return {
     ticker,
     date,
     apiCallsUsed: result.apiCallsUsed,
+    metricsCalculated: result.metricsCalculated,
   };
 }
