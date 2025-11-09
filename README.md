@@ -80,8 +80,9 @@ temporal server start-dev
 ./tools/setup-temporal-attributes.sh
 cd apps/temporal-worker
 cp .env.example .env
-# Edit .env: Add OPENAI_API_KEY, SEC_USER_AGENT, and Supabase keys
-npm install && npm run build
+# Edit .env: Add OPENAI_API_KEY, SEC_USER_AGENT, and Supabase keys from: supabase status
+# Note: The api app uses the same config from apps/temporal-worker
+pnpm install && pnpm run build
 node dist/worker.js
 ```
 

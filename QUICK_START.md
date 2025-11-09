@@ -6,6 +6,7 @@ This guide will get you up and running in under 10 minutes.
 
 - Docker Desktop (running)
 - Node.js 20+
+- pnpm (package manager) - Install with: `npm install -g pnpm`
 - Git
 
 ## Local Development Setup
@@ -18,7 +19,7 @@ This guide will get you up and running in under 10 minutes.
 brew install supabase/tap/supabase
 
 # Linux/Windows
-npm install -g supabase
+pnpm install -g supabase
 ```
 
 **Temporal CLI:**
@@ -48,18 +49,22 @@ temporal server start-dev
 # Setup Temporal search attributes
 ./tools/setup-temporal-attributes.sh
 
-# Setup environment
+# Setup environment (API uses same config as temporal-worker)
 cd apps/temporal-worker
 cp .env.example .env
+
+# Get Supabase credentials
+supabase status
 
 # Edit .env with your keys:
 # - OPENAI_API_KEY=sk-your-key
 # - SEC_USER_AGENT=YourName your.email@domain.com
-# - Copy Supabase keys from Terminal 1 output
+# - SUPABASE_ANON_KEY=<from supabase status>
+# - SUPABASE_SERVICE_ROLE_KEY=<from supabase status>
 
 # Install & build
-npm install
-npm run build
+pnpm install
+pnpm run build
 
 # Start worker
 node dist/worker.js
@@ -94,12 +99,14 @@ Wait for devcontainer to build (3-5 minutes). The following starts automatically
 ### 2. Configure Environment
 
 ```bash
-# Copy Supabase credentials
+# Setup environment (API uses same config as temporal-worker)
+cd apps/temporal-worker
+cp .env.example .env
+
+# Get Supabase credentials
 supabase status
 
 # Edit .env file
-cd apps/temporal-worker
-cp .env.example .env
 nano .env
 ```
 
@@ -111,11 +118,13 @@ SUPABASE_ANON_KEY=<from supabase status>
 SUPABASE_SERVICE_ROLE_KEY=<from supabase status>
 ```
 
+**Note:** The API app uses the same configuration from `apps/temporal-worker`, so you don't need a separate `.env` file for it.
+
 ### 3. Start Worker
 
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm run build
 node dist/worker.js
 ```
 
@@ -195,7 +204,7 @@ temporal operator search-attribute list
 
 ```bash
 # Rebuild
-npm run build
+pnpm run build
 
 # Run
 node dist/worker.js

@@ -122,13 +122,13 @@ temporal-worker/
 cd apps/temporal-worker
 
 # Install dependencies
-npm install
+pnpm install
 
 # Build TypeScript
-npm run build
+pnpm run build
 
 # Run tests
-npm test
+pnpm test
 
 # Start worker
 node dist/worker.js

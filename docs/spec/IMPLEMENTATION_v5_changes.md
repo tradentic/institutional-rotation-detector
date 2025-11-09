@@ -252,8 +252,8 @@ const gate =
 ## Deployment Checklist
 
 ### Pre-Deploy
-- [ ] Run `npm install` in `apps/temporal-worker`
-- [ ] Run `npm run build` and fix remaining TypeScript errors
+- [ ] Run `pnpm install` in `apps/temporal-worker`
+- [ ] Run `pnpm run build` and fix remaining TypeScript errors
 - [ ] Apply migration: `supabase db push` or `supabase migration up`
 - [ ] Run `tools/seed-index-calendar.ts` to populate index windows
 

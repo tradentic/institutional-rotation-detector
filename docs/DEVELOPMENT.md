@@ -32,7 +32,7 @@ cd institutional-rotation-detector
 
 # Install dependencies
 cd apps/temporal-worker
-npm install
+pnpm install
 
 # Set up environment
 cp .env.example .env
@@ -51,10 +51,10 @@ temporal server start-dev
 ./tools/setup-temporal-attributes.sh
 
 # Build project
-npm run build
+pnpm run build
 
 # Run tests
-npm test
+pnpm test
 ```
 
 ---

@@ -18,7 +18,7 @@ Complete guide for setting up a local development environment with Supabase and 
 
 ### Required Software
 
-**1. Node.js 20+**
+**1. Node.js 20+ and pnpm**
 ```bash
 # macOS
 brew install node@20
@@ -27,9 +27,12 @@ brew install node@20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
+# Install pnpm (if not already installed)
+npm install -g pnpm
+
 # Verify
 node --version  # Should be v20.x.x
-npm --version
+pnpm --version  # Should be 9.x or 10.x
 ```
 
 **2. Docker Desktop**
@@ -54,8 +57,8 @@ docker-compose --version
 # macOS
 brew install supabase/tap/supabase
 
-# Linux/Windows (using npm)
-npm install -g supabase
+# Linux/Windows (using pnpm)
+pnpm install -g supabase
 
 # Verify
 supabase --version
@@ -108,15 +111,20 @@ For the impatient, here's the fastest path to a working local environment:
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# 2. Copy environment template
+# 2. Start Supabase first (in Terminal 1)
+supabase start
+
+# 3. Copy environment template (API uses same config)
 cp .env.example apps/temporal-worker/.env
 
-# 3. Edit .env and add your OpenAI API key and SEC User-Agent
-# OPENAI_API_KEY=sk-your-key-here
-# SEC_USER_AGENT=YourName your.email@domain.com
-
-# 4. Start Supabase (in Terminal 1)
-supabase start
+# 4. Get Supabase credentials and update .env
+# Copy the anon key and service_role key from the supabase start output
+# Or run: supabase status
+# Edit apps/temporal-worker/.env with:
+#   - Your OPENAI_API_KEY
+#   - Your SEC_USER_AGENT
+#   - SUPABASE_ANON_KEY from supabase status
+#   - SUPABASE_SERVICE_ROLE_KEY from supabase status
 
 # 5. Apply migrations
 supabase db reset
@@ -129,8 +137,8 @@ temporal server start-dev
 
 # 8. Install dependencies and build
 cd apps/temporal-worker
-npm install
-npm run build
+pnpm install
+pnpm run build
 
 # 9. Start worker (same Terminal 3)
 node dist/worker.js
@@ -335,14 +343,18 @@ Access at http://localhost:8233
 
 ```bash
 cd apps/temporal-worker
-npm install
+pnpm install
 ```
 
 ### Configure Environment Variables
 
 ```bash
-# Copy example
+# Copy example to temporal-worker (API uses the same config)
+cd apps/temporal-worker
 cp ../../.env.example .env
+
+# Get Supabase credentials
+supabase status
 
 # Edit .env
 nano .env  # or use your preferred editor
@@ -357,20 +369,26 @@ OPENAI_API_KEY=sk-your-actual-openai-api-key-here
 # ⚠️ MUST CHANGE: Add your SEC User-Agent
 SEC_USER_AGENT=YourName your.email@domain.com
 
-# Copy these from `supabase start` output:
+# ⚠️ MUST CHANGE: Copy these from `supabase status` output:
+SUPABASE_ANON_KEY=<your_anon_key_from_supabase_status>
+SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key_from_supabase_status>
+
+# These should already be correct (verify against `supabase status`):
 SUPABASE_URL=http://localhost:54321
-SUPABASE_ANON_KEY=<your_anon_key_from_supabase_start_output>
-SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key_from_supabase_start_output>
 DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres
+
+# Temporal config (these defaults should work for local dev):
 TEMPORAL_NAMESPACE=default
 TEMPORAL_TASK_QUEUE=rotation-detector
 TEMPORAL_ADDRESS=localhost:7233
 ```
 
+**Note:** The API app (`apps/api`) uses the same Supabase and Temporal configuration from `apps/temporal-worker`, so you don't need a separate `.env` file for it.
+
 ### Build TypeScript
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 **Expected Output:**
@@ -384,7 +402,7 @@ npm run build
 ### Run Tests (Optional)
 
 ```bash
-npm test
+pnpm test
 ```
 
 ---
@@ -409,7 +427,7 @@ temporal server start-dev
 **Terminal 3: Worker**
 ```bash
 cd ~/institutional-rotation-detector/apps/temporal-worker
-npm run build && node dist/worker.js
+pnpm run build && node dist/worker.js
 # Leave running
 ```
 
@@ -466,7 +484,7 @@ echo "  PostgreSQL:      postgresql://postgres:postgres@localhost:54322/postgres
 echo ""
 echo "Next steps:"
 echo "  1. cd apps/temporal-worker"
-echo "  2. npm install && npm run build"
+echo "  2. pnpm install && pnpm run build"
 echo "  3. node dist/worker.js"
 echo ""
 echo "Press Ctrl+C to stop Temporal server"
@@ -589,7 +607,7 @@ cd apps/temporal-worker/src
 **3. Rebuild and Restart Worker**
 ```bash
 # In Terminal 3
-npm run build && node dist/worker.js
+pnpm run build && node dist/worker.js
 ```
 
 **4. Test Changes**
@@ -614,10 +632,10 @@ SELECT * FROM rotation_events ORDER BY r_score DESC LIMIT 10;
 For faster iteration, use `nodemon`:
 
 ```bash
-npm install -g nodemon
+pnpm install -g nodemon
 
 # Run with auto-reload
-nodemon --watch src --exec "npm run build && node dist/worker.js"
+nodemon --watch src --exec "pnpm run build && node dist/worker.js"
 ```
 
 ### Database Migrations

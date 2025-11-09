@@ -172,7 +172,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 # Or run with dotenv
-npm install -g dotenv-cli
+pnpm install -g dotenv-cli
 dotenv -e .env node dist/worker.js
 ```
 
@@ -192,8 +192,8 @@ error TS2307: Cannot find module './workflows/index.js'
 **1. Missing dependencies:**
 ```bash
 cd apps/temporal-worker
-rm -rf node_modules package-lock.json
-npm install
+rm -rf node_modules pnpm-lock.yaml
+pnpm install
 ```
 
 **2. TypeScript version mismatch:**
@@ -203,7 +203,7 @@ npx tsc --version
 
 # Should be 5.4.x
 # Update if needed
-npm install --save-dev typescript@^5.4.5
+pnpm install --save-dev typescript@^5.4.5
 ```
 
 **3. Module resolution:**
@@ -216,7 +216,7 @@ import { myWorkflow } from './workflows/index';      // ❌ Wrong
 **4. Clean build:**
 ```bash
 rm -rf dist
-npm run build
+pnpm run build
 ```
 
 ---
@@ -535,8 +535,8 @@ NODE_ENV=development node dist/worker.js
 
 **2. Missing dependencies:**
 ```bash
-npm install
-npm run build
+pnpm install
+pnpm run build
 ```
 
 **3. Invalid configuration:**
@@ -582,7 +582,7 @@ NODE_OPTIONS="--max-old-space-size=4096" node dist/worker.js
 **2. Memory leak detection:**
 ```bash
 # Use heapdump
-npm install heapdump
+pnpm install heapdump
 
 # In code
 import heapdump from 'heapdump';
