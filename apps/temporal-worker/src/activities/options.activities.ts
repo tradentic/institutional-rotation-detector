@@ -128,6 +128,30 @@ const optionChainsSchema = z.object({
   data: z.array(z.string()), // Array of option symbols
 });
 
+// Option contracts response (full contract data with volume AND OI)
+const optionContractsSchema = z.object({
+  data: z.array(z.object({
+    option_symbol: z.string(),
+    volume: z.number(),
+    open_interest: z.number(),
+    prev_oi: z.number().optional(),
+    implied_volatility: z.string(),
+    total_premium: z.string(),
+    avg_price: z.string(),
+    last_price: z.string(),
+    high_price: z.string(),
+    low_price: z.string(),
+    ask_volume: z.number(),
+    bid_volume: z.number(),
+    mid_volume: z.number().optional(),
+    floor_volume: z.number().optional(),
+    sweep_volume: z.number().optional(),
+    multi_leg_volume: z.number().optional(),
+    nbbo_ask: z.string().optional(),
+    nbbo_bid: z.string().optional(),
+  })),
+});
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -409,6 +433,115 @@ export async function fetchOptionChains(params: {
 
   } catch (error) {
     console.error(`Error fetching option chains for ${ticker} on ${date}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Fetch option contracts with VOLUME and OPEN INTEREST
+ * This is the KEY endpoint for getting OI data!
+ */
+export async function fetchOptionContracts(params: {
+  ticker: string;
+  expiry?: string;
+  optionType?: 'call' | 'put';
+  excludeZeroVol?: boolean;
+  excludeZeroOI?: boolean;
+  limit?: number;
+}): Promise<{ ticker: string; contracts: number; totalVolume: number; totalOI: number }> {
+  const supabase = createSupabaseClient();
+  const client = createUnusualWhalesClient();
+
+  const { ticker, expiry, optionType, excludeZeroVol = true, excludeZeroOI = true, limit = 500 } = params;
+
+  try {
+    // UW API: /api/stock/{ticker}/option-contracts
+    const queryParams: Record<string, string> = {
+      limit: limit.toString(),
+    };
+
+    if (expiry) {
+      queryParams.expiry = expiry;
+    }
+    if (optionType) {
+      queryParams.option_type = optionType;
+    }
+    if (excludeZeroVol) {
+      queryParams.exclude_zero_vol_chains = 'true';
+    }
+    if (excludeZeroOI) {
+      queryParams.exclude_zero_oi_chains = 'true';
+    }
+
+    const response = await client.get<any>(`/api/stock/${ticker}/option-contracts`, queryParams);
+
+    const parsed = optionContractsSchema.parse(response);
+    const contracts = parsed.data || [];
+
+    if (contracts.length === 0) {
+      return { ticker, contracts: 0, totalVolume: 0, totalOI: 0 };
+    }
+
+    let totalVolume = 0;
+    let totalOI = 0;
+
+    // Transform and insert into options_chain_daily
+    const records = contracts.map(contract => {
+      const parsed = parseOptionSymbol(contract.option_symbol);
+      if (!parsed) return null;
+
+      const volume = contract.volume || 0;
+      const oi = contract.open_interest || 0;
+      totalVolume += volume;
+      totalOI += oi;
+
+      const volumeOIRatio = calculateVolumeOIRatio(volume, oi);
+
+      return {
+        ticker,
+        trade_date: new Date().toISOString().substring(0, 10), // Current date
+        expiration_date: parsed.expiry,
+        strike: parsed.strike,
+        option_type: parsed.type,
+        // Volume data
+        volume,
+        open_interest: oi,
+        volume_oi_ratio: volumeOIRatio,
+        // Price data
+        bid: parseNumeric(contract.nbbo_bid),
+        ask: parseNumeric(contract.nbbo_ask),
+        last_price: parseNumeric(contract.last_price),
+        mark: parseNumeric(contract.avg_price),
+        // Volume breakdown
+        ask_volume: contract.ask_volume,
+        bid_volume: contract.bid_volume,
+        floor_volume: contract.floor_volume,
+        sweep_volume: contract.sweep_volume,
+        // Greeks/IV
+        implied_volatility: parseNumeric(contract.implied_volatility),
+        // Metadata
+        data_source: 'UNUSUALWHALES',
+      };
+    }).filter(Boolean);
+
+    // Insert into options_chain_daily
+    if (records.length > 0) {
+      const { error } = await supabase
+        .from('options_chain_daily')
+        .upsert(records, {
+          onConflict: 'ticker,trade_date,expiration_date,strike,option_type',
+          ignoreDuplicates: false,
+        });
+
+      if (error) {
+        throw error;
+      }
+    }
+
+    return { ticker, contracts: records.length, totalVolume, totalOI };
+
+  } catch (error) {
+    console.error(`Error fetching option contracts for ${ticker}:`, error);
     throw error;
   }
 }
