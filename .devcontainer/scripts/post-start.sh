@@ -208,6 +208,16 @@ if [[ "$temporal_cli_present" == "true" ]]; then
       log "Failed to start Temporal server."
     fi
   fi
+
+  # Setup Temporal search attributes if server is ready
+  if [[ "$temporal_server_ready" == "true" ]]; then
+    log "Setting up Temporal search attributes..."
+    if "${REPO_ROOT}/tools/setup-temporal-attributes.sh" >/tmp/temporal-setup.log 2>&1; then
+      log "Temporal search attributes configured successfully."
+    else
+      log "Warning: Failed to setup Temporal search attributes. Check /tmp/temporal-setup.log"
+    fi
+  fi
 else
   log "Skipping Temporal startup because the Temporal CLI is unavailable."
 fi
