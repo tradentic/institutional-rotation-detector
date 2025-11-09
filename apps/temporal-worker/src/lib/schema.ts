@@ -161,3 +161,119 @@ export interface MicroFlip50EventStudyRecord {
   created_at?: string;
   updated_at?: string;
 }
+
+// ============================================================================
+// Advanced Microstructure Schema (Broker Mapping, Flow Attribution, Metrics)
+// ============================================================================
+
+export type BrokerRelationshipType = 'prime_broker' | 'clearing' | 'internal' | 'affiliate' | 'inferred';
+export type BrokerType = 'WIREHOUSE' | 'PRIME_BROKER' | 'RETAIL' | 'HFT' | 'MARKET_MAKER' | 'DARK_POOL' | 'OTHER';
+export type FlowDirection = 'buy' | 'sell' | 'unknown';
+export type TradeDirection = 'buy' | 'sell' | 'neutral';
+export type ClassificationMethod = 'LEE_READY' | 'TICK_TEST' | 'QUOTE_RULE';
+export type MicroQualityFlag = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface MicroBrokerInstitutionMapRecord {
+  id?: number;
+  broker_mpid: string;
+  broker_name?: string | null;
+  institution_cik?: string | null;
+  institution_id?: string | null;
+  relationship_type: BrokerRelationshipType;
+  relationship_strength?: number;
+  confidence_score?: number;
+  first_observed_date?: string | null;
+  last_observed_date?: string | null;
+  observation_count?: number;
+  avg_block_size?: number | null;
+  source?: string;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MicroInstitutionalFlowRecord {
+  id?: number;
+  symbol: string;
+  trade_date: string;
+  institution_id?: string | null;
+  institution_cik?: string | null;
+  broker_mpid?: string | null;
+  flow_direction: FlowDirection;
+  shares: number;
+  trades?: number | null;
+  attribution_confidence?: number | null;
+  source?: string;
+  venue_id?: string | null;
+  created_at?: string;
+}
+
+export interface MicroTradeClassificationRecord {
+  symbol: string;
+  trade_date: string;
+  trade_direction: TradeDirection;
+  total_buy_volume?: number;
+  total_sell_volume?: number;
+  total_neutral_volume?: number;
+  order_imbalance?: number | null;
+  buy_trades?: number;
+  sell_trades?: number;
+  neutral_trades?: number;
+  avg_trade_size?: number | null;
+  classification_method?: ClassificationMethod;
+  quality_flag?: MicroQualityFlag | null;
+  created_at?: string;
+}
+
+export interface MicroMetricsDailyRecord {
+  symbol: string;
+  trade_date: string;
+
+  // VPIN
+  vpin?: number | null;
+  vpin_window_bars?: number | null;
+  vpin_quality_flag?: MicroQualityFlag | null;
+
+  // Kyle's Lambda
+  kyles_lambda?: number | null;
+  kyles_lambda_se?: number | null;
+  kyles_lambda_r2?: number | null;
+
+  // Order imbalance
+  daily_order_imbalance?: number | null;
+  imbalance_persistence?: number | null;
+
+  // Spreads
+  quoted_spread_bps?: number | null;
+  effective_spread_bps?: number | null;
+  realized_spread_bps?: number | null;
+  price_impact_bps?: number | null;
+
+  // Toxicity
+  adverse_selection_component?: number | null;
+  informed_trading_probability?: number | null;
+
+  // Volume
+  total_volume?: number | null;
+  block_trade_volume?: number | null;
+  block_trade_ratio?: number | null;
+
+  // Quality
+  computation_timestamp?: string | null;
+  data_completeness?: number | null;
+
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MicroBrokerMasterRecord {
+  broker_mpid: string;
+  broker_name: string;
+  broker_cik?: string | null;
+  broker_type?: BrokerType | null;
+  parent_company?: string | null;
+  is_active?: boolean;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}

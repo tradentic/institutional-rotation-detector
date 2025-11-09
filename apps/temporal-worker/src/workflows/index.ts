@@ -17,3 +17,6 @@ export { iexDailyIngestWorkflow } from './iexDailyIngest.workflow.js';
 export { offexRatioComputeWorkflow } from './offexRatioCompute.workflow.js';
 export { flip50DetectWorkflow } from './flip50Detect.workflow.js';
 export { shortInterestIngestWorkflow } from './shortInterestIngest.workflow.js';
+
+// Advanced microstructure analysis workflows
+export { microstructureAnalysisWorkflow } from './microstructureAnalysis.workflow.js';
