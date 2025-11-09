@@ -11,6 +11,7 @@ This project identifies when institutional investors (hedge funds, mutual funds,
 - **Automated SEC Filing Ingestion**: Downloads and processes 13F, N-PORT, and beneficial ownership filings from EDGAR
 - **Rotation Detection**: Identifies institutional dump events and subsequent uptake patterns
 - **Multi-Signal Scoring**: Combines multiple indicators (dump magnitude, uptake, ultra-high-frequency trading, options overlay, short interest relief)
+- **🆕 Real-Time Microstructure Layer**: Detects institutional flows 1-3 days after occurrence (vs 45-day 13F lag) using ATS/dark pool data, VPIN toxicity metrics, and broker-dealer attribution
 - **Knowledge Graph Construction**: Builds relationship graphs showing flows between institutional holders
 - **GraphRAG Analysis**: Leverages graph-based retrieval augmented generation for community detection and summarization
 - **Event Study Pipeline**: Performs cumulative abnormal return (CAR) analysis on detected rotation events
@@ -192,6 +193,7 @@ The system identifies institutional rotation through a multi-step process:
 
 ### Domain Knowledge
 - **[Rotation Detection](docs/ROTATION_DETECTION.md)** - Algorithm and methodology
+- **[Microstructure Layer](docs/MICROSTRUCTURE.md)** - Real-time flow detection with VPIN and broker attribution ([Technical Spec](docs/spec/MICROSTRUCTURE_TECHNICAL.md))
 - **[GraphRAG](docs/GRAPHRAG.md)** - Graph-based analysis and AI synthesis
 - **[Data Sources](docs/DATA_SOURCES.md)** - SEC EDGAR, FINRA, ETF integrations
 
