@@ -241,7 +241,7 @@ After fixes are applied, verify:
 1. Start Supabase: `supabase start`
 2. Start Temporal: `temporal server start-dev` (in separate terminal)
 3. Setup attributes: `./tools/setup-temporal-attributes.sh`
-4. Build worker: `cd apps/temporal-worker && npm install && npm run build`
+4. Build worker: `cd apps/temporal-worker && pnpm install && pnpm run build`
 5. Start worker: `node dist/worker.js`
 
 ## Codespaces Workflow
@@ -249,7 +249,7 @@ After fixes are applied, verify:
 1. Open in Codespaces (devcontainer auto-starts Supabase, Temporal, Redis)
 2. Wait for post-create and post-start scripts to complete
 3. Copy Supabase credentials to `.env`: `supabase status`
-4. Build worker: `cd apps/temporal-worker && npm install && npm run build`
+4. Build worker: `cd apps/temporal-worker && pnpm install && pnpm run build`
 5. Start worker: `node dist/worker.js`
 
 ## Notes

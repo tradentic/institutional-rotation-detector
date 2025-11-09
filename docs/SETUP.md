@@ -170,19 +170,19 @@ The migrations create the following table groups:
 
 ```bash
 cd apps/temporal-worker
-npm install
+pnpm install
 ```
 
 ### Build TypeScript
 
 ```bash
-npm run build
+pnpm run build
 ```
 
 ### Run Tests (Optional)
 
 ```bash
-npm test
+pnpm test
 ```
 
 ## Environment Variables

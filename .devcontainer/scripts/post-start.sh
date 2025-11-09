@@ -223,14 +223,41 @@ else
 fi
 
 if command -v pnpm >/dev/null 2>&1; then
+  log "Setting up environment configuration..."
+
   if [[ "${supabase_ready}" == "true" ]]; then
-    echo "[post-start] Supabase is ready. Environment variables can be copied from: supabase status"
-    echo "[post-start] Note: Copy SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY to apps/temporal-worker/.env"
+    log "Extracting Supabase credentials..."
+
+    # Parse supabase status output to extract keys
+    SUPABASE_STATUS=$(supabase status)
+    SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep "anon key:" | awk '{print $3}')
+    SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep "service_role key:" | awk '{print $3}')
+
+    log "Supabase credentials extracted:"
+    log "  SUPABASE_URL=http://localhost:54321"
+    log "  SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+    log "  SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
+    log ""
+    log "To set up your environment:"
+    log "  1. For temporal-worker:"
+    log "     cp .env.example apps/temporal-worker/.env"
+    log "     # Then edit apps/temporal-worker/.env with the credentials above"
+    log ""
+    log "  Note: The api app uses the same configuration from temporal-worker"
   elif [[ "$supabase_cli_present" == "true" ]]; then
-    echo "[post-start] Skipping environment sync because Supabase services are not ready." >&2
+    log "Supabase services are not ready. Start with: supabase start"
   else
-    echo "[post-start] Skipping environment sync because Supabase CLI is unavailable." >&2
+    log "Supabase CLI is unavailable."
+  fi
+
+  if [[ "$temporal_server_ready" == "true" ]]; then
+    log ""
+    log "Temporal server is ready:"
+    log "  TEMPORAL_ADDRESS=localhost:7233"
+    log "  TEMPORAL_NAMESPACE=default"
+    log "  TEMPORAL_TASK_QUEUE=rotation-detector"
+    log "  Temporal UI: http://localhost:8233"
   fi
 else
-  echo "[post-start] pnpm not found." >&2
+  log "pnpm not found. Please ensure pnpm is installed."
 fi

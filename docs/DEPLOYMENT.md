@@ -542,7 +542,7 @@ spec:
 **1. Install Vercel CLI**
 
 ```bash
-npm install -g vercel
+pnpm install -g vercel
 ```
 
 **2. Configure `vercel.json`**
@@ -579,7 +579,7 @@ vercel --prod
 ```bash
 # Install dependencies
 cd apps/api
-npm install
+pnpm install
 
 # Create deployment package
 zip -r api.zip .
