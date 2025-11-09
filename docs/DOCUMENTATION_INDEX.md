@@ -28,6 +28,26 @@ Detailed algorithms, formulas, and implementation notes.
 - **[Rotation Detection Guide](ROTATION_DETECTION.md)** - Overview and methodology
 - **[Scoring Specification](spec/rotation_score_v_5.md)** - Technical details of scoreV4_1
 
+### Form 4 Insider Transactions 🆕
+- **Database Schema:** `supabase/migrations/013_insider_transactions.sql`
+- **Implementation:** `apps/temporal-worker/src/activities/form4.activities.ts`
+- **Use Cases:**
+  - Validate institutional rotation signals
+  - Detect insider buying during/after dumps
+  - Track executive confidence with 2-day reporting lag
+
+### Options Flow Analysis 🆕
+- **[UnusualWhales API Analysis](unusualwhales-api-analysis.md)** - Comprehensive endpoint analysis
+  - Daily flow workflows
+  - Endpoint specifications
+  - Calculated metrics
+- **[Endpoint Groups & Scoring](unusualwhales-endpoint-groups-scoring.md)** - Prioritization framework
+  - Tier 1: Core daily data (must-have)
+  - Tier 2: Enhanced data (important)
+  - Tier 3: Supporting data (optional)
+- **Database Schema:** `supabase/migrations/014_options_flow.sql`
+- **Implementation:** `apps/temporal-worker/src/activities/options.activities.ts`
+
 ### Microstructure Layer 🆕
 - **[Microstructure Guide](MICROSTRUCTURE.md)** - Real-time flow detection
   - Quick start
@@ -54,7 +74,7 @@ Detailed algorithms, formulas, and implementation notes.
 | [Workflows](WORKFLOWS.md) | Temporal workflow reference |
 | [API Reference](API.md) | REST endpoint documentation |
 | [Data Model](DATA_MODEL.md) | Database schema |
-| [Data Sources](DATA_SOURCES.md) | SEC EDGAR, FINRA, ETF integrations |
+| [Data Sources](DATA_SOURCES.md) | SEC EDGAR, UnusualWhales, FINRA, IEX, ETF integrations |
 
 ---
 
@@ -89,6 +109,12 @@ Detailed algorithms, formulas, and implementation notes.
 
 **Understand VPIN calculation?**
 → [Microstructure Technical Spec](spec/MICROSTRUCTURE_TECHNICAL.md#vpin-volume-synchronized-pin)
+
+**Integrate options flow data?**
+→ [UnusualWhales API Analysis](unusualwhales-api-analysis.md) + [Endpoint Groups & Scoring](unusualwhales-endpoint-groups-scoring.md)
+
+**Track insider transactions (Form 4)?**
+→ [Data Sources - Form 4 Section](DATA_SOURCES.md#form-4-insider-transactions-)
 
 **Understand the scoring algorithm?**
 → [Rotation Detection](ROTATION_DETECTION.md) + [Scoring Spec](spec/rotation_score_v_5.md)
@@ -188,4 +214,4 @@ When adding new features:
 
 ---
 
-Last updated: 2024-11-09
+Last updated: 2025-11-09
