@@ -1,3 +1,4 @@
+import type {} from '../types/temporal';
 import { defineQuery, setHandler, upsertSearchAttributes } from '@temporalio/workflow';
 import { defineSearchAttributeKey, SearchAttributeType, type SearchAttributeUpdatePair } from '@temporalio/common';
 

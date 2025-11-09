@@ -9,8 +9,8 @@
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals", "./src/types/temporal"]
+    "types": ["vitest/globals"]
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/__tests__"]
 }

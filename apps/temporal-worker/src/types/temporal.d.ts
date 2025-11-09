@@ -6,9 +6,10 @@
  *
  * These attributes must be registered in Temporal before use.
  * See: tools/setup-temporal-attributes.sh
+ *
+ * This file must be imported in workflows/utils.ts to ensure the
+ * type augmentation is available to all workflows.
  */
-
-import '@temporalio/workflow';
 
 declare module '@temporalio/workflow' {
   interface WorkflowSearchAttributes {
@@ -33,3 +34,6 @@ declare module '@temporalio/workflow' {
     Provenance?: string[];
   }
 }
+
+// Export empty object to make this a module
+export {};
