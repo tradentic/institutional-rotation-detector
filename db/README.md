@@ -13,20 +13,29 @@ The database uses **PostgreSQL 15+** with the **pgvector** extension for storing
 
 ## Directory Structure
 
+All database migrations and seed data now live in the `supabase/` directory:
+
 ```
-db/
-├── migrations/               # Database schema migrations (applied in order)
+supabase/
+├── config.toml              # Supabase configuration
+├── migrations/              # Database schema migrations (applied in order)
 │   ├── 001_init.sql         # Core schema (entities, filings, positions)
 │   ├── 002_indexes.sql      # Performance indexes
-│   ├── 010_graphrag_init.sql # GraphRAG tables
-│   └── 011_graphrag_indexes.sql # GraphRAG indexes
+│   ├── 003_graphrag_init.sql # GraphRAG tables
+│   ├── 004_graphrag_indexes.sql # GraphRAG indexes
+│   ├── 005_seed_etf_entities.sql # ETF reference data
+│   ├── 006_microstructure_init.sql # Microstructure tables
+│   ├── 006_seed_index_windows.sql # Index calendar seed data
+│   ├── 007_amendment_views.sql # Amendment tracking views
+│   ├── 007_microstructure_indexes.sql # Microstructure indexes
+│   ├── 008_covering_indexes.sql # Additional covering indexes
+│   ├── 009_cluster_score_mv.sql # Materialized views
+│   └── 010_cluster_summaries.sql # Cluster summary tables
 └── seed/                    # Optional seed data (applied after migrations)
     └── .gitkeep
 ```
 
-**Note:** For local development with Supabase, both migrations and seed data are configured in `supabase/config.toml`:
-- Migrations: `[db.migrations]` `sql_paths` points to `../db/migrations`
-- Seed data: `[db.seed]` `sql_paths` points to `../db/seed`
+**Note:** Migrations are managed by Supabase CLI and applied in numerical order. Some seed data has been integrated directly into numbered migration files (e.g., `005_seed_etf_entities.sql`).
 
 ## Migrations
 
@@ -34,31 +43,42 @@ Migrations are numbered and must be applied in order.
 
 ### Migration Files
 
-| File | Purpose | Tables Created |
-|------|---------|----------------|
+All migration files are located in `supabase/migrations/`:
+
+| File | Purpose | Tables/Objects Created |
+|------|---------|------------------------|
 | `001_init.sql` | Core schema | entities, filings, cusip_issuer_map, positions_13f, bo_snapshots, uhf_positions, rotation_events, rotation_edges, index_calendar |
-| `002_indexes.sql` | Performance indexes | N/A (indexes only) |
-| `010_graphrag_init.sql` | GraphRAG schema | graph_nodes, graph_edges, graph_communities, node_bindings, graph_explanations |
-| `011_graphrag_indexes.sql` | GraphRAG indexes | N/A (indexes only) |
+| `002_indexes.sql` | Performance indexes | Indexes for core tables |
+| `003_graphrag_init.sql` | GraphRAG schema | graph_nodes, graph_edges, graph_communities, node_bindings, graph_explanations |
+| `004_graphrag_indexes.sql` | GraphRAG indexes | Indexes for graph tables |
+| `005_seed_etf_entities.sql` | ETF reference data | Seed data for common ETFs |
+| `006_microstructure_init.sql` | Microstructure tables | Tables for FINRA OTC, IEX, short interest data |
+| `006_seed_index_windows.sql` | Index calendar data | Russell index rebalance dates |
+| `007_amendment_views.sql` | Amendment tracking | Views for tracking filing amendments |
+| `007_microstructure_indexes.sql` | Microstructure indexes | Indexes for microstructure tables |
+| `008_covering_indexes.sql` | Covering indexes | Additional covering indexes for performance |
+| `009_cluster_score_mv.sql` | Materialized views | Materialized views for cluster scoring |
+| `010_cluster_summaries.sql` | Cluster summaries | Tables for cluster summary data |
 
 ### Applying Migrations
 
 **Local Development (Supabase CLI):**
 ```bash
-# Reset database with all migrations and seed data
+# Reset database with all migrations
 supabase db reset
 
-# Note: Migration and seed paths are configured in supabase/config.toml
-# Migrations from db/migrations/ are applied in order, followed by seed files from db/seed/
+# Migrations from supabase/migrations/ are applied in numerical order
+# Some migrations include seed data (e.g., 005_seed_etf_entities.sql)
 ```
 
 **Production or Direct PostgreSQL:**
 ```bash
-# Apply all migrations in order
-psql -d rotation_detector -f db/migrations/001_init.sql
-psql -d rotation_detector -f db/migrations/002_indexes.sql
-psql -d rotation_detector -f db/migrations/010_graphrag_init.sql
-psql -d rotation_detector -f db/migrations/011_graphrag_indexes.sql
+# Apply all migrations in order from supabase/migrations/
+psql -d rotation_detector -f supabase/migrations/001_init.sql
+psql -d rotation_detector -f supabase/migrations/002_indexes.sql
+psql -d rotation_detector -f supabase/migrations/003_graphrag_init.sql
+psql -d rotation_detector -f supabase/migrations/004_graphrag_indexes.sql
+# ... continue with remaining migrations in numerical order
 ```
 
 **Production Supabase:**
@@ -66,11 +86,12 @@ psql -d rotation_detector -f db/migrations/011_graphrag_indexes.sql
 # Connect to Supabase database
 psql "postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres"
 
-# Run migrations
-\i db/migrations/001_init.sql
-\i db/migrations/002_indexes.sql
-\i db/migrations/010_graphrag_init.sql
-\i db/migrations/011_graphrag_indexes.sql
+# Run migrations from supabase/migrations/
+\i supabase/migrations/001_init.sql
+\i supabase/migrations/002_indexes.sql
+\i supabase/migrations/003_graphrag_init.sql
+\i supabase/migrations/004_graphrag_indexes.sql
+# ... continue with remaining migrations in numerical order
 ```
 
 **Verification:**
@@ -86,15 +107,18 @@ SELECT * FROM pg_extension WHERE extname = 'vector';
 
 ## Seed Data
 
-The `db/seed/` directory contains optional SQL files for populating the database with initial or test data.
+Seed data can be managed in two ways:
+
+1. **Integrated into migrations:** Reference data that should always be present is included directly in numbered migration files (e.g., `005_seed_etf_entities.sql`, `006_seed_index_windows.sql`)
+2. **Optional seed files:** Test data or environment-specific data can be placed in `supabase/seed/`
 
 ### Creating Seed Files
 
-Seed files are executed in alphabetical order after migrations:
+To add optional seed data:
 
 ```bash
 # Example: Create a seed file with test data
-cat > db/seed/01_test_entities.sql << 'EOF'
+cat > supabase/seed/01_test_entities.sql << 'EOF'
 -- Insert test entities
 INSERT INTO entities (cik, name, kind) VALUES
   ('0000320193', 'Apple Inc.', 'issuer'),
@@ -108,25 +132,30 @@ ON CONFLICT (cusip) DO NOTHING;
 EOF
 ```
 
+**Note:** Seed data in `supabase/seed/` is currently disabled in `supabase/config.toml`. To enable, set `[db.seed] enabled = true`.
+
 ### Applying Seed Data
 
 **Local Development:**
 ```bash
-# Seed data is automatically applied with migrations
+# If seed is enabled in config.toml, seed data is applied automatically
 supabase db reset
+
+# Otherwise, apply manually
+psql -h localhost -p 54322 -U postgres -d postgres -f supabase/seed/01_test_entities.sql
 ```
 
 **Production:**
 ```bash
 # Apply seed files manually if needed
-psql -d rotation_detector -f db/seed/01_test_entities.sql
+psql -d rotation_detector -f supabase/seed/01_test_entities.sql
 ```
 
 **Best Practices:**
 - Use `ON CONFLICT ... DO NOTHING` for idempotent inserts
-- Prefix files with numbers for ordering (01_, 02_, etc.)
-- Keep seed data separate from migrations
-- Use seed data for reference data, test data, or initial configuration
+- For critical reference data, integrate directly into numbered migrations
+- Use seed files for test data, development data, or environment-specific configuration
+- Prefix seed files with numbers for ordering (01_, 02_, etc.)
 
 ## Schema Overview
 
