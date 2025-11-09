@@ -1,5 +1,6 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
 import type {
   NportMonthlyPlanInput,
   NportMonthlyPlanResult,
@@ -18,6 +19,8 @@ export interface NportMonthlyTimerInput {
   cadenceMs?: number;
   lastMonth?: string | null;
   maxMonths?: number;
+  iterationCount?: number;
+  maxIterations?: number;
 }
 
 function currentDateString(): string {
@@ -28,6 +31,8 @@ export async function nportMonthlyTimerWorkflow(input: NportMonthlyTimerInput = 
   const cadenceMs = input.cadenceMs ?? DEFAULT_CADENCE_MS;
   const lastMonth = input.lastMonth ?? null;
   const maxMonths = input.maxMonths ?? 1;
+  const maxIter = input.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const iterationCount = incrementIteration(input.iterationCount, maxIter);
 
   const plan = await activities.planNportMonthlySnapshots({
     lastMonth,
@@ -51,10 +56,13 @@ export async function nportMonthlyTimerWorkflow(input: NportMonthlyTimerInput = 
 
   await sleep(cadenceMs);
 
+  // Continue-As-New to prevent unbounded history growth
   await continueAsNew<typeof nportMonthlyTimerWorkflow>({
     ...input,
     cadenceMs,
     lastMonth: nextCursor,
     maxMonths,
+    iterationCount,
+    maxIterations: maxIter,
   });
 }

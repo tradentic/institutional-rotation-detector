@@ -1,11 +1,12 @@
 import { proxyActivities } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
+import type { EventStudyResult } from '../activities/prices.activities.js';
 
-const { eventStudy } = proxyActivities<{ eventStudy: (anchorDate: string, cik: string) => Promise<any> }>(
-  {
-    startToCloseTimeout: '1 minute',
-  }
-);
+const { eventStudy } = proxyActivities<{
+  eventStudy: (anchorDate: string, cik: string) => Promise<EventStudyResult>;
+}>({
+  startToCloseTimeout: '5 minutes',
+});
 
 export interface EventStudyInput {
   anchorDate: string;
@@ -16,7 +17,7 @@ export interface EventStudyInput {
   quarterEnd: string;
 }
 
-export async function eventStudyWorkflow(input: EventStudyInput) {
+export async function eventStudyWorkflow(input: EventStudyInput): Promise<EventStudyResult> {
   await upsertWorkflowSearchAttributes({
     ticker: input.ticker,
     cik: input.cik,
@@ -25,5 +26,9 @@ export async function eventStudyWorkflow(input: EventStudyInput) {
     periodEnd: input.anchorDate,
     batchId: `event-study:${input.cik}:${input.anchorDate}`,
   });
-  return eventStudy(input.anchorDate, input.cik);
+
+  // Compute event study metrics (CAR, max return, time to +20%, max drawdown)
+  const result = await eventStudy(input.anchorDate, input.cik);
+
+  return result;
 }

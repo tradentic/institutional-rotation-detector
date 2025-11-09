@@ -1,5 +1,6 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.js';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
 import type {
   EtfDailyPlanInput,
   EtfDailyPlanResult,
@@ -19,6 +20,8 @@ export interface EtfDailyCronInput {
   cadenceMs?: number;
   lastAsOf?: string | null;
   funds?: string[];
+  iterationCount?: number;
+  maxIterations?: number;
 }
 
 function previousDay(date: Date): string {
@@ -36,6 +39,8 @@ function nextDay(dateStr: string): string {
 export async function etfDailyCronWorkflow(input: EtfDailyCronInput = {}) {
   const cadenceMs = input.cadenceMs ?? DEFAULT_CADENCE_MS;
   const funds = input.funds && input.funds.length > 0 ? input.funds : DEFAULT_FUNDS;
+  const maxIterations = input.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const iterationCount = incrementIteration(input.iterationCount, maxIterations);
 
   const now = new Date();
   const targetAsOf = input.lastAsOf ?? previousDay(now);
@@ -59,10 +64,13 @@ export async function etfDailyCronWorkflow(input: EtfDailyCronInput = {}) {
 
   await sleep(cadenceMs);
 
+  // Continue-As-New to prevent unbounded history growth
   await continueAsNew<typeof etfDailyCronWorkflow>({
     ...input,
     cadenceMs,
     funds,
     lastAsOf: nextAsOf,
+    iterationCount,
+    maxIterations,
   });
 }
