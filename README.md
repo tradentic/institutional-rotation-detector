@@ -4,14 +4,16 @@ A sophisticated system for detecting and analyzing institutional investor rotati
 
 ## Overview
 
-This project identifies when institutional investors (hedge funds, mutual funds, asset managers) rotate in and out of stock positions by analyzing SEC Form 13F filings, N-PORT data, and beneficial ownership reports. It detects coordinated selling/buying patterns, builds knowledge graphs of institutional flows, and scores rotation events using multiple financial signals.
+This project identifies when institutional investors (hedge funds, mutual funds, asset managers) rotate in and out of stock positions by analyzing SEC filings (13F, N-PORT, Form 4, beneficial ownership), options flow data, and market microstructure signals. It detects coordinated selling/buying patterns, builds knowledge graphs of institutional flows, and scores rotation events using multiple financial signals including insider transactions and options activity.
 
 ## Key Features
 
-- **Automated SEC Filing Ingestion**: Downloads and processes 13F, N-PORT, and beneficial ownership filings from EDGAR
+- **Automated SEC Filing Ingestion**: Downloads and processes 13F, N-PORT, beneficial ownership, and Form 4 filings from EDGAR
+- **🆕 Form 4 Insider Transactions**: Tracks insider buying/selling with 2-day reporting lag (vs 45-day 13F) for rotation validation and early signals
+- **🆕 Options Flow Analysis**: Real-time options activity tracking via UnusualWhales API for predictive rotation signals (unusual activity, put/call ratios, IV skew)
 - **Rotation Detection**: Identifies institutional dump events and subsequent uptake patterns
-- **Multi-Signal Scoring**: Combines multiple indicators (dump magnitude, uptake, ultra-high-frequency trading, options overlay, short interest relief)
-- **🆕 Real-Time Microstructure Layer**: Detects institutional flows 1-3 days after occurrence (vs 45-day 13F lag) using ATS/dark pool data, VPIN toxicity metrics, and broker-dealer attribution
+- **Multi-Signal Scoring**: Combines multiple indicators (dump magnitude, uptake, ultra-high-frequency trading, options overlay, short interest relief, insider activity)
+- **Real-Time Microstructure Layer**: Detects institutional flows 1-3 days after occurrence (vs 45-day 13F lag) using ATS/dark pool data, VPIN toxicity metrics, and broker-dealer attribution
 - **Knowledge Graph Construction**: Builds relationship graphs showing flows between institutional holders
 - **GraphRAG Analysis**: Leverages graph-based retrieval augmented generation for community detection and summarization
 - **Event Study Pipeline**: Performs cumulative abnormal return (CAR) analysis on detected rotation events
@@ -195,7 +197,8 @@ The system identifies institutional rotation through a multi-step process:
 - **[Rotation Detection](docs/ROTATION_DETECTION.md)** - Algorithm and methodology
 - **[Microstructure Layer](docs/MICROSTRUCTURE.md)** - Real-time flow detection with VPIN and broker attribution ([Technical Spec](docs/spec/MICROSTRUCTURE_TECHNICAL.md))
 - **[GraphRAG](docs/GRAPHRAG.md)** - Graph-based analysis and AI synthesis
-- **[Data Sources](docs/DATA_SOURCES.md)** - SEC EDGAR, FINRA, ETF integrations
+- **[Data Sources](docs/DATA_SOURCES.md)** - SEC EDGAR, UnusualWhales, FINRA, IEX, ETF integrations
+- **[UnusualWhales API Analysis](docs/unusualwhales-api-analysis.md)** - Comprehensive options flow endpoint analysis
 
 ### Operations
 - **[Deployment](docs/DEPLOYMENT.md)** - Production deployment guide
@@ -210,7 +213,7 @@ The system identifies institutional rotation through a multi-step process:
 - **Data Platform**: Supabase
 - **AI/ML**: OpenAI GPT-4 for summarization and analysis
 - **Graph Algorithms**: Custom PageRank and Louvain implementation
-- **Data Sources**: SEC EDGAR API, FINRA
+- **Data Sources**: SEC EDGAR API, UnusualWhales API, FINRA OTC, IEX Exchange
 
 ## Use Cases
 

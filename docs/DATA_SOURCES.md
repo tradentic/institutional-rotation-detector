@@ -1,14 +1,20 @@
 # Data Sources
 
-Comprehensive guide to external data sources, APIs, and integration patterns.
+Comprehensive guide to all external data sources, APIs, and integration patterns used by the Institutional Rotation Detector.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [SEC EDGAR](#sec-edgar)
-- [FINRA](#finra)
-- [ETF Holdings](#etf-holdings)
-- [OpenAI](#openai)
+- [Core Data Sources](#core-data-sources)
+  - [SEC EDGAR](#sec-edgar)
+  - [UnusualWhales API](#unusualwhales-api)
+- [Microstructure Data Sources](#microstructure-data-sources)
+  - [FINRA OTC Transparency](#finra-otc-transparency)
+  - [IEX Exchange HIST](#iex-exchange-hist)
+  - [FINRA Short Interest](#finra-short-interest)
+- [Supporting Data Sources](#supporting-data-sources)
+  - [ETF Holdings](#etf-holdings)
+  - [OpenAI](#openai)
 - [Rate Limiting](#rate-limiting)
 - [Data Quality](#data-quality)
 - [Compliance](#compliance)
@@ -19,16 +25,21 @@ The Institutional Rotation Detector integrates data from multiple external sourc
 
 | Source | Data Type | Frequency | Latency | Cost |
 |--------|-----------|-----------|---------|------|
-| SEC EDGAR | 13F, N-PORT, 13G/D | Quarterly/Monthly | 45 days (13F) | Free |
-| FINRA | Short interest | Bi-weekly | 1 week | Free |
-| ETF Providers | Daily holdings | Daily | 1 day | Free |
-| OpenAI | Text generation | On-demand | Real-time | Paid |
+| SEC EDGAR | 13F, N-PORT, 13G/D, Form 4 | Quarterly/Monthly/Event | 45 days (13F), 2 days (Form 4) | Free |
+| UnusualWhales | Options flow, unusual activity | Daily | T+1 | Paid (subscription) |
+| FINRA OTC | Off-exchange volume | Weekly | 5 business days | Free |
+| IEX HIST | On-exchange volume proxy | Daily | T+1 | Free |
+| FINRA Short Interest | Short positions | Bi-weekly | 2 business days | Free |
+| ETF Providers | Daily holdings | Daily | T+1 | Free |
+| OpenAI | Text generation, embeddings | On-demand | Real-time | Paid (usage) |
 
 ---
 
-## SEC EDGAR
+## Core Data Sources
 
-### Overview
+### SEC EDGAR
+
+#### Overview
 
 **EDGAR** (Electronic Data Gathering, Analysis, and Retrieval) is the SEC's public filing system.
 
@@ -36,7 +47,7 @@ The Institutional Rotation Detector integrates data from multiple external sourc
 
 **Documentation:** https://www.sec.gov/edgar/searchedgar/accessing-edgar-data.htm
 
-### Rate Limits
+#### Rate Limits
 
 **Official Limits:**
 - 10 requests per second per IP
@@ -63,9 +74,9 @@ if (response.status === 429) {
 }
 ```
 
-### Filing Types
+#### Filing Types
 
-#### 13F-HR (Institutional Holdings)
+##### 13F-HR (Institutional Holdings)
 
 **Purpose:** Quarterly holdings report for investment managers with >$100M AUM.
 
@@ -85,51 +96,44 @@ if (response.status === 429) {
 https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001000097&type=13F-HR&dateb=&owner=exclude&count=100
 ```
 
-**XML Structure:**
-```xml
-<informationTable>
-  <infoTable>
-    <nameOfIssuer>Apple Inc</nameOfIssuer>
-    <titleOfClass>COM</titleOfClass>
-    <cusip>037833100</cusip>
-    <value>28500000</value>
-    <shrsOrPrnAmt>
-      <sshPrnamt>30000000</sshPrnamt>
-      <sshPrnamtType>SH</sshPrnamtType>
-    </shrsOrPrnAmt>
-    <putCall/>
-    <investmentDiscretion>SOLE</investmentDiscretion>
-    <votingAuthority>
-      <Sole>30000000</Sole>
-      <Shared>0</Shared>
-      <None>0</None>
-    </votingAuthority>
-  </infoTable>
-</informationTable>
-```
+##### Form 4 (Insider Transactions) 🆕
 
-**Parsing:**
-```typescript
-import { XMLParser } from 'fast-xml-parser';
+**Purpose:** Insider transaction reporting (officers, directors, 10% owners).
 
-export async function parse13F(xml: string): Promise<Position13F[]> {
-  const parser = new XMLParser();
-  const parsed = parser.parse(xml);
+**Filing Deadline:** 2 business days after transaction.
 
-  const tables = parsed.edgarSubmission.formData.informationTable.infoTable;
+**Format:** XML with OwnershipDocument schema.
 
-  return tables.map((table: any) => ({
-    cusip: table.cusip,
-    shares: parseInt(table.shrsOrPrnAmt.sshPrnamt),
-    putCallShares: table.putCall === 'Put' ? parseInt(table.shrsOrPrnAmt.sshPrnamt) : 0,
-    // ...
-  }));
-}
-```
+**Data Extracted:**
+- Transaction date and type (P=Purchase, S=Sale)
+- Number of shares and price
+- Insider name, CIK, and title
+- Direct/indirect ownership
+- Derivative securities (options, warrants)
+- Rule 10b5-1 plan indicator
+
+**Use Cases:**
+- Validate institutional rotation signals
+- Detect insider buying during/after dumps
+- Identify potential accumulation signals
+- Track executive confidence
+
+**Reporting Timeline:**
+- Transaction occurs: Day 0
+- Form 4 filed: Day 0-2 (within 2 business days)
+- Ingestion lag: Much faster than 13F (45 days)
+
+**Implementation:** See `apps/temporal-worker/src/activities/form4.activities.ts`
+
+**Database Schema:** `supabase/migrations/013_insider_transactions.sql`
+
+**References:**
+- Form 4 Overview: https://www.sec.gov/files/forms-3-4-5.pdf
+- XML Schema: https://www.sec.gov/info/edgar/forms/edgarxml.html
 
 ---
 
-#### N-PORT-P (Monthly Fund Holdings)
+##### N-PORT-P (Monthly Fund Holdings)
 
 **Purpose:** Monthly portfolio holdings for registered investment companies (mutual funds, ETFs).
 
@@ -137,37 +141,7 @@ export async function parse13F(xml: string): Promise<Position13F[]> {
 
 **Format:** XML (structured) or JSON (newer).
 
-**Data Extracted:**
-- Security identifier (CUSIP, ISIN)
-- Shares or principal amount
-- Market value
-- Percentage of portfolio
-
-**Example URL:**
-```
-https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0001364742&type=NPORT-P&dateb=&owner=exclude&count=100
-```
-
-**Parsing:**
-```typescript
-export async function parseNPORT(xml: string): Promise<NPORTPosition[]> {
-  const parser = new XMLParser();
-  const parsed = parser.parse(xml);
-
-  const holdings = parsed.edgarSubmission.formData.invstOrSecs;
-
-  return holdings.map((holding: any) => ({
-    cusip: holding.identifiers.cusip,
-    shares: holding.balance,
-    value: holding.valUSD,
-    pctPortfolio: holding.pctVal,
-  }));
-}
-```
-
----
-
-#### 13G / 13D (Beneficial Ownership)
+##### 13G / 13D (Beneficial Ownership)
 
 **Purpose:** Disclosure of >5% ownership in public companies.
 
@@ -175,160 +149,273 @@ export async function parseNPORT(xml: string): Promise<NPORTPosition[]> {
 - **13G:** Passive investors (within 45 days of crossing 5%)
 - **13D:** Active investors (within 10 days)
 
-**Format:** Text with structured sections.
+---
 
-**Data Extracted:**
-- Holder CIK and name
-- Issuer CIK and name
-- Shares owned
-- Percentage of class
-- Event date
+### UnusualWhales API
 
-**Example URL:**
+#### Overview
+
+**UnusualWhales** provides real-time options flow data, unusual activity detection, and options analytics.
+
+**Base URL:** `https://api.unusualwhales.com`
+
+**Documentation:** https://api.unusualwhales.com/docs
+
+**Cadence:** Daily (EOD) for most endpoints, real-time for flow alerts
+
+#### Rate Limits
+
+**Default:** 10 requests per second
+
+**Configuration:** Set `MAX_RPS_UNUSUALWHALES=10` in `.env`
+
+**Handling:** Automatic rate limiting via `RateLimiter` class
+
+#### Key Endpoints
+
+##### Tier 1: Core Daily Data (Must-Have)
+
+**1. `/api/stock/{ticker}/option-contracts`** ⭐ **PRIMARY ENDPOINT**
+
+Returns: Volume + Open Interest + Implied Volatility for all contracts
+
+**Use Cases:**
+- Calculate Put/Call ratios (volume and OI)
+- Detect unusual activity (volume/OI > 3x)
+- Measure IV skew (put IV - call IV)
+- Track strike-level positioning
+
+**2. `/api/stock/{ticker}/flow-per-expiry`**
+
+Returns: Aggregated options flow by expiration date
+
+**Use Cases:**
+- Daily flow summary by expiration
+- Ask/bid side breakdown (directional flow)
+- OTM volume (speculative activity)
+
+**3. `/api/option-trades/flow-alerts`** ⭐ **PRE-FILTERED**
+
+Returns: Unusual options activity alerts
+
+**Alert Rules:**
+- `RepeatedHits` - Persistent positioning
+- `FloorTradeLargeCap` - Large institutional trades
+- `SweepsFollowedByFloor` - Aggressive buying patterns
+
+**Use Cases:**
+- Detect institutional positioning changes
+- Identify sweep orders (aggressive buying)
+- Flag floor trades (large block trades)
+
+##### Tier 2: Enhanced Data (Important)
+
+**4. `/api/stock/{ticker}/greeks`**
+
+Returns: Delta, gamma, theta, vega, IV for all strikes in ONE expiration
+
+**Note:** Must query per expiration (expensive)
+
+**5. `/api/stock/{ticker}/greek-exposure`**
+
+Returns: Historical Greek exposure (GEX) trends
+
+**Use Cases:**
+- Track GEX over time (30+ days)
+- Detect gamma flips (positive to negative)
+- Measure net delta exposure
+
+##### Tier 3: Supporting Data (Optional)
+
+**6. `/api/stock/{ticker}/option-chains`**
+
+Returns: List of all valid option symbols for contract discovery
+
+**7. `/api/stock/{ticker}/greek-exposure/expiry`**
+
+Returns: GEX broken down by expiration
+
+#### Calculated Metrics
+
+From raw API data, the system derives institutional rotation signals:
+
+**Volume Metrics:**
+```python
+put_call_ratio_volume = put_volume / call_volume
+put_call_ratio_premium = put_premium / call_premium
+volume_oi_ratio = volume / open_interest  # >3.0 = unusual
+otm_ratio = otm_volume / total_volume      # Speculative activity
 ```
-https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&type=SC%2013G&dateb=&owner=exclude&count=100
+
+**Flow Direction:**
+```python
+net_call_flow = call_volume_ask_side - call_volume_bid_side
+net_put_flow = put_volume_ask_side - put_volume_bid_side
+directional_bias = (net_call_flow - net_put_flow) / total_volume
 ```
 
-**Parsing:**
+**Greeks:**
+```python
+iv_skew = put_volatility - call_volatility  # Positive = fear
+net_delta = call_delta + put_delta
+net_gamma = call_gamma + put_gamma
+gamma_flip = (net_gamma > 0)  # True = volatility suppression
+```
+
+#### Implementation
+
+**Client:** `apps/temporal-worker/src/lib/unusualWhalesClient.ts`
+
+**Activities:** `apps/temporal-worker/src/activities/options.activities.ts`
+
+**Workflows:** `apps/temporal-worker/src/workflows/optionsIngest.workflow.ts`
+
+**Database Schema:** `supabase/migrations/014_options_flow.sql`
+
+#### Documentation
+
+- **[UnusualWhales API Analysis](unusualwhales-api-analysis.md)** - Comprehensive endpoint analysis
+- **[Endpoint Groups & Scoring](unusualwhales-endpoint-groups-scoring.md)** - Prioritization framework
+
+#### Minimal Daily Workflow
+
+**Meets all 4 requirements with just 3 API calls:**
+
 ```typescript
-export async function parse13G(text: string): Promise<BeneficialOwnership> {
-  // Regex patterns for structured sections
-  const sharesMatch = text.match(/Aggregate Amount Beneficially Owned.*?(\d{1,3}(,\d{3})*)/i);
-  const pctMatch = text.match(/Percent of Class.*?([\d.]+)%/i);
+// 1. Get volume + OI + IV for all contracts (1 call)
+await fetchOptionContracts({ ticker: 'AAPL' });
 
-  return {
-    shares: sharesMatch ? parseInt(sharesMatch[1].replace(/,/g, '')) : null,
-    pctOfClass: pctMatch ? parseFloat(pctMatch[1]) : null,
-  };
-}
+// 2. Get aggregated flow by expiration (1 call)
+await fetchOptionsFlowByExpiry({ ticker: 'AAPL' });
+
+// 3. Get unusual activity alerts (1 call)
+await fetchFlowAlerts({ ticker: 'AAPL', minPremium: 50000 });
+
+// Total: 3 API calls
 ```
+
+**Result:** Complete daily options profile with:
+- ✅ Volume by strike/expiry
+- ✅ Open Interest by strike/expiry
+- ✅ Put/Call ratios (volume and OI)
+- ✅ Unusual activity detection
+- ✅ IV skew calculation
 
 ---
 
-### Search and Discovery
+## Microstructure Data Sources
 
-**Company Search:**
-```
-https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type={form}&dateb={before_date}&owner=exclude&count={limit}
-```
+### FINRA OTC Transparency
 
-**Full-Text Search:**
-```
-https://efts.sec.gov/LATEST/search-index
-```
+**Provider:** Financial Industry Regulatory Authority
 
-**RSS Feeds:**
-```
-https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&CIK=&type=13F&company=&dateb=&owner=exclude&start=0&count=100&output=atom
-```
+**Cadence:** Weekly (published ~5 business days after week end)
 
-### Implementation
+**Data Type:** Off-exchange volume (ATS + non-ATS dealer trades)
 
-**SEC Client:**
+**URL:** https://otctransparency.finra.org/otctransparency/
 
-```typescript
-import { RateLimiter } from '../lib/rateLimit.js';
+FINRA OTC Transparency provides weekly venue-level off-exchange trading data for all NMS and OTC equity securities. This is the official source for determining off-exchange trading percentages.
 
-export class SECClient {
-  private limiter = new RateLimiter(10); // 10 req/sec
+**Datasets:**
+- **ATS Weekly:** Alternative Trading System volumes by venue (MPID)
+- **Non-ATS Weekly:** Off-exchange dealer volumes (may have masked venues for de minimis)
 
-  async fetchFiling(accession: string): Promise<string> {
-    await this.limiter.acquire();
+**Product Tiers:**
+- NMS Tier 1: Most liquid NMS stocks
+- NMS Tier 2: Less liquid NMS stocks
+- OTCE: Over-the-counter equity securities
 
-    const url = `https://www.sec.gov/Archives/edgar/data/${cik}/${accession}.txt`;
+**Key Fields:**
+- `symbol`: Stock ticker
+- `week_end`: Week ending date (typically Friday)
+- `venue_id`: ATS MPID or reporting member
+- `total_shares`: Total shares traded
+- `total_trades`: Total number of trades
+- `product`: NMS Tier1/Tier2/OTCE
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': process.env.SEC_USER_AGENT!,
-      },
-    });
+**References:**
+- Program Overview: https://www.finra.org/filing-reporting/otc-transparency
+- ATS Data: https://www.finra.org/filing-reporting/otc-transparency/ats
+- Non-ATS Data: https://www.finra.org/filing-reporting/otc-transparency/non-ats
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        await this.backoff();
-        return this.fetchFiling(accession);
-      }
-      throw new Error(`SEC API error: ${response.status}`);
-    }
-
-    return response.text();
-  }
-
-  private async backoff() {
-    const delay = 60000; // 1 minute
-    await new Promise(resolve => setTimeout(resolve, delay));
-  }
-}
-```
+**Provenance:** All records include `finra_file_id` and `finra_sha256` for audit trail.
 
 ---
 
-## FINRA
+### IEX Exchange HIST
 
-### Overview
+**Provider:** IEX Exchange
 
-**FINRA** (Financial Industry Regulatory Authority) provides short interest data.
+**Cadence:** Daily (T+1 availability)
 
-**Base URL:** `https://www.finra.org/`
+**Data Type:** Matched volume (on-exchange only)
 
-**Data:** Short interest by security (bi-weekly).
+**URL:** https://www.iexexchange.io/market-data/connectivity/historical-data
 
-### Short Interest Data
+IEX HIST provides free daily matched volume data for all securities traded on IEX. This is used as an on-exchange volume proxy for computing daily off-exchange approximations.
 
-**Reporting Schedule:**
-- Settlement dates: 15th and last day of each month
-- Published: ~1 week after settlement
+**Availability:** T+1 (data for trading day T is available on day T+1)
 
-**Format:** CSV or Excel download.
+**Coverage:** All symbols traded on IEX
 
-**Fields:**
-- Symbol
-- Company name
-- Settlement date
-- Short interest (shares)
-- Average daily volume
-- Days to cover
+**Format:** PCAP or CSV (depending on distribution method)
 
-**Example Data:**
-```csv
-Symbol,Company,SettlementDate,ShortInterest,AvgDailyVolume,DaysToCover
-AAPL,Apple Inc,2024-03-15,115000000,62000000,1.85
-MSFT,Microsoft Corp,2024-03-15,78000000,25000000,3.12
-```
+**Limitations:**
+- IEX matched volume is only a portion of total on-exchange volume
+- Not consolidated tape data
+- Used as a proxy for daily apportionment of weekly FINRA off-exchange totals
 
-### Access Methods
+**Quality Flags:**
+When IEX data is used to compute off-exchange ratios, records are marked with `quality_flag='iex_proxy'` to indicate this is NOT consolidated volume.
 
-**Manual Download:**
-1. Visit https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data
-2. Select date range
-3. Download CSV
+**References:**
+- Historical Data: https://www.iexexchange.io/market-data/connectivity/historical-data
+- Market Data Policies: https://www.iexexchange.io/market-data/policies
 
-**Automated (Unofficial API):**
-
-**Note:** FINRA does not provide an official API. Scraping may violate terms of service.
-
-**Alternative:** Use third-party data providers (Quandl, Alpha Vantage) that aggregate FINRA data.
-
-### Implementation
-
-```typescript
-export async function fetchShortInterest(
-  cik: string,
-  settleDates: string[]
-): Promise<number> {
-  // In production, use a licensed data provider
-  // For development, use cached or mock data
-
-  const shortInterest = await getCachedShortInterest(cik, settleDates[0]);
-  return shortInterest ?? 0;
-}
-```
+**Provenance:** All records include `iex_file_id` and `iex_sha256` for audit trail.
 
 ---
 
-## ETF Holdings
+### FINRA Short Interest
 
-### Overview
+**Provider:** Financial Industry Regulatory Authority
+
+**Cadence:** Semi-monthly (settlement dates: 15th and month-end)
+
+**Data Type:** Short interest positions
+
+**URL:** https://www.finra.org/finra-data/browse-catalog/short-sale-volume-data
+
+FINRA requires members to report short interest positions twice per month. Settlement dates are the 15th of each month and the last day of each month. Publication typically occurs ~2 business days after settlement.
+
+**Settlement Schedule:**
+- **Mid-month:** 15th of each month
+- **Month-end:** Last day of each month
+
+**Publication Timing:** T+2 business days after settlement
+
+**Key Fields:**
+- `symbol`: Stock ticker
+- `settlement_date`: Official FINRA settlement date
+- `publication_date`: When FINRA published the data
+- `short_interest`: Number of shares short
+- `avg_daily_volume`: Average daily volume (optional)
+- `days_to_cover`: short_interest / avg_daily_volume (optional)
+
+**References:**
+- Short Interest Calendar: https://www.finra.org/filing-reporting/regulatory-filing-systems/short-interest
+- Data Specifications: https://www.finra.org/filing-reporting/short-interest-reporting-compliance
+
+**Provenance:** All records include `finra_file_id` and `finra_sha256` for audit trail.
+
+---
+
+## Supporting Data Sources
+
+### ETF Holdings
+
+#### Overview
 
 ETF providers publish daily holdings for transparency.
 
@@ -342,7 +429,7 @@ ETF providers publish daily holdings for transparency.
 
 **Format:** CSV or JSON
 
-### BlackRock (iShares)
+#### BlackRock (iShares)
 
 **Example URL:**
 ```
@@ -355,71 +442,11 @@ Ticker,Name,Sector,Asset Class,Weight,Notional Value,Shares,CUSIP,ISIN,Sedol,Pri
 AAPL,Apple Inc,Information Technology,Equity,7.23,28500000000,155000000,037833100,US0378331005,2046251,184.00,United States,NASDAQ,USD,28520000000
 ```
 
-**Parsing:**
-```typescript
-export async function fetchETFHoldings(
-  etfTicker: string,
-  asof: string
-): Promise<ETFHolding[]> {
-  const csv = await downloadETFHoldings(etfTicker);
-  const rows = parseCSV(csv);
-
-  return rows.map(row => ({
-    cusip: row.CUSIP,
-    ticker: row.Ticker,
-    shares: parseInt(row.Shares),
-    weight: parseFloat(row.Weight),
-    asof,
-  }));
-}
-```
-
-### Vanguard
-
-**Example URL:**
-```
-https://advisors.vanguard.com/investments/products/{fund_id}/vanguard-500-index-fund-investor-shares/vfinx/portfolio-holdings
-```
-
-**Format:** Excel or PDF (requires parsing)
-
-### State Street (SPDR)
-
-**Example URL:**
-```
-https://www.ssga.com/us/en/intermediary/etfs/funds/{fund_id}
-```
-
-**Format:** Excel download
-
-### Implementation
-
-```typescript
-export async function fetchDailyHoldings(
-  cusips: string[],
-  etfUniverse: string[]
-): Promise<number> {
-  let totalHoldings = 0;
-
-  for (const etf of etfUniverse) {
-    const holdings = await fetchETFHoldings(etf, new Date().toISOString());
-
-    for (const holding of holdings) {
-      if (cusips.includes(holding.cusip)) {
-        totalHoldings += holding.shares;
-      }
-    }
-  }
-
-  return totalHoldings;
-}
-```
-
 ---
 
-## OpenAI
+### OpenAI
 
-### Overview
+#### Overview
 
 **OpenAI API** is used for:
 - Text embeddings (vector search)
@@ -430,7 +457,7 @@ export async function fetchDailyHoldings(
 
 **Documentation:** https://platform.openai.com/docs/api-reference
 
-### Models Used
+#### Models Used
 
 | Model | Purpose | Context Window | Cost (per 1M tokens) |
 |-------|---------|----------------|----------------------|
@@ -438,7 +465,7 @@ export async function fetchDailyHoldings(
 | `gpt-4-turbo-preview` | Analysis, synthesis | 128K | $10 (input) + $30 (output) |
 | `gpt-4o-mini` | Simple tasks | 128K | $0.15 (input) + $0.60 (output) |
 
-### Embeddings
+#### Embeddings
 
 **Purpose:** Convert text to vectors for semantic search.
 
@@ -457,84 +484,6 @@ export async function generateEmbedding(text: string): Promise<number[]> {
   });
 
   return response.data[0].embedding;
-}
-```
-
-**Example:**
-```typescript
-const text = "Apple Inc. reported strong Q1 earnings...";
-const embedding = await generateEmbedding(text);
-// embedding: [0.023, -0.145, 0.678, ..., 0.234] (1536 dimensions)
-
-// Store in database
-await supabase
-  .from('filing_chunks')
-  .insert({
-    accession: '0001193125-24-123456',
-    chunk_no: 1,
-    content: text,
-    embedding: embedding,
-  });
-```
-
-### Text Generation
-
-**Purpose:** Generate explanations, summaries, and answers.
-
-**Usage:**
-```typescript
-export async function generateExplanation(
-  context: string,
-  question: string
-): Promise<string> {
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4-turbo-preview',
-    messages: [
-      {
-        role: 'system',
-        content: 'You are a financial analyst...',
-      },
-      {
-        role: 'user',
-        content: `Context: ${context}\n\nQuestion: ${question}`,
-      },
-    ],
-    temperature: 0.7,
-    max_tokens: 2000,
-  });
-
-  return completion.choices[0].message.content ?? '';
-}
-```
-
-### Rate Limits
-
-**Tier 1 (Free/New):**
-- 3 requests per minute (RPM)
-- 200,000 tokens per day (TPD)
-
-**Tier 2-5 (Paid):**
-- 500-10,000 RPM
-- 2M-100M TPD
-
-**Handling:**
-```typescript
-import pRetry from 'p-retry';
-
-export async function callOpenAIWithRetry<T>(
-  fn: () => Promise<T>
-): Promise<T> {
-  return pRetry(fn, {
-    retries: 3,
-    onFailedAttempt: async (error) => {
-      if (error.message.includes('Rate limit')) {
-        const delay = Math.pow(2, error.attemptNumber) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        throw error;
-      }
-    },
-  });
 }
 ```
 
@@ -582,122 +531,41 @@ for (const filing of filings) {
 }
 ```
 
-### Circuit Breaker
+---
 
-**Pattern:** Stop calling failing services.
+## Data Quality and Provenance
 
-```typescript
-export class CircuitBreaker {
-  private failures = 0;
-  private state: 'closed' | 'open' | 'half-open' = 'closed';
-  private nextAttempt = 0;
+All microstructure and options data ingestion includes:
 
-  constructor(
-    private threshold: number = 5,
-    private timeout: number = 60000
-  ) {}
+1. **File Provenance:**
+   - `*_file_id`: Unique identifier for the source file/dataset
+   - `*_sha256`: SHA-256 hash of the downloaded file for verification
 
-  async call<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'open') {
-      if (Date.now() < this.nextAttempt) {
-        throw new Error('Circuit breaker is OPEN');
-      }
-      this.state = 'half-open';
-    }
+2. **Quality Flags:**
+   - Clear indication of data completeness and computation method
+   - Allows downstream consumers to filter by quality requirements
 
-    try {
-      const result = await fn();
-      this.onSuccess();
-      return result;
-    } catch (error) {
-      this.onFailure();
-      throw error;
-    }
-  }
+3. **Idempotent Upserts:**
+   - Re-running ingestion for the same date/week will update existing records
+   - No duplicate records (enforced by unique constraints)
 
-  private onSuccess() {
-    this.failures = 0;
-    this.state = 'closed';
-  }
-
-  private onFailure() {
-    this.failures++;
-    if (this.failures >= this.threshold) {
-      this.state = 'open';
-      this.nextAttempt = Date.now() + this.timeout;
-    }
-  }
-}
-```
+4. **Temporal Search Attributes:**
+   - All workflow runs tagged with dataset, date range, and provenance
+   - Full audit trail in Temporal UI
 
 ---
 
-## Data Quality
+## Rate Limits and Compliance
 
-### Validation
+| Source | Rate Limit | Compliance Notes |
+|--------|------------|------------------|
+| SEC EDGAR | 10 req/sec | Must include User-Agent with contact info |
+| UnusualWhales | 10 req/sec | API key required (subscription) |
+| FINRA API | Varies by endpoint | API key required (if available) |
+| IEX HIST | No published limit | Free tier, check terms of service |
+| OpenAI | Tier-dependent | 3-10,000 RPM depending on subscription |
 
-**Filing Completeness:**
-```typescript
-function validateFiling(filing: Filing): boolean {
-  return Boolean(
-    filing.accession &&
-    filing.cik &&
-    filing.form &&
-    filing.filed_date &&
-    filing.url
-  );
-}
-```
-
-**Position Sanity Checks:**
-```typescript
-function validatePosition(position: Position13F): boolean {
-  // Shares should be positive
-  if (position.shares < 0) return false;
-
-  // Options can't exceed reasonable multiples
-  if (position.opt_call_shares > position.shares * 10) return false;
-
-  // Value should be reasonable
-  const impliedPrice = position.value / position.shares;
-  if (impliedPrice < 0.01 || impliedPrice > 100000) return false;
-
-  return true;
-}
-```
-
-### Deduplication
-
-**Filings:**
-```sql
-INSERT INTO filings (accession, cik, form, filed_date, url)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (accession) DO NOTHING;
-```
-
-**Positions:**
-```sql
-INSERT INTO positions_13f (entity_id, cusip, asof, shares, accession)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (entity_id, cusip, asof, accession)
-DO UPDATE SET shares = EXCLUDED.shares;
-```
-
-### Error Handling
-
-**Malformed Data:**
-```typescript
-try {
-  const positions = parse13F(xml);
-} catch (error) {
-  if (error instanceof XMLParseError) {
-    // Log and skip malformed filing
-    console.error(`Failed to parse filing ${accession}:`, error);
-    return [];
-  }
-  throw error; // Rethrow unexpected errors
-}
-```
+**Configuration:** Set `MAX_RPS_EXTERNAL=6` in `.env` to stay well under limits across all sources.
 
 ---
 
@@ -721,9 +589,17 @@ https://www.sec.gov/dera/data/financial-statement-and-notes-data-sets.html
 **Restrictions:**
 - Personal use only (non-commercial)
 - No redistribution
-- No automated scraping
+- No automated scraping (for public portal)
 
-**Alternative:** Use licensed data providers.
+**Alternative:** Use licensed data providers or official APIs where available.
+
+### UnusualWhales Terms
+
+**Usage:**
+- Subscription required
+- Commercial use permitted per license tier
+- API key authentication
+- Respect rate limits
 
 ### OpenAI Terms
 
@@ -746,12 +622,25 @@ https://www.sec.gov/dera/data/financial-statement-and-notes-data-sets.html
 
 ---
 
+## References
+
+- [SEC EDGAR](https://www.sec.gov/edgar)
+- [UnusualWhales API Documentation](https://api.unusualwhales.com/docs)
+- [FINRA OTC Transparency Program](https://www.finra.org/filing-reporting/otc-transparency)
+- [FINRA Short Interest Reporting](https://www.finra.org/filing-reporting/short-interest-reporting-compliance)
+- [IEX Historical Data](https://www.iexexchange.io/market-data/connectivity/historical-data)
+- [OpenAI API Documentation](https://platform.openai.com/docs/api-reference)
+
+---
+
 ## Related Documentation
 
 - [Architecture](ARCHITECTURE.md) - System design
 - [Workflows](WORKFLOWS.md) - Data ingestion workflows
 - [Setup Guide](SETUP.md) - Configuration
 - [Rotation Detection](ROTATION_DETECTION.md) - Algorithm
+- [Microstructure Layer](MICROSTRUCTURE.md) - Real-time flow detection
+- [UnusualWhales API Analysis](unusualwhales-api-analysis.md) - Detailed endpoint analysis
 
 ---
 
