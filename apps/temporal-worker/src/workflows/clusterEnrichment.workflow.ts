@@ -28,7 +28,7 @@ export interface ClusterEnrichmentInput {
  */
 export async function clusterEnrichmentWorkflow(
   input: ClusterEnrichmentInput
-): Promise<{ summary: string; filings Chunked: number }> {
+): Promise<{ summary: string; filingsChunked: number }> {
   await upsertWorkflowSearchAttributes({
     cik: input.issuerCik,
     runKind: input.runKind,

@@ -56,6 +56,8 @@ This project identifies when institutional investors (hedge funds, mutual funds,
 
 ## Quick Start
 
+**🚀 New to the project? Start here: [QUICK_START.md](QUICK_START.md)**
+
 ### Local Development (Recommended)
 
 For a complete local development environment with Supabase and Temporal running locally:
@@ -65,30 +67,26 @@ For a complete local development environment with Supabase and Temporal running 
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# 2. Install Supabase CLI and Temporal CLI
+# 2. Install CLIs
 brew install supabase/tap/supabase temporal
 
-# 3. Start development environment
-./tools/dev-start.sh
+# 3. Start Supabase (Terminal 1)
+supabase start
 
-# 4. In a new terminal, set up environment
-cp .env.example apps/temporal-worker/.env
-# Edit .env: Add OPENAI_API_KEY and SEC_USER_AGENT
+# 4. Start Temporal (Terminal 2)
+temporal server start-dev
 
-# 5. Apply database migrations
-./tools/db-reset.sh
-
-# 6. Set up Temporal search attributes
+# 5. Setup & Start Worker (Terminal 3)
 ./tools/setup-temporal-attributes.sh
-
-# 7. Install dependencies and start worker
 cd apps/temporal-worker
-npm install
-npm run build
+cp .env.example .env
+# Edit .env: Add OPENAI_API_KEY, SEC_USER_AGENT, and Supabase keys
+npm install && npm run build
 node dist/worker.js
 ```
 
-**See [Local Development Guide](docs/LOCAL_DEVELOPMENT.md) for detailed setup instructions.**
+**See [QUICK_START.md](QUICK_START.md) for step-by-step instructions and troubleshooting.**
+**See [Local Development Guide](docs/LOCAL_DEVELOPMENT.md) for advanced configuration.**
 
 ### Cloud Deployment
 

@@ -254,7 +254,7 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
       const records = holdings.map((holding) => ({
         holder_id: holderId,
         cusip: holding.cusip,
-        asof,
+        asof: asOf,
         shares: holding.shares,
         source: 'NPORT' as const,
       }));

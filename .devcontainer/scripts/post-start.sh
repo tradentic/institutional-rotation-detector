@@ -208,19 +208,29 @@ if [[ "$temporal_cli_present" == "true" ]]; then
       log "Failed to start Temporal server."
     fi
   fi
+
+  # Setup Temporal search attributes if server is ready
+  if [[ "$temporal_server_ready" == "true" ]]; then
+    log "Setting up Temporal search attributes..."
+    if "${REPO_ROOT}/tools/setup-temporal-attributes.sh" >/tmp/temporal-setup.log 2>&1; then
+      log "Temporal search attributes configured successfully."
+    else
+      log "Warning: Failed to setup Temporal search attributes. Check /tmp/temporal-setup.log"
+    fi
+  fi
 else
   log "Skipping Temporal startup because the Temporal CLI is unavailable."
 fi
 
 if command -v pnpm >/dev/null 2>&1; then
   if [[ "${supabase_ready}" == "true" ]]; then
-    echo "[post-start] Syncing local environment files from Supabase status..."
-    pnpm db:env:local
+    echo "[post-start] Supabase is ready. Environment variables can be copied from: supabase status"
+    echo "[post-start] Note: Copy SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY to apps/temporal-worker/.env"
   elif [[ "$supabase_cli_present" == "true" ]]; then
     echo "[post-start] Skipping environment sync because Supabase services are not ready." >&2
   else
     echo "[post-start] Skipping environment sync because Supabase CLI is unavailable." >&2
   fi
 else
-  echo "[post-start] pnpm not found; cannot run db:env:local." >&2
+  echo "[post-start] pnpm not found." >&2
 fi
