@@ -7,7 +7,6 @@ import type {
 
 const activities = proxyActivities<{
   createClusterSummary(input: CreateClusterSummaryInput): Promise<CreateClusterSummaryResult>;
-  chunkFiling(input: { accession: string }): Promise<{ chunksCreated: number }>;
 }>({
   startToCloseTimeout: '5 minutes',
   scheduleToCloseTimeout: '10 minutes',
@@ -20,15 +19,13 @@ export interface ClusterEnrichmentInput {
 }
 
 /**
- * Enrich a rotation cluster with:
- * 1. Cluster summary (narrative explanation)
- * 2. Filing chunks with embeddings (for related filings)
+ * Enrich a rotation cluster with narrative explanation.
  *
- * This enables GraphRAG-based explainability and semantic search.
+ * Uses graph structure + long context synthesis (no vector embeddings).
  */
 export async function clusterEnrichmentWorkflow(
   input: ClusterEnrichmentInput
-): Promise<{ summary: string; filingsChunked: number }> {
+): Promise<{ summary: string }> {
   await upsertWorkflowSearchAttributes({
     cik: input.issuerCik,
     runKind: input.runKind,
@@ -40,12 +37,7 @@ export async function clusterEnrichmentWorkflow(
     clusterId: input.clusterId,
   });
 
-  // TODO: Optionally chunk related filings
-  // For now, skip filing chunking to avoid rate limits
-  const filingsChunked = 0;
-
   return {
     summary: summaryResult.summary,
-    filingsChunked,
   };
 }
