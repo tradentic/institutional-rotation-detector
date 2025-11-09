@@ -550,8 +550,9 @@ GraphRAG in this system uses a **dual approach**:
    - Results stored in `graph_nodes`, `graph_edges`, `graph_communities` tables
 
 2. **Long Context Synthesis** (`longcontext.activities.ts`):
-   - Uses OpenAI's **128K context window** (GPT-4 Turbo)
+   - Uses OpenAI's **128K context window** (GPT-4 Turbo, future GPT-5 with 200K+)
    - Bundles graph edges with filing text chunks
+   - **No semantic pre-filtering** - sends full relevant text to LLM
    - Generates natural language explanations from structured + unstructured data
    - Enables answering complex questions about rotation patterns
    - Results stored in `graph_explanations` table
@@ -561,9 +562,21 @@ GraphRAG in this system uses a **dual approach**:
 - `graphSummarizeWorkflow`: Graph algorithms + short LLM summaries per community
 - `graphQueryWorkflow`: **Both** - graph traversal finds relevant data, then long context synthesizes explanation
 
+**Why No Vector Store/Semantic Search?**
+
+This system deliberately **does not use** vector embeddings or semantic search:
+- ✅ **Modern LLMs handle large contexts** - 128K (GPT-4) to 200K+ (GPT-5) tokens
+- ✅ **Simpler architecture** - no embedding generation, storage, or search overhead
+- ✅ **No embedding drift** - embeddings don't go stale over time
+- ✅ **Lower latency** - no vector search computation
+- ✅ **Future-proof** - scales naturally with growing LLM context windows
+
+**Trade-off:** More input tokens sent to LLM, but manageable with modern context windows.
+
 This hybrid approach provides:
 - **Structure** from graph algorithms (who's connected to whom)
 - **Context** from long context synthesis (why it matters, what it means)
+- **Simplicity** from avoiding vector search infrastructure
 
 ---
 

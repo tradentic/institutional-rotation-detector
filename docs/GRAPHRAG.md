@@ -540,7 +540,12 @@ SELECT * FROM subgraph;
 
 This section covers the **LLM-powered** synthesis operations that generate natural language explanations from graph data + filing text.
 
-**Uses OpenAI GPT-4 Turbo** with 128K context window.
+**Uses OpenAI GPT-4 Turbo** with 128K context window (future: GPT-5 with 200K+).
+
+**Important:** This approach does **NOT use vector embeddings or semantic search**. Instead, it relies on:
+- Graph structure to identify relevant documents
+- LLM's large context window to process all relevant text
+- No pre-filtering needed - modern LLMs excel at finding relevant information in large contexts
 
 ### Context Bundling
 
@@ -559,9 +564,9 @@ This section covers the **LLM-powered** synthesis operations that generate natur
    - Deduplicate filing list
 
 3. **Retrieve Filing Chunks**
-   - Fetch chunks from `filing_chunks` table
-   - Limit to top 20 chunks per filing (token budget)
-   - Each chunk includes text content
+   - Fetch chunks from `filing_chunks` table **by accession** (sequential order)
+   - NO semantic filtering - retrieves first 20 chunks per filing
+   - Each chunk includes text content only (embedding column deprecated)
 
 4. **Apply Token Budget**
    - Default: 12K tokens for filing text
@@ -572,6 +577,12 @@ This section covers the **LLM-powered** synthesis operations that generate natur
    - Edges (structured data)
    - Filing excerpts (unstructured text)
    - User question (optional)
+
+**Why No Semantic Search?**
+- Modern LLMs (128K+ context) can handle full document sets
+- Graph structure already identifies relevant filings
+- Avoids complexity of embedding generation/storage/search
+- Future-proof: scales with growing context windows (GPT-5, etc.)
 
 **Implementation:** `apps/temporal-worker/src/activities/longcontext.activities.ts:25-90`
 
