@@ -3,8 +3,11 @@ import { createOpenAIClient } from '../lib/openai.js';
 import { createSecClient } from '../lib/secClient.js';
 
 /**
- * Chunk a filing into smaller pieces for embedding and retrieval.
+ * Chunk a filing into smaller pieces for long context synthesis.
  * Uses a sliding window approach with overlap for better context.
+ *
+ * Note: This does NOT generate embeddings. The system uses long context
+ * windows (128K+) instead of semantic search.
  */
 export interface ChunkFilingInput {
   accession: string;
@@ -15,7 +18,6 @@ export interface ChunkFilingInput {
 export interface ChunkFilingResult {
   accession: string;
   chunksCreated: number;
-  embeddings Generated: number;
 }
 
 const DEFAULT_CHUNK_SIZE = 2000; // ~500 tokens
@@ -40,26 +42,7 @@ function chunkText(text: string, chunkSize: number, overlap: number): string[] {
 }
 
 /**
- * Generate embeddings for text chunks using OpenAI.
- */
-async function generateEmbedding(text: string): Promise<number[]> {
-  const openai = createOpenAIClient();
-
-  try {
-    const response = await openai.embeddings.create({
-      model: 'text-embedding-ada-002',
-      input: text.slice(0, 8000), // Limit to ~8K chars for safety
-    });
-
-    return response.data[0].embedding;
-  } catch (error) {
-    console.error('Failed to generate embedding:', error);
-    throw error;
-  }
-}
-
-/**
- * Chunk a filing and generate embeddings for semantic search.
+ * Chunk a filing for long context synthesis (no embeddings).
  */
 export async function chunkFiling(input: ChunkFilingInput): Promise<ChunkFilingResult> {
   const supabase = createSupabaseClient();
@@ -83,25 +66,16 @@ export async function chunkFiling(input: ChunkFilingInput): Promise<ChunkFilingR
   const overlap = input.overlap ?? DEFAULT_OVERLAP;
   const chunks = chunkText(filingText, chunkSize, overlap);
 
-  // Generate embeddings and store chunks
-  let embeddingsGenerated = 0;
-
+  // Store chunks (text only, no embeddings)
   for (let i = 0; i < chunks.length; i++) {
-    const content = chunks[i];
-
-    // Generate embedding
-    const embedding = await generateEmbedding(content);
-    embeddingsGenerated++;
-
-    // Store chunk with embedding
     const { error: upsertError } = await supabase
       .from('filing_chunks')
       .upsert(
         {
           accession: input.accession,
           chunk_no: i,
-          content,
-          embedding,
+          content: chunks[i],
+          // Note: embedding column still exists in DB but is not populated
         },
         { onConflict: 'accession,chunk_no' }
       );
@@ -112,14 +86,15 @@ export async function chunkFiling(input: ChunkFilingInput): Promise<ChunkFilingR
   return {
     accession: input.accession,
     chunksCreated: chunks.length,
-    embeddingsGenerated,
   };
 }
 
 /**
- * Create a cluster summary node for explainability and retrieval.
- * This generates a narrative summary of a rotation cluster and stores it
- * as a graph node with embeddings for semantic search.
+ * Create a cluster summary for explainability.
+ * Generates a narrative summary of a rotation cluster.
+ *
+ * Note: This does NOT generate embeddings. The system uses graph structure
+ * and long context windows instead of semantic search.
  */
 export interface CreateClusterSummaryInput {
   clusterId: string;
@@ -213,24 +188,6 @@ Write 2-3 sentences explaining what happened and why it might be a rotation sign
   );
 
   if (nodeError) throw nodeError;
-
-  // Generate embedding for the summary
-  const embedding = await generateEmbedding(summary);
-
-  // Store summary with embedding
-  const { error: summaryError } = await supabase.from('cluster_summaries').upsert(
-    {
-      cluster_id: input.clusterId,
-      summary,
-      embedding,
-    },
-    { onConflict: 'cluster_id' }
-  );
-
-  if (summaryError) {
-    // Table might not exist yet - this is optional
-    console.warn('Could not store cluster summary:', summaryError);
-  }
 
   return {
     clusterId: input.clusterId,
