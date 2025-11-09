@@ -17,6 +17,19 @@ export interface ScoreInputs {
   microBlockRatioAvg?: number;
   microFlowAttributionScore?: number;
   microConfidence?: number;
+  // Insider transaction signals (optional)
+  insiderPostDumpBuying?: boolean;
+  insiderPreDumpSelling?: boolean;
+  insiderNetFlowSameQuarter?: number;
+  insiderNetFlowNextQuarter?: number;
+  insiderConfidence?: number;
+  // Options flow signals (optional)
+  optionsPreDumpPutSurge?: boolean;
+  optionsPreDumpPCRatio?: number;
+  optionsPostDumpCallBuildup?: boolean;
+  optionsPostDumpIVDecline?: boolean;
+  optionsUnusualActivityCount?: number;
+  optionsConfidence?: number;
 }
 
 export interface ScoreResult {
@@ -40,6 +53,16 @@ export const SCORE_WEIGHTS = {
   microOrderImbalance: 0.4, // Sell pressure
   microBlockRatio: 0.5,    // Institutional block trades
   microFlowAttribution: 0.7, // Flow confidence
+  // Insider transaction weights
+  insiderPostDumpBuying: 0.8,   // Contrarian signal (insiders disagree with dump)
+  insiderPreDumpSelling: -0.5,  // Validation signal (negative = reduces score if insiders sold before)
+  insiderNetFlowNormalized: 0.6, // Net insider buying/selling normalized
+  // Options flow weights
+  optionsPreDumpPutSurge: 1.2,  // Leading indicator (puts before dump)
+  optionsPreDumpPCRatio: 0.8,   // Put/call ratio signal
+  optionsPostDumpCallBuildup: 0.7, // Uptake confirmation
+  optionsPostDumpIVDecline: 0.5,   // Confidence signal (fear declining)
+  optionsUnusualActivity: 0.3,     // Per unusual activity event
 };
 
 const DUMP_GATE_Z = 1.5;
@@ -83,6 +106,18 @@ export function computeRotationScore(inputs: ScoreInputs): ScoreResult {
     const microScore = computeMicrostructureScore(inputs);
     // Weight microstructure score by its confidence
     score += microScore * inputs.microConfidence;
+  }
+
+  // Insider transaction enhancement (if available)
+  if (inputs.insiderConfidence && inputs.insiderConfidence > 0.5) {
+    const insiderScore = computeInsiderScore(inputs);
+    score += insiderScore * inputs.insiderConfidence;
+  }
+
+  // Options flow enhancement (if available)
+  if (inputs.optionsConfidence && inputs.optionsConfidence > 0.5) {
+    const optionsScore = computeOptionsScore(inputs);
+    score += optionsScore * inputs.optionsConfidence;
   }
 
   return { rScore: score, gated: true };
@@ -131,4 +166,89 @@ export function computeMicrostructureScore(inputs: ScoreInputs): number {
   }
 
   return microScore;
+}
+
+/**
+ * Compute insider transaction component of rotation score
+ */
+export function computeInsiderScore(inputs: ScoreInputs): number {
+  let insiderScore = 0;
+
+  // Post-dump insider buying (contrarian signal)
+  // When insiders buy after institutional dump, it suggests dump was mechanical not fundamental
+  if (inputs.insiderPostDumpBuying) {
+    insiderScore += SCORE_WEIGHTS.insiderPostDumpBuying;
+  }
+
+  // Pre-dump insider selling (validation signal)
+  // When insiders sell before institutional dump, it validates the dump was informed
+  // This is a NEGATIVE signal - reduces confidence in rotation
+  if (inputs.insiderPreDumpSelling) {
+    insiderScore += SCORE_WEIGHTS.insiderPreDumpSelling; // Note: weight is negative
+  }
+
+  // Net insider flow normalized by dump size
+  // Positive = insiders buying, Negative = insiders selling
+  if (inputs.insiderNetFlowSameQuarter !== undefined) {
+    // Normalize to 0-1 range (assuming max 20% of dump size)
+    const normalizedFlow = Math.min(Math.abs(inputs.insiderNetFlowSameQuarter) / 0.2, 1.0);
+    // Only add if positive (buying)
+    if (inputs.insiderNetFlowSameQuarter > 0) {
+      insiderScore += SCORE_WEIGHTS.insiderNetFlowNormalized * normalizedFlow;
+    }
+  }
+
+  // Next quarter insider buying (lower weight)
+  if (inputs.insiderNetFlowNextQuarter !== undefined && inputs.insiderNetFlowNextQuarter > 0) {
+    const normalizedFlow = Math.min(Math.abs(inputs.insiderNetFlowNextQuarter) / 0.2, 1.0);
+    insiderScore += SCORE_WEIGHTS.insiderNetFlowNormalized * normalizedFlow * 0.7; // 70% weight for next quarter
+  }
+
+  return insiderScore;
+}
+
+/**
+ * Compute options flow component of rotation score
+ */
+export function computeOptionsScore(inputs: ScoreInputs): number {
+  let optionsScore = 0;
+
+  // Pre-dump put surge (leading indicator)
+  // Large put buying before dump = informed positioning
+  if (inputs.optionsPreDumpPutSurge) {
+    optionsScore += SCORE_WEIGHTS.optionsPreDumpPutSurge;
+  }
+
+  // Pre-dump Put/Call ratio
+  // High P/C ratio before dump = bearish sentiment preceded the dump
+  if (inputs.optionsPreDumpPCRatio !== undefined) {
+    // P/C ratio > 2.0 is strong signal
+    // Normalize: 0-1 where 2.0 = 1.0
+    const normalizedPCR = Math.min((inputs.optionsPreDumpPCRatio - 1.0) / 1.0, 1.0);
+    if (normalizedPCR > 0) {
+      optionsScore += SCORE_WEIGHTS.optionsPreDumpPCRatio * normalizedPCR;
+    }
+  }
+
+  // Post-dump call buildup (uptake confirmation)
+  // Call buying/OI building after dump = confidence in recovery
+  if (inputs.optionsPostDumpCallBuildup) {
+    optionsScore += SCORE_WEIGHTS.optionsPostDumpCallBuildup;
+  }
+
+  // Post-dump IV decline (confidence signal)
+  // Declining IV after dump = reduced fear, market confidence
+  if (inputs.optionsPostDumpIVDecline) {
+    optionsScore += SCORE_WEIGHTS.optionsPostDumpIVDecline;
+  }
+
+  // Unusual options activity count
+  // More unusual activity = more informed positioning
+  if (inputs.optionsUnusualActivityCount !== undefined) {
+    // Cap at 5 events
+    const cappedCount = Math.min(inputs.optionsUnusualActivityCount, 5);
+    optionsScore += SCORE_WEIGHTS.optionsUnusualActivity * cappedCount;
+  }
+
+  return optionsScore;
 }
