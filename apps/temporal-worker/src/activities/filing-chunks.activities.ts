@@ -15,7 +15,7 @@ export interface ChunkFilingInput {
 export interface ChunkFilingResult {
   accession: string;
   chunksCreated: number;
-  embeddings Generated: number;
+  embeddingsGenerated: number;
 }
 
 const DEFAULT_CHUNK_SIZE = 2000; // ~500 tokens

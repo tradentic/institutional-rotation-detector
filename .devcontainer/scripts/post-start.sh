@@ -214,13 +214,13 @@ fi
 
 if command -v pnpm >/dev/null 2>&1; then
   if [[ "${supabase_ready}" == "true" ]]; then
-    echo "[post-start] Syncing local environment files from Supabase status..."
-    pnpm db:env:local
+    echo "[post-start] Supabase is ready. Environment variables can be copied from: supabase status"
+    echo "[post-start] Note: Copy SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY to apps/temporal-worker/.env"
   elif [[ "$supabase_cli_present" == "true" ]]; then
     echo "[post-start] Skipping environment sync because Supabase services are not ready." >&2
   else
     echo "[post-start] Skipping environment sync because Supabase CLI is unavailable." >&2
   fi
 else
-  echo "[post-start] pnpm not found; cannot run db:env:local." >&2
+  echo "[post-start] pnpm not found." >&2
 fi
