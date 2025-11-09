@@ -52,6 +52,35 @@ temporal operator search-attribute create \
   --namespace default \
   --name RunKind --type Keyword || echo "  RunKind already exists"
 
+# Microstructure search attributes
+temporal operator search-attribute create \
+  --namespace default \
+  --name Symbol --type Keyword || echo "  Symbol already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name Dataset --type Keyword || echo "  Dataset already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name Granularity --type Keyword || echo "  Granularity already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name WeekEnd --type Datetime || echo "  WeekEnd already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name TradeDate --type Datetime || echo "  TradeDate already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name SettlementDate --type Datetime || echo "  SettlementDate already exists"
+
+temporal operator search-attribute create \
+  --namespace default \
+  --name Provenance --type Keyword || echo "  Provenance already exists"
+
 echo ""
 echo "✅ Search attributes configured"
 echo ""

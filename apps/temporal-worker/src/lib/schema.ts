@@ -57,3 +57,107 @@ export interface RotationEventRecord {
   t_to_plus20_days: number;
   max_ret_w13: number;
 }
+
+// ============================================================================
+// Microstructure Ingest Schema (FINRA OTC + IEX HIST + Short Interest)
+// ============================================================================
+
+export type OffExSource = 'ATS' | 'NON_ATS';
+export type OffExGranularity = 'weekly' | 'daily';
+export type OffExQualityFlag = 'official' | 'official_partial' | 'approx' | 'iex_proxy';
+export type ConsolidatedVolumeSource = 'SIP' | 'EXCHANGE_SUM' | 'VENDOR';
+export type EventStudyStatus = 'pending' | 'running' | 'completed' | 'failed';
+
+export interface MicroOffExVenueWeeklyRecord {
+  id?: number;
+  symbol: string;
+  week_end: string;
+  product?: string | null;
+  source: OffExSource;
+  venue_id?: string | null;
+  total_shares?: number | null;
+  total_trades?: number | null;
+  finra_file_id?: string | null;
+  finra_sha256?: string | null;
+  created_at?: string;
+}
+
+export interface MicroOffExSymbolWeeklyRecord {
+  symbol: string;
+  week_end: string;
+  product?: string | null;
+  ats_shares?: number;
+  nonats_shares?: number;
+  offex_shares?: number; // generated column
+  finra_file_id?: string | null;
+  finra_sha256?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MicroIexVolumeDailyRecord {
+  symbol: string;
+  trade_date: string;
+  matched_shares: number;
+  iex_file_id?: string | null;
+  iex_sha256?: string | null;
+  created_at?: string;
+}
+
+export interface MicroConsolidatedVolumeDailyRecord {
+  symbol: string;
+  trade_date: string;
+  total_shares?: number | null;
+  source?: ConsolidatedVolumeSource | null;
+  quality_flag?: string | null;
+  created_at?: string;
+}
+
+export interface MicroOffExRatioRecord {
+  symbol: string;
+  as_of: string;
+  granularity: OffExGranularity;
+  offex_shares?: number | null;
+  on_ex_shares?: number | null;
+  offex_pct?: number | null;
+  quality_flag?: OffExQualityFlag | null;
+  basis_window?: string | null; // PostgreSQL daterange as string
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MicroShortInterestPointRecord {
+  symbol: string;
+  settlement_date: string;
+  publication_date?: string | null;
+  short_interest?: number | null;
+  avg_daily_volume?: number | null;
+  days_to_cover?: number | null;
+  source?: string;
+  finra_file_id?: string | null;
+  finra_sha256?: string | null;
+  created_at?: string;
+}
+
+export interface MicroFlip50EventRecord {
+  id?: number;
+  symbol: string;
+  flip_date: string;
+  pre_period_start?: string | null;
+  pre_period_days?: number | null;
+  pre_avg_offex_pct?: number | null;
+  flip_offex_pct?: number | null;
+  quality_flag?: OffExQualityFlag | null;
+  created_at?: string;
+}
+
+export interface MicroFlip50EventStudyRecord {
+  flip50_id: number;
+  rotation_event_id?: number | null;
+  study_status?: EventStudyStatus;
+  car_m5_p20?: number | null;
+  max_ret_w13?: number | null;
+  t_to_plus20_days?: number | null;
+  created_at?: string;
+  updated_at?: string;
+}

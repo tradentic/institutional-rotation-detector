@@ -1,5 +1,7 @@
 import { createSupabaseClient } from '../lib/supabase.js';
 import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient.js';
+import crypto from 'crypto';
+import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema.js';
 
 let cachedClient: FinraClient | null = null;
 
@@ -357,4 +359,250 @@ export async function planFinraShortInterest(
 
   const nextCursor = settleDates.length > 0 ? settleDates[settleDates.length - 1] : input.lastSettle ?? null;
   return { settleDates, ciks, nextCursor };
+}
+
+// ============================================================================
+// FINRA OTC Transparency: Venue-level weekly data (ATS & non-ATS)
+// ============================================================================
+
+export interface FinraOtcWeeklyInput {
+  symbols?: string[];
+  weekEnd: string;
+  source: OffExSource; // 'ATS' | 'NON_ATS'
+}
+
+export interface FinraOtcWeeklyResult {
+  venueUpsertCount: number;
+  symbolUpsertCount: number;
+  fileId: string;
+  sha256: string;
+}
+
+function extractProduct(row: NormalizedRow): string | null {
+  const value = getField(
+    row,
+    'tieridentifier',
+    'tier',
+    'product',
+    'nmstier',
+    'securitytype'
+  );
+  return normalizeIdentifier(value);
+}
+
+function extractVenueId(row: NormalizedRow, source: OffExSource): string | null {
+  if (source === 'ATS') {
+    const value = getField(
+      row,
+      'atsmpid',
+      'ats_mp_id',
+      'mpid',
+      'marketparticipantidentifier',
+      'venueid'
+    );
+    return normalizeIdentifier(value);
+  } else {
+    // NON_ATS may have masked venue IDs for de minimis
+    const value = getField(
+      row,
+      'mpid',
+      'firmmpid',
+      'reportingmemberid',
+      'venueid'
+    );
+    return normalizeIdentifier(value);
+  }
+}
+
+/**
+ * Fetch and parse FINRA OTC Transparency weekly data (ATS or non-ATS)
+ *
+ * Downloads weekly off-exchange volume data from FINRA OTC Transparency program
+ * and stores venue-level records with provenance (file id + hash)
+ */
+export async function fetchOtcWeeklyVenue(input: FinraOtcWeeklyInput): Promise<FinraOtcWeeklyResult> {
+  const supabase = createSupabaseClient();
+  const finra = getFinraClient();
+
+  // Fetch dataset from FINRA
+  // Note: FINRA OTC Transparency has separate datasets for ATS and non-ATS
+  const datasetName = input.source === 'ATS' ? 'atsWeeklyData' : 'otcWeeklyData';
+  const dataset = await finra.fetchATSWeekly(input.weekEnd); // Reuse existing method or create new one
+
+  // Generate file provenance
+  const fileId = `FINRA_OTC_${input.source}_${input.weekEnd.replace(/-/g, '')}`;
+  const dataStr = JSON.stringify(dataset);
+  const sha256 = crypto.createHash('sha256').update(dataStr).digest('hex');
+
+  const rows = normalizeRows(dataset);
+
+  // Parse venue-level records
+  const venueRecords: MicroOffExVenueWeeklyRecord[] = [];
+  const symbolTotals = new Map<string, { ats: number; nonats: number; product: string | null }>();
+
+  for (const row of rows) {
+    const symbol = extractSymbol(row);
+    if (!symbol) continue;
+
+    // Filter by symbols if provided
+    if (input.symbols && !input.symbols.includes(symbol)) continue;
+
+    const product = extractProduct(row);
+    const venueId = extractVenueId(row, input.source);
+    const shares = extractAtsShares(row);
+    const trades = extractAtsTrades(row);
+
+    if (shares === null) continue;
+
+    venueRecords.push({
+      symbol,
+      week_end: input.weekEnd,
+      product,
+      source: input.source,
+      venue_id: venueId,
+      total_shares: shares,
+      total_trades: trades,
+      finra_file_id: fileId,
+      finra_sha256: sha256,
+    });
+
+    // Aggregate by symbol
+    const key = symbol;
+    const existing = symbolTotals.get(key);
+    if (existing) {
+      if (input.source === 'ATS') {
+        existing.ats += shares;
+      } else {
+        existing.nonats += shares;
+      }
+    } else {
+      symbolTotals.set(key, {
+        ats: input.source === 'ATS' ? shares : 0,
+        nonats: input.source === 'NON_ATS' ? shares : 0,
+        product,
+      });
+    }
+  }
+
+  // Upsert venue-level records
+  let venueUpsertCount = 0;
+  if (venueRecords.length > 0) {
+    const { error, count } = await supabase
+      .from('micro_offex_venue_weekly')
+      .upsert(venueRecords, { onConflict: 'symbol,week_end,source,venue_id' })
+      .select('id', { count: 'exact', head: true });
+
+    if (error) {
+      throw new Error(`Failed to upsert venue weekly: ${error.message}`);
+    }
+    venueUpsertCount = count ?? venueRecords.length;
+  }
+
+  // Aggregate and upsert symbol-level records
+  const symbolRecords: MicroOffExSymbolWeeklyRecord[] = Array.from(symbolTotals.entries()).map(
+    ([symbol, totals]) => ({
+      symbol,
+      week_end: input.weekEnd,
+      product: totals.product,
+      ats_shares: totals.ats,
+      nonats_shares: totals.nonats,
+      finra_file_id: fileId,
+      finra_sha256: sha256,
+    })
+  );
+
+  let symbolUpsertCount = 0;
+  if (symbolRecords.length > 0) {
+    const { error, count } = await supabase
+      .from('micro_offex_symbol_weekly')
+      .upsert(symbolRecords, { onConflict: 'symbol,week_end' })
+      .select('symbol', { count: 'exact', head: true });
+
+    if (error) {
+      throw new Error(`Failed to upsert symbol weekly: ${error.message}`);
+    }
+    symbolUpsertCount = count ?? symbolRecords.length;
+  }
+
+  return {
+    venueUpsertCount,
+    symbolUpsertCount,
+    fileId,
+    sha256,
+  };
+}
+
+/**
+ * Aggregate venue-level records to symbol-level weekly totals
+ *
+ * This can be run independently to recompute aggregates from venue records
+ */
+export async function aggregateOtcSymbolWeek(weekEnd: string, symbols?: string[]): Promise<number> {
+  const supabase = createSupabaseClient();
+
+  let query = supabase
+    .from('micro_offex_venue_weekly')
+    .select('symbol, source, total_shares, product, finra_file_id, finra_sha256')
+    .eq('week_end', weekEnd);
+
+  if (symbols) {
+    query = query.in('symbol', symbols);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to query venue weekly: ${error.message}`);
+  }
+
+  if (!data || data.length === 0) {
+    return 0;
+  }
+
+  const symbolTotals = new Map<string, { ats: number; nonats: number; product: string | null; fileId: string | null; sha256: string | null }>();
+
+  for (const row of data) {
+    const key = row.symbol;
+    const existing = symbolTotals.get(key);
+    const shares = row.total_shares ?? 0;
+
+    if (existing) {
+      if (row.source === 'ATS') {
+        existing.ats += shares;
+      } else {
+        existing.nonats += shares;
+      }
+    } else {
+      symbolTotals.set(key, {
+        ats: row.source === 'ATS' ? shares : 0,
+        nonats: row.source === 'NON_ATS' ? shares : 0,
+        product: row.product,
+        fileId: row.finra_file_id,
+        sha256: row.finra_sha256,
+      });
+    }
+  }
+
+  const symbolRecords: MicroOffExSymbolWeeklyRecord[] = Array.from(symbolTotals.entries()).map(
+    ([symbol, totals]) => ({
+      symbol,
+      week_end: weekEnd,
+      product: totals.product,
+      ats_shares: totals.ats,
+      nonats_shares: totals.nonats,
+      finra_file_id: totals.fileId,
+      finra_sha256: totals.sha256,
+    })
+  );
+
+  const { error: upsertError, count } = await supabase
+    .from('micro_offex_symbol_weekly')
+    .upsert(symbolRecords, { onConflict: 'symbol,week_end' })
+    .select('symbol', { count: 'exact', head: true });
+
+  if (upsertError) {
+    throw new Error(`Failed to upsert symbol weekly aggregates: ${upsertError.message}`);
+  }
+
+  return count ?? symbolRecords.length;
 }
