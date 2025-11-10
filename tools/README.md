@@ -109,6 +109,126 @@ Resets the local database with all migrations.
 
 ---
 
+### Environment Sync Scripts
+
+Scripts for automatically configuring environment variables by extracting values from running services.
+
+#### `sync-supabase-env.sh`
+
+Extracts Supabase credentials from `supabase status` and writes them to `.env.local` files.
+
+**Purpose:**
+- Auto-configure Supabase connection for local development
+- Eliminate manual copying of credentials from `supabase status`
+- Keep apps/temporal-worker and apps/api in sync
+
+**Usage:**
+```bash
+# Sync to all apps (temporal-worker and api)
+./tools/sync-supabase-env.sh
+
+# Sync to a specific directory
+./tools/sync-supabase-env.sh apps/temporal-worker
+```
+
+**What it does:**
+1. Checks if Supabase is running
+2. Extracts: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL`
+3. Updates or creates `.env.local` in target directories
+
+**Requirements:**
+- Supabase CLI installed and running (`supabase start`)
+
+---
+
+#### `sync-temporal-env.sh`
+
+Configures Temporal connection settings with defaults for local development.
+
+**Purpose:**
+- Auto-configure Temporal connection settings
+- Eliminate manual entry of Temporal configuration
+- Ensure consistent defaults across apps
+
+**Usage:**
+```bash
+# Sync to all apps (temporal-worker and api)
+./tools/sync-temporal-env.sh
+
+# Sync to a specific directory
+./tools/sync-temporal-env.sh apps/temporal-worker
+```
+
+**What it does:**
+1. Sets default Temporal configuration:
+   - `TEMPORAL_ADDRESS=localhost:7233`
+   - `TEMPORAL_NAMESPACE=default`
+   - `TEMPORAL_TASK_QUEUE=rotation-detector`
+2. Updates or creates `.env.local` in target directories
+
+**Requirements:**
+- Temporal server running (`temporal server start-dev`)
+
+---
+
+#### `sync-api-env.sh`
+
+Syncs API app configuration from temporal-worker (they share the same environment).
+
+**Purpose:**
+- Keep API and temporal-worker configs in sync
+- Avoid duplicate manual configuration
+- Support both copy and symlink modes
+
+**Usage:**
+```bash
+# Copy .env.local from temporal-worker to api (default)
+./tools/sync-api-env.sh
+
+# Create a symlink instead (auto-sync on changes)
+./tools/sync-api-env.sh --symlink
+```
+
+**What it does:**
+- **Copy mode (default)**: Copies `apps/temporal-worker/.env.local` to `apps/api/.env.local`
+- **Symlink mode**: Creates symlink for automatic syncing
+
+**Requirements:**
+- `apps/temporal-worker/.env.local` must exist
+
+**When to use:**
+- After running `sync-supabase-env.sh` and `sync-temporal-env.sh`
+- When temporal-worker config changes (copy mode only)
+- Use `--symlink` for automatic syncing during development
+
+---
+
+#### Complete Environment Setup Example
+
+```bash
+# 1. Start services
+supabase start                    # Terminal 1
+temporal server start-dev         # Terminal 2
+
+# 2. Sync all environment variables (Terminal 3)
+./tools/sync-supabase-env.sh     # Extract Supabase credentials
+./tools/sync-temporal-env.sh     # Set Temporal defaults
+./tools/sync-api-env.sh          # Sync API from temporal-worker
+
+# 3. Add your API keys (these can't be auto-detected)
+cd apps/temporal-worker
+nano .env.local
+# Add: OPENAI_API_KEY and SEC_USER_AGENT
+
+# 4. Build and start
+pnpm install && pnpm run build
+node dist/worker.js
+```
+
+**Note:** In GitHub Codespaces, environment sync happens automatically in the `post-start.sh` hook!
+
+---
+
 ### Data Management Tools
 
 ### `backfill-2019-2025.ts`

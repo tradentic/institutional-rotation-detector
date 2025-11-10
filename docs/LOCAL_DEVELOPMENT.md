@@ -114,19 +114,19 @@ cd institutional-rotation-detector
 # 2. Start Supabase first (in Terminal 1)
 supabase start
 
-# 3. Copy environment template (API uses same config)
-cp .env.example apps/temporal-worker/.env
+# 3. Sync environment variables automatically
+./tools/sync-supabase-env.sh    # Extracts Supabase credentials
+./tools/sync-temporal-env.sh    # Sets Temporal defaults
+./tools/sync-api-env.sh         # Copies config to API app
 
-# 4. Get Supabase credentials and update .env
-# Copy the anon key and service_role key from the supabase start output
-# Or run: supabase status
-# Edit apps/temporal-worker/.env with:
-#   - Your OPENAI_API_KEY
-#   - Your SEC_USER_AGENT
-#   - SUPABASE_ANON_KEY from supabase status
-#   - SUPABASE_SERVICE_ROLE_KEY from supabase status
+# 4. Add your API keys
+cd apps/temporal-worker
+nano .env.local
+# Add: OPENAI_API_KEY and SEC_USER_AGENT
+# (Supabase and Temporal config already synced!)
 
 # 5. Apply migrations
+cd ../..
 supabase db reset
 
 # 6. Start Temporal (in Terminal 2)
@@ -348,42 +348,82 @@ pnpm install
 
 ### Configure Environment Variables
 
+**Automated Setup (Recommended):**
+
+Use the provided sync scripts to automatically configure environment variables:
+
+```bash
+# 1. Sync Supabase credentials from 'supabase status'
+./tools/sync-supabase-env.sh
+
+# 2. Sync Temporal configuration
+./tools/sync-temporal-env.sh
+
+# 3. Sync API configuration from temporal-worker
+./tools/sync-api-env.sh
+```
+
+These scripts will create/update `.env.local` files in `apps/temporal-worker` and `apps/api` with the correct values.
+
+**Add Your API Keys:**
+
+After running the sync scripts, add your required API keys:
+
+```bash
+cd apps/temporal-worker
+nano .env.local  # or use your preferred editor
+```
+
+Add these values:
+
+```bash
+# ⚠️ MUST ADD: Your OpenAI API key
+OPENAI_API_KEY=sk-your-actual-openai-api-key-here
+
+# ⚠️ MUST ADD: Your SEC User-Agent
+SEC_USER_AGENT=YourName your.email@domain.com
+```
+
+All other values (Supabase URL, keys, Temporal config) are already set by the sync scripts!
+
+**Manual Setup (Alternative):**
+
+If you prefer manual configuration:
+
 ```bash
 # Copy example to temporal-worker (API uses the same config)
 cd apps/temporal-worker
-cp ../../.env.example .env
+cp ../../.env.example .env.local
 
 # Get Supabase credentials
 supabase status
 
-# Edit .env
-nano .env  # or use your preferred editor
+# Edit .env.local and add all required values manually
+nano .env.local
 ```
 
-**Required Changes:**
+**Required values when configuring manually:**
 
 ```bash
-# ⚠️ MUST CHANGE: Add your OpenAI API key
+# OpenAI Configuration
 OPENAI_API_KEY=sk-your-actual-openai-api-key-here
 
-# ⚠️ MUST CHANGE: Add your SEC User-Agent
+# SEC EDGAR Configuration
 SEC_USER_AGENT=YourName your.email@domain.com
 
-# ⚠️ MUST CHANGE: Copy these from `supabase status` output:
+# Supabase (from 'supabase status'):
+SUPABASE_URL=http://localhost:54321
 SUPABASE_ANON_KEY=<your_anon_key_from_supabase_status>
 SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key_from_supabase_status>
-
-# These should already be correct (verify against `supabase status`):
-SUPABASE_URL=http://localhost:54321
 DATABASE_URL=postgresql://postgres:postgres@localhost:54322/postgres
 
-# Temporal config (these defaults should work for local dev):
+# Temporal (defaults for local dev):
 TEMPORAL_NAMESPACE=default
 TEMPORAL_TASK_QUEUE=rotation-detector
 TEMPORAL_ADDRESS=localhost:7233
 ```
 
-**Note:** The API app (`apps/api`) uses the same Supabase and Temporal configuration from `apps/temporal-worker`, so you don't need a separate `.env` file for it.
+**Note:** The API app (`apps/api`) uses the same Supabase and Temporal configuration from `apps/temporal-worker`. The `sync-api-env.sh` script handles this automatically, or you can manually copy the `.env.local` file.
 
 ### Build TypeScript
 
