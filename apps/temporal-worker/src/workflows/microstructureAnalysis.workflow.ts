@@ -70,9 +70,9 @@ export async function microstructureAnalysisWorkflow(
   } = input;
 
   await upsertWorkflowSearchAttributes({
-    Symbol: symbol,
-    Dataset: 'MICROSTRUCTURE',
-    RunKind: 'analysis',
+    symbol: symbol,
+    dataset: 'MICROSTRUCTURE',
+    runKind: 'analysis',
   });
 
   let mappingsCreated: number | undefined;

@@ -62,7 +62,7 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   await activities.fetchShortInterest(input.cik, [bounds.start]);
   await activities.fetchATSWeekly(input.cik, [bounds.end]);
 
-  const child = await startChild<RotationDetectInput>('rotationDetectWorkflow', {
+  const child = await startChild('rotationDetectWorkflow', {
     args: [
         {
           cik: input.cik,

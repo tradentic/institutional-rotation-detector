@@ -110,7 +110,7 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       input.cik
     );
 
-    const child = await startChild<EventStudyInput>('eventStudyWorkflow', {
+    const child = await startChild('eventStudyWorkflow', {
       args: [
         {
           anchorDate: anchor.anchorDate,

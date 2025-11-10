@@ -43,9 +43,9 @@ export async function flip50DetectWorkflow(
   const result = await activities.detectFlip50(symbol, lookbackDays, consecutiveDaysThreshold);
 
   await upsertWorkflowSearchAttributes({
-    Symbol: symbol,
-    Dataset: 'FLIP50',
-    RunKind: 'detect',
+    symbol: symbol,
+    dataset: 'FLIP50',
+    runKind: 'detect',
   });
 
   // TODO: Trigger event-study workflow for each detected event if triggerEventStudy is true

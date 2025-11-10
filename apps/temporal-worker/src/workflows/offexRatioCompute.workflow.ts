@@ -58,8 +58,8 @@ export async function offexRatioComputeWorkflow(
   }
 
   await upsertWorkflowSearchAttributes({
-    Dataset: 'OFFEX_RATIO',
-    RunKind: 'compute',
+    dataset: 'OFFEX_RATIO',
+    runKind: 'compute',
   });
 
   return { weeklyComputed, dailyComputed };

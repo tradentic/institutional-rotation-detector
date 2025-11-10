@@ -65,9 +65,9 @@ export async function shortInterestIngestWorkflow(
     totalRecords += count;
 
     await upsertWorkflowSearchAttributes({
-      Dataset: 'SHORT_INT',
-      SettlementDate: settlement,
-      RunKind: runKind,
+      dataset: 'SHORT_INT',
+      settlementDate: settlement,
+      runKind: runKind,
     });
   }
 

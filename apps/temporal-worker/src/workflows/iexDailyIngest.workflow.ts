@@ -59,10 +59,10 @@ export async function iexDailyIngestWorkflow(
 
     // Set search attributes for this date
     await upsertWorkflowSearchAttributes({
-      Dataset: 'IEX_HIST',
-      TradeDate: tradeDate,
-      RunKind: runKind,
-      Provenance: result.fileId,
+      dataset: 'IEX_HIST',
+      tradeDate: tradeDate,
+      runKind: runKind,
+      provenance: result.fileId,
     });
   }
 

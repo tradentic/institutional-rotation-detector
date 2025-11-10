@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "importMap": "./import_map.json",
+  "tasks": {
+    "serve-events": "deno run --allow-net --allow-env --allow-read events/index.ts",
+    "serve-graph": "deno run --allow-net --allow-env --allow-read graph/index.ts",
+    "serve-run": "deno run --allow-net --allow-env --allow-read run/index.ts",
+    "serve-graph-paths": "deno run --allow-net --allow-env --allow-read graph-paths/index.ts",
+    "serve-graph-explain": "deno run --allow-net --allow-env --allow-read graph-explain/index.ts"
+  }
+}

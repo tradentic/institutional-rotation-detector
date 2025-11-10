@@ -224,10 +224,10 @@ async function apportionWithConsolidated(
     return { upsertCount: 0, qualityFlag: 'approx' };
   }
 
-  const { error, count } = await supabase
+  const { error, count } = await (supabase
     .from('micro_offex_ratio')
-    .upsert(records, { onConflict: 'symbol,as_of,granularity' })
-    .select('symbol', { count: 'exact', head: true });
+    .upsert(records, { onConflict: 'symbol,as_of,granularity' }) as any)
+    .select('*', { count: 'exact', head: true });
 
   if (error) {
     throw new Error(`Failed to upsert daily approx ratios: ${error.message}`);
@@ -280,10 +280,10 @@ async function apportionWithIex(
     return { upsertCount: 0, qualityFlag: 'iex_proxy' };
   }
 
-  const { error, count } = await supabase
+  const { error, count } = await (supabase
     .from('micro_offex_ratio')
-    .upsert(records, { onConflict: 'symbol,as_of,granularity' })
-    .select('symbol', { count: 'exact', head: true });
+    .upsert(records, { onConflict: 'symbol,as_of,granularity' }) as any)
+    .select('*', { count: 'exact', head: true });
 
   if (error) {
     throw new Error(`Failed to upsert IEX proxy ratios: ${error.message}`);
@@ -377,10 +377,10 @@ export async function detectFlip50(
   }
 
   // Upsert events
-  const { error: upsertError, count } = await supabase
+  const { error: upsertError, count } = await (supabase
     .from('micro_flip50_events')
-    .upsert(events, { onConflict: 'symbol,flip_date' })
-    .select('id', { count: 'exact', head: true });
+    .upsert(events, { onConflict: 'symbol,flip_date' }) as any)
+    .select('*', { count: 'exact', head: true });
 
   if (upsertError) {
     throw new Error(`Failed to upsert Flip50 events: ${upsertError.message}`);

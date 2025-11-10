@@ -1,0 +1,23 @@
+{
+  "name": "@rotation-detector/api",
+  "version": "1.0.0",
+  "description": "REST API handlers for Institutional Rotation Detector",
+  "type": "module",
+  "main": "./src/handlers/index.ts",
+  "exports": {
+    ".": "./src/handlers/index.ts",
+    "./handlers/*": "./src/handlers/*.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.80.0",
+    "@temporalio/client": "^1.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.24",
+    "typescript": "^5.9.3"
+  }
+}
