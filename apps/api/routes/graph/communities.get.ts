@@ -1,5 +1,5 @@
-import { createTemporalConnection } from '../../temporal-worker/temporal.config.js';
-import type { GraphSummarizeInput } from '../../temporal-worker/src/workflows/graphSummarize.workflow.js';
+import { createTemporalConnection } from '../../temporal-worker/temporal.config.ts';
+import type { GraphSummarizeInput } from '../../temporal-worker/src/workflows/graphSummarize.workflow.ts';
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);

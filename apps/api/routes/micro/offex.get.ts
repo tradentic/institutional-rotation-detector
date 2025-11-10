@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase.js';
+import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase.ts';
 
 /**
  * GET /api/micro/offex

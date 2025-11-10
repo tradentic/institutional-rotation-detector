@@ -1,5 +1,5 @@
-import { createTemporalConnection } from '../../temporal-worker/temporal.config.js';
-import type { GraphQueryInput } from '../../temporal-worker/src/workflows/graphQuery.workflow.js';
+import { createTemporalConnection } from '../../temporal-worker/temporal.config.ts';
+import type { GraphQueryInput } from '../../temporal-worker/src/workflows/graphQuery.workflow.ts';
 
 export async function POST(request: Request): Promise<Response> {
   const body = await request.json().catch(() => null);

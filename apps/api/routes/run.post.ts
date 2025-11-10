@@ -1,5 +1,5 @@
-import { createTemporalConnection } from '../temporal-worker/temporal.config.js';
-import type { IngestIssuerInput } from '../temporal-worker/src/workflows/ingestIssuer.workflow.js';
+import { createTemporalConnection } from '../temporal-worker/temporal.config.ts';
+import type { IngestIssuerInput } from '../temporal-worker/src/workflows/ingestIssuer.workflow.ts';
 
 export async function POST(request: Request): Promise<Response> {
   const url = new URL(request.url);
