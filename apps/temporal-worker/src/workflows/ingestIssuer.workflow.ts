@@ -38,7 +38,7 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
 
   for (const quarter of currentBatch) {
     const quarterBoundsForChild = quarterBounds(quarter);
-    const child = await startChild<IngestQuarterInput>('ingestQuarterWorkflow', {
+    const child = await startChild('ingestQuarterWorkflow', {
       args: [
         {
           cik,

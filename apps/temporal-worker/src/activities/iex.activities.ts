@@ -65,10 +65,10 @@ export async function downloadIexDaily(input: IexDailyIngestInput): Promise<IexD
 
   for (let i = 0; i < records.length; i += batchSize) {
     const batch = records.slice(i, i + batchSize);
-    const { error, count } = await supabase
+    const { error, count } = await (supabase
       .from('micro_iex_volume_daily')
-      .upsert(batch, { onConflict: 'symbol,trade_date' })
-      .select('symbol', { count: 'exact', head: true });
+      .upsert(batch, { onConflict: 'symbol,trade_date' }) as any)
+      .select('*', { count: 'exact', head: true });
 
     if (error) {
       throw new Error(`Failed to upsert IEX volume: ${error.message}`);

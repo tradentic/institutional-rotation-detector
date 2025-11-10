@@ -25,7 +25,15 @@ export interface WorkflowSearchAttributes {
   periodEnd?: string | Date;
   windowKey?: string;
   batchId?: string;
-  runKind?: 'backfill' | 'daily' | 'query';
+  runKind?: 'backfill' | 'daily' | 'query' | 'detect' | 'analysis' | 'compute' | 'scheduled';
+  // Microstructure data attributes
+  symbol?: string;
+  dataset?: string;
+  granularity?: string;
+  weekEnd?: string | Date;
+  tradeDate?: string | Date;
+  settlementDate?: string | Date;
+  provenance?: string;
 }
 
 const searchAttributesQuery = defineQuery<Record<string, string[]>>('__workflow_search_attributes');
@@ -42,6 +50,14 @@ const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: 
   windowKey: { name: 'WindowKey', type: SearchAttributeType.KEYWORD },
   batchId: { name: 'BatchId', type: SearchAttributeType.KEYWORD },
   runKind: { name: 'RunKind', type: SearchAttributeType.KEYWORD },
+  // Microstructure data attributes
+  symbol: { name: 'Symbol', type: SearchAttributeType.KEYWORD },
+  dataset: { name: 'Dataset', type: SearchAttributeType.KEYWORD },
+  granularity: { name: 'Granularity', type: SearchAttributeType.KEYWORD },
+  weekEnd: { name: 'WeekEnd', type: SearchAttributeType.DATETIME },
+  tradeDate: { name: 'TradeDate', type: SearchAttributeType.DATETIME },
+  settlementDate: { name: 'SettlementDate', type: SearchAttributeType.DATETIME },
+  provenance: { name: 'Provenance', type: SearchAttributeType.TEXT },
 };
 
 const cachedKeys = new Map<string, ReturnType<typeof defineSearchAttributeKey>>();
@@ -84,13 +100,13 @@ export async function upsertWorkflowSearchAttributes(
         continue;
       }
       applied[config.name] = [dateValue.toISOString()];
-      updates.push({ key: getSearchAttributeKey(config.name, config.type), value: dateValue });
+      updates.push({ key: getSearchAttributeKey(config.name, config.type) as any, value: dateValue });
       continue;
     }
 
     const textValue = String(value);
     applied[config.name] = [textValue];
-    updates.push({ key: getSearchAttributeKey(config.name, config.type), value: textValue });
+    updates.push({ key: getSearchAttributeKey(config.name, config.type) as any, value: textValue });
   }
 
   if (updates.length > 0) {

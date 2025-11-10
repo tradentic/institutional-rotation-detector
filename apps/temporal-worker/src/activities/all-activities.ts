@@ -55,8 +55,5 @@ export * from './options.activities.js';
 export { fetchPrices, setPriceSource } from './prices.activities.js';
 export type { PriceSource, DailyPrice, EventStudyResult } from './prices.activities.js';
 
-// RAG (Retrieval-Augmented Generation) activities
-export * from './rag.activities.js';
-
 // Sankey diagram activities
 export * from './sankey.activities.js';

@@ -122,7 +122,6 @@ describe('fetchDailyHoldings', () => {
         text: async () => csvPayload,
       } as any);
 
-    // @ts-expect-error overriding fetch for test
     globalThis.fetch = fetchMock;
 
     const { fetchDailyHoldings } = await import('../etf.activities.js');

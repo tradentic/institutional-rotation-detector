@@ -487,10 +487,10 @@ export async function fetchOtcWeeklyVenue(input: FinraOtcWeeklyInput): Promise<F
   // Upsert venue-level records
   let venueUpsertCount = 0;
   if (venueRecords.length > 0) {
-    const { error, count } = await supabase
+    const { error, count } = await (supabase
       .from('micro_offex_venue_weekly')
-      .upsert(venueRecords, { onConflict: 'symbol,week_end,source,venue_id' })
-      .select('id', { count: 'exact', head: true });
+      .upsert(venueRecords, { onConflict: 'symbol,week_end,source,venue_id' }) as any)
+      .select('*', { count: 'exact', head: true });
 
     if (error) {
       throw new Error(`Failed to upsert venue weekly: ${error.message}`);
@@ -513,10 +513,10 @@ export async function fetchOtcWeeklyVenue(input: FinraOtcWeeklyInput): Promise<F
 
   let symbolUpsertCount = 0;
   if (symbolRecords.length > 0) {
-    const { error, count } = await supabase
+    const { error, count } = await (supabase
       .from('micro_offex_symbol_weekly')
-      .upsert(symbolRecords, { onConflict: 'symbol,week_end' })
-      .select('symbol', { count: 'exact', head: true });
+      .upsert(symbolRecords, { onConflict: 'symbol,week_end' }) as any)
+      .select('*', { count: 'exact', head: true });
 
     if (error) {
       throw new Error(`Failed to upsert symbol weekly: ${error.message}`);
@@ -595,10 +595,10 @@ export async function aggregateOtcSymbolWeek(weekEnd: string, symbols?: string[]
     })
   );
 
-  const { error: upsertError, count } = await supabase
+  const { error: upsertError, count } = await (supabase
     .from('micro_offex_symbol_weekly')
-    .upsert(symbolRecords, { onConflict: 'symbol,week_end' })
-    .select('symbol', { count: 'exact', head: true });
+    .upsert(symbolRecords, { onConflict: 'symbol,week_end' }) as any)
+    .select('*', { count: 'exact', head: true });
 
   if (upsertError) {
     throw new Error(`Failed to upsert symbol weekly aggregates: ${upsertError.message}`);

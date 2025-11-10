@@ -146,7 +146,7 @@ function createMockSupabaseClient() {
     from(table: string) {
       return new MockQueryBuilder(table, mockDb);
     },
-  };
+  } as any;
 }
 
 function generateDailyReturns(): Row[] {

@@ -75,11 +75,11 @@ export async function finraOtcWeeklyIngestWorkflow(
 
     // Set search attributes for this week
     await upsertWorkflowSearchAttributes({
-      Dataset: 'FINRA_OTC',
-      Granularity: 'weekly',
-      WeekEnd: weekEnd,
-      RunKind: runKind,
-      Provenance: `${atsResult.fileId},${nonAtsResult.fileId}`,
+      dataset: 'FINRA_OTC',
+      granularity: 'weekly',
+      weekEnd: weekEnd,
+      runKind: runKind,
+      provenance: `${atsResult.fileId},${nonAtsResult.fileId}`,
     });
   }
 

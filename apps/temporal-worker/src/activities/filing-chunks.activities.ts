@@ -59,7 +59,8 @@ export async function chunkFiling(input: ChunkFilingInput): Promise<ChunkFilingR
   if (!filing) throw new Error(`Filing not found: ${input.accession}`);
 
   // Fetch filing text from SEC
-  const filingText = await sec.fetchFilingText(filing.url);
+  const response = await sec.get(filing.url);
+  const filingText = await response.text();
 
   // Chunk the text
   const chunkSize = input.chunkSize ?? DEFAULT_CHUNK_SIZE;
