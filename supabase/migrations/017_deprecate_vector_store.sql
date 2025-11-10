@@ -18,10 +18,8 @@ COMMENT ON COLUMN filing_chunks.embedding IS
 COMMENT ON INDEX filing_chunks_embedding_idx IS
   'DEPRECATED (2025-11-09): No longer used. Will be dropped when embedding column is removed.';
 
--- Keep match_filing_chunks function but mark as deprecated
--- (It may be referenced even if not actively used)
-COMMENT ON FUNCTION match_filing_chunks IS
-  'DEPRECATED (2025-11-09): No longer used. System uses GraphRAG + long context synthesis instead.';
+-- Note: match_filing_chunks function was never created in this schema,
+-- so we skip deprecation comment. It will be dropped in next migration if it exists.
 
 -- Add note to filing_chunks table
 COMMENT ON TABLE filing_chunks IS
