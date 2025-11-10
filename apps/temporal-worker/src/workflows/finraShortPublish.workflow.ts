@@ -1,9 +1,9 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils.ts';
 import type {
   FinraShortPlanInput,
   FinraShortPlanResult,
-} from '../activities/finra.activities.js';
+} from '../activities/finra.activities.ts';
 
 const DEFAULT_CADENCE_MS = 7 * 24 * 60 * 60 * 1000; // weekly cadence
 

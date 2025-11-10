@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase.ts';
 
 /**
  * Price source abstraction for market data.

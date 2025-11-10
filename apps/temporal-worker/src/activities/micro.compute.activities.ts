@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase.ts';
 import type {
   MicroOffExSymbolWeeklyRecord,
   MicroIexVolumeDailyRecord,
@@ -6,7 +6,7 @@ import type {
   MicroOffExRatioRecord,
   MicroFlip50EventRecord,
   OffExQualityFlag,
-} from '../lib/schema.js';
+} from '../lib/schema.ts';
 
 /**
  * Compute weekly official off-exchange ratio

@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../apps/temporal-worker/src/lib/supabase.js';
+import { createSupabaseClient } from '../apps/temporal-worker/src/lib/supabase.ts';
 
 async function main() {
   const supabase = createSupabaseClient();

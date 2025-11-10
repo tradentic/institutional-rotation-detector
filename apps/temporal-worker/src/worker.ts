@@ -9,7 +9,7 @@
 import { Worker, NativeConnection } from '@temporalio/worker';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import * as activities from './activities/all-activities.js';
+import * as activities from './activities/all-activities.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

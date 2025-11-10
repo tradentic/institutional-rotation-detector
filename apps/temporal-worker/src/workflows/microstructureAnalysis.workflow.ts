@@ -1,5 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils.ts';
 
 const activities = proxyActivities<{
   buildBrokerMapping: (symbol?: string, lookbackDays?: number) => Promise<{ mappingsCreated: number; mappingsUpdated: number }>;

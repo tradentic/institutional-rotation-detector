@@ -1,7 +1,7 @@
 import { proxyActivities, continueAsNew } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
-import type { GraphBuilderResult } from '../lib/graph.js';
-import type { GraphBuildActivityInput } from '../activities/graph.activities.js';
+import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.ts';
+import type { GraphBuilderResult } from '../lib/graph.ts';
+import type { GraphBuildActivityInput } from '../activities/graph.activities.ts';
 
 const { buildGraphForQuarter } = proxyActivities<{ buildGraphForQuarter(input: GraphBuildActivityInput): Promise<GraphBuilderResult> }>(
   {

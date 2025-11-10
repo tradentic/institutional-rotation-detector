@@ -1,6 +1,6 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
-import type { RotationDetectInput } from './rotationDetect.workflow.js';
+import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.ts';
+import type { RotationDetectInput } from './rotationDetect.workflow.ts';
 
 const activities = proxyActivities<{
   fetchFilings: (cik: string, quarter: { start: string; end: string }, forms: string[]) => Promise<any>;

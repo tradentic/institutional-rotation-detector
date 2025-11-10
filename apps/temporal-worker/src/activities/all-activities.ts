@@ -6,54 +6,54 @@
  */
 
 // Core rotation detection activities
-export * from './compute.activities.js';
+export * from './compute.activities.ts';
 
 // SEC EDGAR filing activities
-export * from './edgar.activities.js';
+export * from './edgar.activities.ts';
 
 // ETF tracking activities
-export * from './etf.activities.js';
+export * from './etf.activities.ts';
 
 // Filing chunking and embeddings
-export * from './filing-chunks.activities.js';
+export * from './filing-chunks.activities.ts';
 
 // FINRA data activities
-export * from './finra.activities.js';
+export * from './finra.activities.ts';
 
 // Form 4 insider transaction activities (exported via index)
-export * from './form4.activities.js';
+export * from './form4.activities.ts';
 
 // Graph construction and analysis
-export * from './graph.activities.js';
+export * from './graph.activities.ts';
 
 // GraphRAG activities
-export * from './graphrag.activities.js';
+export * from './graphrag.activities.ts';
 
 // IEX exchange data activities
-export * from './iex.activities.js';
+export * from './iex.activities.ts';
 
 // Index penalty activities
-export * from './index.activities.js';
+export * from './index.activities.ts';
 
 // Long context LLM activities
-export * from './longcontext.activities.js';
+export * from './longcontext.activities.ts';
 
 // Advanced microstructure activities
-export * from './micro.advanced.activities.js';
+export * from './micro.advanced.activities.ts';
 
 // Microstructure computation activities
-export * from './micro.compute.activities.js';
+export * from './micro.compute.activities.ts';
 
 // N-PORT fund holdings activities
-export * from './nport.activities.js';
+export * from './nport.activities.ts';
 
 // Options flow activities (exported via index)
-export * from './options.activities.js';
+export * from './options.activities.ts';
 
 // Price data activities
 // Note: Exclude eventStudy export to avoid conflict with compute.activities
-export { fetchPrices, setPriceSource } from './prices.activities.js';
-export type { PriceSource, DailyPrice, EventStudyResult } from './prices.activities.js';
+export { fetchPrices, setPriceSource } from './prices.activities.ts';
+export type { PriceSource, DailyPrice, EventStudyResult } from './prices.activities.ts';
 
 // Sankey diagram activities
-export * from './sankey.activities.js';
+export * from './sankey.activities.ts';

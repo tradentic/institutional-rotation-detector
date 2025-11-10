@@ -1,8 +1,8 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
-import type { EventStudyInput } from './eventStudy.workflow.js';
-import type { IndexPenaltyResult } from '../activities/index.activities.js';
-import { isQuarterEndEOWString } from '../lib/tradingCalendar.js';
+import { upsertWorkflowSearchAttributes } from './utils.ts';
+import type { EventStudyInput } from './eventStudy.workflow.ts';
+import type { IndexPenaltyResult } from '../activities/index.activities.ts';
+import { isQuarterEndEOWString } from '../lib/tradingCalendar.ts';
 
 const activities = proxyActivities<{
   detectDumpEvents: (cik: string, quarter: { start: string; end: string }) => Promise<any[]>;
