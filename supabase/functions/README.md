@@ -31,6 +31,8 @@ npm install -g supabase
 supabase start
 ```
 
+**Note on Import Warnings**: You may see warnings like "failed to read file: ...temporal-worker/src/..." when starting Supabase. This is expected during local development. The edge functions import handlers from `apps/api/src/handlers/` which reference TypeScript files in temporal-worker using `.js` extensions (required for ESM). These warnings are harmless and don't affect functionality - the imports work correctly when the functions are deployed/bundled.
+
 ### Serve Functions
 
 ```bash
