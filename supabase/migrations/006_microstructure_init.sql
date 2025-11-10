@@ -15,10 +15,11 @@ create table if not exists micro_offex_venue_weekly (
   total_trades numeric,
   finra_file_id text,                  -- filename or URL token for provenance
   finra_sha256 text,                   -- file hash for provenance
-  created_at timestamptz default now(),
-  unique (symbol, week_end, source, coalesce(venue_id,'-'))
+  created_at timestamptz default now()
 );
 
+create unique index if not exists micro_offex_venue_weekly_unique_idx
+  on micro_offex_venue_weekly(symbol, week_end, source, coalesce(venue_id, '-'));
 create index if not exists micro_offex_venue_weekly_sym_wk_idx
   on micro_offex_venue_weekly(symbol, week_end);
 create index if not exists micro_offex_venue_weekly_week_idx

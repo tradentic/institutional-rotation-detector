@@ -15,13 +15,22 @@
   },
   "postCreateCommand": ".devcontainer/scripts/post-create.sh",
   "postStartCommand": ".devcontainer/scripts/post-start.sh",
-  "forwardPorts": [3000, 3100, 54321, 54322, 54323, 54324, 54326, 6379],
+  "forwardPorts": [3000, 3100, 7233, 8233, 51352, 54321, 54322, 54323, 54324, 54326, 6379],
   "portsAttributes": {
     "3000": {
       "label": "Web app"
     },
     "3100": {
       "label": "Admin app"
+    },
+    "7233": {
+      "label": "Temporal Server"
+    },
+    "8233": {
+      "label": "Temporal UI"
+    },
+    "51352": {
+      "label": "Temporal Metrics"
     },
     "54321": {
       "label": "Supabase API"
