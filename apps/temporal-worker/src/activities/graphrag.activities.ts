@@ -81,6 +81,7 @@ export async function computeCommunities(input: ComputeCommunitiesInput): Promis
 
 export interface SummarizeCommunityInput {
   communityId: string;
+  enableCodeExecution?: boolean; // Enable e2b code execution tool
 }
 
 export async function summarizeCommunity(input: SummarizeCommunityInput): Promise<string> {
@@ -126,10 +127,16 @@ Write two paragraphs highlighting the drivers. Cite accessions if present.`;
       model: 'gpt-4.1',
       input: [
         {
+          role: 'system',
+          content: 'You are summarizing investor flow communities. You can use code execution for calculations or data analysis when needed.',
+        },
+        {
           role: 'user',
           content: prompt,
         },
       ],
+      enableCodeExecution: input.enableCodeExecution ?? false,
+      maxToolRounds: 5,
     },
   });
   const update = await supabase

@@ -99,6 +99,7 @@ export async function chunkFiling(input: ChunkFilingInput): Promise<ChunkFilingR
  */
 export interface CreateClusterSummaryInput {
   clusterId: string;
+  enableCodeExecution?: boolean; // Enable e2b code execution tool
 }
 
 export interface CreateClusterSummaryResult {
@@ -163,13 +164,27 @@ Key filings: ${provenance
 
 Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4',
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 300,
+  // Use the updated runResponses function with optional tool calling
+  const { runResponses } = await import('../lib/openai.ts');
+  const summary = await runResponses({
+    client: openai,
+    input: {
+      model: 'gpt-4',
+      input: [
+        {
+          role: 'system',
+          content: 'You are summarizing institutional rotation clusters for investors. You can use code execution for calculations or data analysis when needed.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      max_tokens: 300,
+      enableCodeExecution: input.enableCodeExecution ?? false,
+      maxToolRounds: 5,
+    },
   });
-
-  const summary = response.choices[0]?.message?.content ?? 'No summary generated.';
 
   // Store as a graph node
   const nodeId = `cluster:${input.clusterId}`;

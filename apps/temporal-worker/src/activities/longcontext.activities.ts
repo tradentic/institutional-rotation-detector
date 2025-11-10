@@ -91,6 +91,8 @@ export async function bundleForSynthesis(input: BundleForSynthesisInput): Promis
 
 export interface SynthesizeInput {
   bundle: SynthesisBundle;
+  enableCodeExecution?: boolean; // Enable e2b code execution tool
+  enableTools?: boolean; // Enable tool calling (default: false for backward compatibility)
 }
 
 export interface SynthesizeResult {
@@ -120,7 +122,7 @@ In 3 paragraphs max, answer and cite accession IDs inline.`;
       input: [
         {
           role: 'system',
-          content: 'Use only supplied facts. Provide accession citations like [ACC].',
+          content: 'Use only supplied facts. Provide accession citations like [ACC]. You can use code execution for calculations or data analysis when needed.',
         },
         {
           role: 'user',
@@ -135,6 +137,8 @@ In 3 paragraphs max, answer and cite accession IDs inline.`;
           ],
         },
       ],
+      enableCodeExecution: input.enableCodeExecution ?? false,
+      maxToolRounds: 5,
     },
   });
 
