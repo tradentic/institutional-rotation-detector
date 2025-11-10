@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${DEBUG:-false}" == "true" ]] && set -x
+
+# Sync Supabase environment variables from 'supabase status' to .env.local files
+# Usage: ./tools/sync-supabase-env.sh [target_dir]
+#        If target_dir is provided, syncs only that directory
+#        If not provided, syncs all known apps (temporal-worker, api)
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || cd "$HERE/.." && pwd)"
+
+log() { echo "[sync-supabase-env] $*"; }
+error() { echo "[sync-supabase-env] ERROR: $*" >&2; }
+
+# Check if supabase CLI is available
+if ! command -v supabase >/dev/null 2>&1; then
+  error "Supabase CLI not found. Install with: brew install supabase/tap/supabase"
+  exit 1
+fi
+
+# Check if Supabase is running
+if ! supabase status >/dev/null 2>&1; then
+  error "Supabase is not running. Start with: supabase start"
+  exit 1
+fi
+
+# Extract Supabase credentials from status
+log "Extracting Supabase credentials from 'supabase status'..."
+SUPABASE_STATUS=$(supabase status)
+
+SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep "API URL:" | awk '{print $3}')
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep "anon key:" | awk '{print $3}')
+SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep "service_role key:" | awk '{print $3}')
+DATABASE_URL=$(echo "$SUPABASE_STATUS" | grep "DB URL:" | awk '{print $3}')
+
+# Validate extracted values
+if [[ -z "$SUPABASE_URL" ]] || [[ -z "$SUPABASE_ANON_KEY" ]] || [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+  error "Failed to extract Supabase credentials from 'supabase status'"
+  error "Please ensure Supabase is running properly"
+  exit 1
+fi
+
+log "Extracted credentials:"
+log "  SUPABASE_URL=$SUPABASE_URL"
+log "  SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:0:20}..."
+log "  SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:0:20}..."
+log "  DATABASE_URL=$DATABASE_URL"
+
+# Function to update or create .env.local file
+update_env_file() {
+  local target_dir="$1"
+  local env_file="$target_dir/.env.local"
+
+  log "Updating $env_file..."
+
+  # Create .env.local from .env.example if it doesn't exist
+  if [[ ! -f "$env_file" ]]; then
+    if [[ -f "$target_dir/.env.example" ]]; then
+      log "  Creating $env_file from .env.example"
+      cp "$target_dir/.env.example" "$env_file"
+    else
+      log "  Creating new $env_file"
+      touch "$env_file"
+    fi
+  fi
+
+  # Helper function to update or add a variable
+  update_var() {
+    local var_name="$1"
+    local var_value="$2"
+    local file="$3"
+
+    if grep -q "^${var_name}=" "$file"; then
+      # Variable exists, update it
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^${var_name}=.*|${var_name}=${var_value}|" "$file"
+      else
+        sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" "$file"
+      fi
+    else
+      # Variable doesn't exist, add it
+      echo "${var_name}=${var_value}" >> "$file"
+    fi
+  }
+
+  # Update Supabase variables
+  update_var "SUPABASE_URL" "$SUPABASE_URL" "$env_file"
+  update_var "SUPABASE_ANON_KEY" "$SUPABASE_ANON_KEY" "$env_file"
+  update_var "SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_SERVICE_ROLE_KEY" "$env_file"
+  update_var "DATABASE_URL" "$DATABASE_URL" "$env_file"
+
+  log "  ✓ Updated Supabase credentials in $env_file"
+}
+
+# Determine target directories
+if [[ $# -gt 0 ]]; then
+  # Single target provided
+  TARGET_DIR="$1"
+  if [[ ! -d "$TARGET_DIR" ]]; then
+    error "Target directory does not exist: $TARGET_DIR"
+    exit 1
+  fi
+  update_env_file "$TARGET_DIR"
+else
+  # Update all known app directories
+  APPS=(
+    "$ROOT/apps/temporal-worker"
+    "$ROOT/apps/api"
+  )
+
+  for app_dir in "${APPS[@]}"; do
+    if [[ -d "$app_dir" ]]; then
+      update_env_file "$app_dir"
+    else
+      log "Skipping $app_dir (directory not found)"
+    fi
+  done
+fi
+
+log "✓ Supabase environment sync complete"
+log ""
+log "Next steps:"
+log "  1. Verify credentials: cat apps/temporal-worker/.env.local"
+log "  2. Add your OPENAI_API_KEY and SEC_USER_AGENT if not already set"
+log "  3. Run sync-temporal-env.sh to configure Temporal settings"

@@ -78,10 +78,17 @@ temporal server start-dev
 
 # 5. Setup & Start Worker (Terminal 3)
 ./tools/setup-temporal-attributes.sh
+
+# Sync environment variables automatically
+./tools/sync-supabase-env.sh   # Extracts Supabase credentials
+./tools/sync-temporal-env.sh   # Configures Temporal settings
+./tools/sync-api-env.sh        # Syncs API config
+
 cd apps/temporal-worker
-cp .env.example .env
-# Edit .env: Add OPENAI_API_KEY, SEC_USER_AGENT, and Supabase keys from: supabase status
-# Note: The api app uses the same config from apps/temporal-worker
+nano .env.local
+# Add: OPENAI_API_KEY and SEC_USER_AGENT
+# (Supabase and Temporal config already synced!)
+
 pnpm install && pnpm run build
 node dist/worker.js
 ```

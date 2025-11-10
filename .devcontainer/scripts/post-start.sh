@@ -225,39 +225,57 @@ fi
 if command -v pnpm >/dev/null 2>&1; then
   log "Setting up environment configuration..."
 
+  # Sync environment variables to .env.local files
   if [[ "${supabase_ready}" == "true" ]]; then
-    log "Extracting Supabase credentials..."
-
-    # Parse supabase status output to extract keys
-    SUPABASE_STATUS=$(supabase status)
-    SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep "anon key:" | awk '{print $3}')
-    SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep "service_role key:" | awk '{print $3}')
-
-    log "Supabase credentials extracted:"
-    log "  SUPABASE_URL=http://localhost:54321"
-    log "  SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
-    log "  SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY"
-    log ""
-    log "To set up your environment:"
-    log "  1. For temporal-worker:"
-    log "     cp .env.example apps/temporal-worker/.env"
-    log "     # Then edit apps/temporal-worker/.env with the credentials above"
-    log ""
-    log "  Note: The api app uses the same configuration from temporal-worker"
+    log "Syncing Supabase credentials to .env.local files..."
+    if "${REPO_ROOT}/tools/sync-supabase-env.sh" >/tmp/sync-supabase-env.log 2>&1; then
+      log "✓ Supabase environment synced successfully"
+    else
+      log "Warning: Failed to sync Supabase environment. Check /tmp/sync-supabase-env.log"
+    fi
   elif [[ "$supabase_cli_present" == "true" ]]; then
     log "Supabase services are not ready. Start with: supabase start"
+    log "After starting, run: ./tools/sync-supabase-env.sh"
   else
     log "Supabase CLI is unavailable."
   fi
 
   if [[ "$temporal_server_ready" == "true" ]]; then
-    log ""
-    log "Temporal server is ready:"
-    log "  TEMPORAL_ADDRESS=localhost:7233"
-    log "  TEMPORAL_NAMESPACE=default"
-    log "  TEMPORAL_TASK_QUEUE=rotation-detector"
-    log "  Temporal UI: http://localhost:8233"
+    log "Syncing Temporal configuration to .env.local files..."
+    if "${REPO_ROOT}/tools/sync-temporal-env.sh" >/tmp/sync-temporal-env.log 2>&1; then
+      log "✓ Temporal environment synced successfully"
+    else
+      log "Warning: Failed to sync Temporal environment. Check /tmp/sync-temporal-env.log"
+    fi
+  else
+    log "Temporal server is not ready."
+    log "After starting, run: ./tools/sync-temporal-env.sh"
   fi
+
+  # Sync API environment from temporal-worker
+  if [[ -f "${REPO_ROOT}/apps/temporal-worker/.env.local" ]]; then
+    log "Syncing API environment from temporal-worker..."
+    if "${REPO_ROOT}/tools/sync-api-env.sh" >/tmp/sync-api-env.log 2>&1; then
+      log "✓ API environment synced successfully"
+    else
+      log "Warning: Failed to sync API environment. Check /tmp/sync-api-env.log"
+    fi
+  fi
+
+  log ""
+  log "Environment setup complete!"
+  log ""
+  log "Next steps:"
+  log "  1. Add your OPENAI_API_KEY to apps/temporal-worker/.env.local"
+  log "  2. Add your SEC_USER_AGENT to apps/temporal-worker/.env.local"
+  log "  3. Build and start the worker:"
+  log "     cd apps/temporal-worker"
+  log "     pnpm install && pnpm run build"
+  log "     node dist/worker.js"
+  log ""
+  log "Access points:"
+  log "  Temporal UI: http://localhost:8233"
+  log "  Supabase Studio: http://localhost:54323"
 else
   log "pnpm not found. Please ensure pnpm is installed."
 fi

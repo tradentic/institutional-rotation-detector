@@ -49,18 +49,19 @@ temporal server start-dev
 # Setup Temporal search attributes
 ./tools/setup-temporal-attributes.sh
 
-# Setup environment (API uses same config as temporal-worker)
+# Sync environment variables automatically
+./tools/sync-supabase-env.sh   # Syncs Supabase credentials to .env.local
+./tools/sync-temporal-env.sh   # Syncs Temporal config to .env.local
+./tools/sync-api-env.sh        # Syncs API config from temporal-worker
+
+# Add your API keys (required)
 cd apps/temporal-worker
-cp .env.example .env
+nano .env.local
 
-# Get Supabase credentials
-supabase status
-
-# Edit .env with your keys:
+# Add these values to .env.local:
 # - OPENAI_API_KEY=sk-your-key
 # - SEC_USER_AGENT=YourName your.email@domain.com
-# - SUPABASE_ANON_KEY=<from supabase status>
-# - SUPABASE_SERVICE_ROLE_KEY=<from supabase status>
+# (Supabase and Temporal config already synced automatically)
 
 # Install & build
 pnpm install
@@ -98,27 +99,27 @@ Wait for devcontainer to build (3-5 minutes). The following starts automatically
 
 ### 2. Configure Environment
 
+**Environment variables are automatically synced!** The devcontainer setup runs:
+- `sync-supabase-env.sh` - Extracts Supabase credentials automatically
+- `sync-temporal-env.sh` - Configures Temporal settings automatically
+- `sync-api-env.sh` - Syncs API config from temporal-worker
+
+You only need to add your API keys:
+
 ```bash
-# Setup environment (API uses same config as temporal-worker)
 cd apps/temporal-worker
-cp .env.example .env
-
-# Get Supabase credentials
-supabase status
-
-# Edit .env file
-nano .env
+nano .env.local
 ```
 
-Add your keys:
+Add these two values to `.env.local`:
 ```bash
 OPENAI_API_KEY=sk-your-key-here
 SEC_USER_AGENT=YourName your.email@domain.com
-SUPABASE_ANON_KEY=<from supabase status>
-SUPABASE_SERVICE_ROLE_KEY=<from supabase status>
 ```
 
-**Note:** The API app uses the same configuration from `apps/temporal-worker`, so you don't need a separate `.env` file for it.
+All other values (Supabase, Temporal) are already configured automatically!
+
+**Note:** The API app uses the same configuration from `apps/temporal-worker`, so you don't need a separate `.env.local` file for it.
 
 ### 3. Start Worker
 
