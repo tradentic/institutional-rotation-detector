@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createOpenAIClient, runResponses } from '../lib/openai.js';
-import { louvainLikeCommunities, topNodes } from '../lib/pagerank_louvain.js';
+import { createSupabaseClient } from '../lib/supabase.ts';
+import { createOpenAIClient, runResponses } from '../lib/openai.ts';
+import { louvainLikeCommunities, topNodes } from '../lib/pagerank_louvain.ts';
 
 export interface ComputeCommunitiesInput {
   periodStart: string;

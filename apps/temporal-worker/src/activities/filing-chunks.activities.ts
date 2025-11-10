@@ -1,6 +1,6 @@
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createOpenAIClient } from '../lib/openai.js';
-import { createSecClient } from '../lib/secClient.js';
+import { createSupabaseClient } from '../lib/supabase.ts';
+import { createOpenAIClient } from '../lib/openai.ts';
+import { createSecClient } from '../lib/secClient.ts';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.

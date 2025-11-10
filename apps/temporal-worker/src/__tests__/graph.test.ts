@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { GraphBuilder } from '../lib/graph.js';
-import type { GraphBuildSource, GraphEdgeInput, GraphNodeInput, GraphStore } from '../lib/graph.js';
-import { louvainLikeCommunities } from '../lib/pagerank_louvain.js';
+import { GraphBuilder } from '../lib/graph.ts';
+import type { GraphBuildSource, GraphEdgeInput, GraphNodeInput, GraphStore } from '../lib/graph.ts';
+import { louvainLikeCommunities } from '../lib/pagerank_louvain.ts';
 
 class InMemoryGraphStore implements GraphStore {
   public nodes = new Map<string, { id: string; input: GraphNodeInput }>();

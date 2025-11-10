@@ -1,4 +1,4 @@
-import { createTemporalConnection } from '../apps/temporal-worker/temporal.config.js';
+import { createTemporalConnection } from '../apps/temporal-worker/temporal.config.ts';
 
 async function main() {
   const ticker = process.argv[2];
