@@ -6,7 +6,7 @@
  */
 
 import { Connection, WorkflowClient } from '@temporalio/client';
-import type { GraphQueryInput } from '../../../temporal-worker/src/workflows/graphQuery.workflow.js';
+import type { GraphQueryInput } from '../../../temporal-worker/src/workflows/graphQuery.workflow.ts';
 
 export interface GraphPathsParams {
   ticker?: string;

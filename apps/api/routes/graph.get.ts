@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../../temporal-worker/src/lib/supabase.js';
+import { createSupabaseClient } from '../../temporal-worker/src/lib/supabase.ts';
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
