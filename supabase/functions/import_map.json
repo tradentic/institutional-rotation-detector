@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.80.0",
+    "@temporalio/client": "npm:@temporalio/client@1.13.1",
+    "@temporalio/common": "npm:@temporalio/common@1.13.1",
+    "@temporalio/workflow": "npm:@temporalio/workflow@1.13.1"
+  }
+}
