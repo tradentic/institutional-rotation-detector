@@ -14,9 +14,9 @@ create index if not exists micro_broker_inst_broker_dates_idx
   on micro_broker_institution_map(broker_mpid, last_observed_date desc);
 
 -- Index for active relationships (observed recently)
+-- Note: Removed WHERE clause because current_date is not immutable
 create index if not exists micro_broker_inst_active_idx
-  on micro_broker_institution_map(last_observed_date desc)
-  where last_observed_date >= current_date - interval '90 days';
+  on micro_broker_institution_map(last_observed_date desc);
 
 -- ============================================================================
 -- Institutional Flow Indexes
