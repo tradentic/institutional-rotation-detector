@@ -36,92 +36,75 @@ Complete installation and configuration instructions for the Institutional Rotat
 
 ## Database Setup
 
-### Option 1: Supabase (Recommended)
+### Option 1: Supabase Cloud (Production)
 
 1. **Create Supabase Project**
-   ```bash
-   # Sign up at https://supabase.com
-   # Create a new project
-   # Note your project URL and API keys
-   ```
+   - Sign up at https://supabase.com
+   - Create a new project
+   - Note your project URL and API keys
 
 2. **Enable pgvector Extension**
    - Navigate to Database → Extensions in Supabase dashboard
    - Enable `vector` extension
 
-3. **Run Migrations**
+3. **Link Local Project to Cloud**
    ```bash
-   # Connect to your Supabase database
-   psql "postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT].supabase.co:5432/postgres"
+   # Install Supabase CLI
+   brew install supabase/tap/supabase  # macOS
+   # or visit https://supabase.com/docs/guides/cli for other platforms
 
-   # Run migrations in order
-   \i db/migrations/001_init.sql
-   \i db/migrations/002_indexes.sql
-   \i db/migrations/010_graphrag_init.sql
-   \i db/migrations/011_graphrag_indexes.sql
+   # Link to your cloud project
+   supabase link --project-ref <your-project-ref>
+
+   # Push migrations to cloud
+   supabase db push
    ```
 
-### Option 2: Self-Hosted PostgreSQL
+### Option 2: Supabase Local (Development - Recommended)
 
-1. **Install PostgreSQL**
+1. **Install Supabase CLI**
    ```bash
-   # Ubuntu/Debian
-   sudo apt-get install postgresql-15 postgresql-contrib
-
    # macOS
-   brew install postgresql@15
+   brew install supabase/tap/supabase
+
+   # Linux/Windows
+   # See: https://supabase.com/docs/guides/cli
    ```
 
-2. **Install pgvector Extension**
+2. **Start Supabase Locally**
    ```bash
-   # Clone and install pgvector
-   git clone https://github.com/pgvector/pgvector.git
-   cd pgvector
-   make
-   sudo make install
+   cd institutional-rotation-detector
+   supabase start
    ```
 
-3. **Create Database**
-   ```sql
-   createdb rotation_detector
-   psql rotation_detector
+   This automatically:
+   - Starts PostgreSQL with pgvector extension
+   - Starts all Supabase services (API, Studio, Auth, Storage)
+   - Provides local connection credentials
 
-   CREATE EXTENSION vector;
-   ```
-
-4. **Run Migrations**
+3. **Apply Migrations**
    ```bash
-   psql rotation_detector -f db/migrations/001_init.sql
-   psql rotation_detector -f db/migrations/002_indexes.sql
-   psql rotation_detector -f db/migrations/010_graphrag_init.sql
-   psql rotation_detector -f db/migrations/011_graphrag_indexes.sql
+   supabase db reset
    ```
+
+   This applies all 19 migrations from `supabase/migrations/` in order.
+
+### Option 3: Self-Hosted PostgreSQL (Advanced)
+
+For self-hosted PostgreSQL without Supabase, see [Local Development Guide](LOCAL_DEVELOPMENT.md) for detailed instructions. Note that you'll need to manually configure the REST API layer that Supabase provides.
 
 ### Database Schema Overview
 
-The migrations create the following table groups:
+The `supabase db reset` command applies 19 migrations that create:
 
-- **Core Tables** (001_init.sql):
-  - `entities` - Institutional investors, issuers, ETFs
-  - `filings` - SEC filing metadata
-  - `positions_13f` - 13F position holdings
-  - `bo_snapshots` - Beneficial ownership snapshots
-  - `uhf_positions` - Ultra-high-frequency trading positions
-  - `rotation_events` - Detected rotation events
-  - `rotation_edges` - Graph edges representing flows
+- **Core Tables**: entities, filings, positions_13f, rotation_events, rotation_edges
+- **Microstructure Tables**: finra_otc_data, iex_hist_data, short_interest
+- **GraphRAG Tables**: graph_nodes, graph_edges, graph_communities, node_bindings
+- **Insider Data**: insider_transactions (Form 4 data)
+- **Options Flow**: options_flow, unusual_options_activity
+- **Supporting Data**: cusip_issuer_map, index_calendar
 
-- **Indexes** (002_indexes.sql):
-  - Performance indexes on frequently queried columns
-
-- **GraphRAG Tables** (010_graphrag_init.sql):
-  - `graph_nodes` - Knowledge graph nodes
-  - `graph_edges` - Knowledge graph edges
-  - `graph_communities` - Detected communities
-  - `node_bindings` - Node lookup mappings
-  - `graph_explanations` - AI-generated explanations
-
-- **GraphRAG Indexes** (011_graphrag_indexes.sql):
-  - Indexes for graph query performance
+All migrations include proper indexes, constraints, and the pgvector extension for embeddings.
 
 ## Temporal Setup
 
@@ -168,15 +151,26 @@ The migrations create the following table groups:
 
 ### Install Dependencies
 
+**Always install from repo root** to properly set up the pnpm workspace:
+
 ```bash
-cd apps/temporal-worker
+cd institutional-rotation-detector
 pnpm install
 ```
 
+This installs dependencies for all apps (temporal-worker, api, admin) and shared libraries.
+
 ### Build TypeScript
 
+**Build from repo root:**
+
 ```bash
-pnpm run build
+# Build all apps
+pnpm build
+
+# Or build specific apps
+pnpm run build:worker  # Just the temporal worker
+pnpm --filter api build  # Just the API
 ```
 
 ### Run Tests (Optional)

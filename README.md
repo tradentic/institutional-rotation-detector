@@ -67,32 +67,34 @@ For a complete local development environment with Supabase and Temporal running 
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# 2. Install dependencies (all apps and libraries)
+# 2. Install dependencies (all apps and libraries from repo root)
 pnpm install
 
-# 3. Install CLIs
+# 3. Install CLIs (macOS/Linux)
 brew install supabase/tap/supabase temporal
 
-# 4. Start Supabase (Terminal 1)
+# 4. Start Supabase (Terminal 1) - includes all migrations automatically
 supabase start
 
-# 5. Start Temporal (Terminal 2)
-temporal server start-dev
+# 5. Apply database migrations
+supabase db reset
 
-# 6. Setup & Start Worker (Terminal 3)
-./tools/setup-temporal-attributes.sh
-
-# Sync environment variables automatically
+# 6. Sync environment variables automatically
 ./tools/sync-supabase-env.sh   # Extracts Supabase credentials to all apps
 ./tools/sync-temporal-env.sh   # Configures Temporal settings for all apps
 
-cd apps/temporal-worker
-nano .env.local
+# 7. Add your API keys to apps/temporal-worker/.env.local
+nano apps/temporal-worker/.env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
 
-# Build and start
-cd ../..
+# 8. Start Temporal (Terminal 2)
+temporal server start-dev
+
+# 9. Setup Temporal search attributes (Terminal 3)
+./tools/setup-temporal-attributes.sh
+
+# 10. Build and start worker (from repo root)
 pnpm run build:worker
 
 cd apps/temporal-worker
@@ -117,9 +119,15 @@ For production deployment with Supabase Cloud and Temporal Cloud:
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
+# Install dependencies from repo root
+pnpm install
+
 # Configure for cloud (see docs/SETUP.md and docs/DEPLOYMENT.md)
 cp .env.example apps/temporal-worker/.env
 # Edit .env with cloud credentials
+
+# Build all apps from repo root
+pnpm build
 
 # Deploy worker (see docs/DEPLOYMENT.md for options)
 # - AWS ECS Fargate

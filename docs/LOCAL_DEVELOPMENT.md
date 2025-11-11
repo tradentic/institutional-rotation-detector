@@ -185,7 +185,7 @@ service_role key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### Apply Database Migrations
 
-Both migrations and seed data paths are configured in `supabase/config.toml` to load from the `db/` directory.
+Both migrations and seed data paths are configured in `supabase/config.toml` to load from the `supabase/migrations/` directory.
 
 **Reset database with all migrations:**
 
@@ -195,12 +195,19 @@ supabase db reset
 
 This will:
 - Drop the database
-- Apply all migrations from `db/migrations/` in order (configured via `[db.migrations]` `sql_paths`)
-- Run any seed files from `db/seed/` in alphabetical order (configured via `[db.seed]` `sql_paths`)
+- Apply all migrations from `supabase/migrations/` in order (19 migrations total)
+- Run any seed files from `supabase/seed/` in alphabetical order
+- Initialize all tables, indexes, and extensions including pgvector
+
+**Note:** Always use `supabase db reset` to manage migrations. Do NOT manually run SQL files with psql - the Supabase CLI handles proper migration ordering and tracking.
 
 ### Verify Database Setup
 
-**Using psql:**
+**Using Supabase Studio (Recommended):**
+
+Open http://localhost:54323 in your browser and navigate to "Table Editor" to browse all tables.
+
+**Using psql (Optional):**
 ```bash
 psql postgresql://postgres:postgres@localhost:54322/postgres
 
@@ -342,19 +349,15 @@ Access at http://localhost:8233
 
 ### Install Dependencies
 
-**From repo root (recommended):**
+**Always install from repo root:**
 ```bash
-# Installs dependencies for all apps and libraries
+# Installs dependencies for all apps and libraries in the workspace
 pnpm install
 ```
 
-This uses the pnpm workspace configuration to install and link all dependencies across the monorepo.
+This uses the pnpm workspace configuration (`pnpm-workspace.yaml`) to install and link all dependencies across the monorepo (apps/temporal-worker, apps/api, apps/admin, and all libs).
 
-**Individual app (alternative):**
-```bash
-cd apps/temporal-worker
-pnpm install
-```
+**Important:** Do NOT run `pnpm install` in individual app directories - always run from repo root to ensure proper workspace linking.
 
 ### Configure Environment Variables
 
@@ -434,19 +437,18 @@ TEMPORAL_ADDRESS=localhost:7233
 
 ### Build TypeScript
 
-**From repo root (recommended):**
+**Build from repo root:**
 ```bash
 # Build just the worker
 pnpm run build:worker
 
 # Or build all apps
-pnpm run build
-```
+pnpm build
 
-**From app directory (alternative):**
-```bash
-cd apps/temporal-worker
-pnpm run build
+# Or build specific apps
+pnpm --filter temporal-worker build
+pnpm --filter api build
+pnpm --filter admin build
 ```
 
 **Expected Output:**
@@ -704,18 +706,24 @@ nodemon --watch src --exec "pnpm run build && node dist/worker.js"
 # Using Supabase CLI (recommended)
 supabase migration new add_new_table
 
-# This creates a timestamped file in db/migrations/ (configured in supabase/config.toml)
+# This creates a timestamped file in supabase/migrations/
 # Edit the generated file, then apply all migrations:
 supabase db reset
 ```
 
+**Important:** Always use the Supabase CLI for migrations:
+- ✅ `supabase db reset` - Apply all migrations from scratch
+- ✅ `supabase migration new <name>` - Create new migration
+- ✅ `supabase db diff -f <name>` - Generate migration from schema changes
+- ❌ Do NOT use `psql -f migration.sql` manually - breaks migration tracking
+
 **Seed Data:**
 
-Place SQL seed files in `db/seed/`. They'll be executed alphabetically after migrations when running `supabase db reset`.
+Place SQL seed files in `supabase/seed/`. They'll be executed alphabetically after migrations when running `supabase db reset`.
 
 ```bash
 # Example: Create a seed file
-cat > db/seed/01_example_data.sql << 'EOF'
+cat > supabase/seed/01_example_data.sql << 'EOF'
 INSERT INTO entities (cik, name, entity_type) VALUES
   ('0001234567', 'Example Fund', 'institutional_investor');
 EOF

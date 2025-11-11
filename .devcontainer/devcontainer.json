@@ -1,5 +1,5 @@
 {
-  "name": "Instituitional Rotation Detector",
+  "name": "Institutional Rotation Detector",
   "dockerComposeFile": [
     "./docker-compose.yml"
   ],
