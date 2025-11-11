@@ -6,7 +6,7 @@ echo ""
 
 # Configuration
 TEMPORAL_ADDRESS="${TEMPORAL_ADDRESS:-localhost:7233}"
-TEMPORAL_NAMESPACE="${TEMPORAL_NAMESPACE:-default}"
+TEMPORAL_NAMESPACE="${TEMPORAL_NAMESPACE:-ird}"
 MAX_RETRIES=30
 RETRY_DELAY=2
 
@@ -25,6 +25,17 @@ until temporal operator cluster health --address "${TEMPORAL_ADDRESS}" 2>/dev/nu
 done
 
 echo "✅ Temporal server is ready"
+echo ""
+
+# Create namespace if it doesn't exist
+echo "📦 Ensuring namespace '${TEMPORAL_NAMESPACE}' exists..."
+if ! temporal operator namespace describe "${TEMPORAL_NAMESPACE}" --address "${TEMPORAL_ADDRESS}" 2>/dev/null; then
+  echo "   Creating namespace '${TEMPORAL_NAMESPACE}'..."
+  temporal operator namespace create "${TEMPORAL_NAMESPACE}" --address "${TEMPORAL_ADDRESS}"
+  echo "   ✓ Namespace '${TEMPORAL_NAMESPACE}' created"
+else
+  echo "   ✓ Namespace '${TEMPORAL_NAMESPACE}' already exists"
+fi
 echo ""
 
 # Create search attributes

@@ -4,6 +4,9 @@
  * Extends the Temporal SDK's WorkflowSearchAttributes interface
  * with project-specific custom search attributes.
  *
+ * These attributes are registered in the dedicated "ird" Temporal namespace,
+ * providing isolation from other projects without requiring attribute name prefixes.
+ *
  * These attributes must be registered in Temporal before use.
  * See: tools/setup-temporal-attributes.sh
  *

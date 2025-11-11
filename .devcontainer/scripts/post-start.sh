@@ -252,15 +252,7 @@ if command -v pnpm >/dev/null 2>&1; then
     log "After starting, run: ./tools/sync-temporal-env.sh"
   fi
 
-  # Sync API environment from temporal-worker
-  if [[ -f "${REPO_ROOT}/apps/temporal-worker/.env.local" ]]; then
-    log "Syncing API environment from temporal-worker..."
-    if "${REPO_ROOT}/tools/sync-api-env.sh" >/tmp/sync-api-env.log 2>&1; then
-      log "✓ API environment synced successfully"
-    else
-      log "Warning: Failed to sync API environment. Check /tmp/sync-api-env.log"
-    fi
-  fi
+  # Note: API and admin apps are automatically synced by sync-supabase-env.sh and sync-temporal-env.sh
 
   log ""
   log "Environment setup complete!"

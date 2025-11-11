@@ -115,9 +115,8 @@ cd institutional-rotation-detector
 supabase start
 
 # 3. Sync environment variables automatically
-./tools/sync-supabase-env.sh    # Extracts Supabase credentials
-./tools/sync-temporal-env.sh    # Sets Temporal defaults
-./tools/sync-api-env.sh         # Copies config to API app
+./tools/sync-supabase-env.sh    # Extracts Supabase credentials to all apps
+./tools/sync-temporal-env.sh    # Sets Temporal defaults for all apps
 
 # 4. Add your API keys
 cd apps/temporal-worker
@@ -358,12 +357,9 @@ Use the provided sync scripts to automatically configure environment variables:
 
 # 2. Sync Temporal configuration
 ./tools/sync-temporal-env.sh
-
-# 3. Sync API configuration from temporal-worker
-./tools/sync-api-env.sh
 ```
 
-These scripts will create/update `.env.local` files in `apps/temporal-worker` and `apps/api` with the correct values.
+These scripts will create/update `.env.local` files in `apps/temporal-worker`, `apps/api`, and `apps/admin` with the correct values.
 
 **Add Your API Keys:**
 
@@ -423,7 +419,7 @@ TEMPORAL_TASK_QUEUE=rotation-detector
 TEMPORAL_ADDRESS=localhost:7233
 ```
 
-**Note:** The API app (`apps/api`) uses the same Supabase and Temporal configuration from `apps/temporal-worker`. The `sync-api-env.sh` script handles this automatically, or you can manually copy the `.env.local` file.
+**Note:** The `sync-supabase-env.sh` and `sync-temporal-env.sh` scripts automatically configure all apps (`temporal-worker`, `api`, and `admin`) with the correct environment variables.
 
 ### Build TypeScript
 

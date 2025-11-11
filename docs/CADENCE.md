@@ -322,6 +322,8 @@ Dataset='IEX_HIST' AND ExecutionStatus='Failed'
 RunKind='backfill'
 ```
 
+**Note:** All queries must specify `--namespace ird` when using the Temporal CLI.
+
 ---
 
 ## Rate Limiting Considerations

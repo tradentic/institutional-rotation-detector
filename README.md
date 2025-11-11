@@ -80,9 +80,8 @@ temporal server start-dev
 ./tools/setup-temporal-attributes.sh
 
 # Sync environment variables automatically
-./tools/sync-supabase-env.sh   # Extracts Supabase credentials
-./tools/sync-temporal-env.sh   # Configures Temporal settings
-./tools/sync-api-env.sh        # Syncs API config
+./tools/sync-supabase-env.sh   # Extracts Supabase credentials to all apps
+./tools/sync-temporal-env.sh   # Configures Temporal settings for all apps
 
 cd apps/temporal-worker
 nano .env.local
