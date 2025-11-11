@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createSupabaseClient } from '../lib/supabase.ts';
-import { createSecClient } from '../lib/secClient.ts';
+import { createSupabaseClient } from '../lib/supabase.js';
+import { createSecClient } from '../lib/secClient.js';
 
 export type Month = { month: string };
 

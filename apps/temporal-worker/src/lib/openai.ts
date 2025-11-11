@@ -230,7 +230,7 @@ export async function createResponse(
   // Call the Responses API
   const response = await openai.post('/v1/responses', {
     body: requestBody,
-  });
+  }) as Response;
 
   const data = await response.json() as any;
 

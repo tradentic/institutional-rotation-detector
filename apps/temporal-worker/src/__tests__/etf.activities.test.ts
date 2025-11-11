@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseIsharesAsOf, parseIsharesHoldings } from '../activities/etf.activities.ts';
+import { parseIsharesAsOf, parseIsharesHoldings } from '../activities/etf.activities.js';
 
 describe('iShares holdings parsing', () => {
   test('extracts as-of date from CSV header', () => {

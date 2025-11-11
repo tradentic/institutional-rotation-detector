@@ -8,7 +8,7 @@ import {
   getQuarterEnd,
   isQuarterEndEOW,
   tradingDaysUntilQuarterEnd,
-} from '../lib/tradingCalendar.ts';
+} from '../lib/tradingCalendar.js';
 
 describe('tradingCalendar', () => {
   describe('isTradingDay', () => {

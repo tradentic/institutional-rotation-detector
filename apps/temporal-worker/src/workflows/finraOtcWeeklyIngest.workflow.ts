@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.ts';
+import { upsertWorkflowSearchAttributes } from './utils.js';
 import type {
   FinraOtcWeeklyInput,
   FinraOtcWeeklyResult,
-} from '../activities/finra.activities.ts';
+} from '../activities/finra.activities.js';
 
 const activities = proxyActivities<{
   fetchOtcWeeklyVenue: (input: FinraOtcWeeklyInput) => Promise<FinraOtcWeeklyResult>;

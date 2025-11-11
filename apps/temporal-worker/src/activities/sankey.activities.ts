@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { createSupabaseClient } from '../lib/supabase.ts';
+import { createSupabaseClient } from '../lib/supabase.js';
 
 export interface FlowDelta {
   entityId: string | null;

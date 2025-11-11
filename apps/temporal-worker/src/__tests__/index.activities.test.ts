@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import { indexPenalty, batchIndexPenalty, persistIndexPenalty } from '../activities/index.activities.ts';
+import { indexPenalty, batchIndexPenalty, persistIndexPenalty } from '../activities/index.activities.js';
 
 // Mock Supabase client
 const mockSupabase = {

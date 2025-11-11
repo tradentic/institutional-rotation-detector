@@ -1,6 +1,6 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.ts';
-import type { EventStudyResult } from '../activities/prices.activities.ts';
+import { upsertWorkflowSearchAttributes } from './utils.js';
+import type { EventStudyResult } from '../activities/prices.activities.js';
 
 const { eventStudy } = proxyActivities<{
   eventStudy: (anchorDate: string, cik: string) => Promise<EventStudyResult>;

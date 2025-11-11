@@ -106,7 +106,7 @@ export class GPT5Client implements AIClient {
     // Call GPT-5 Responses API
     const response = await this.openai.post('/v1/responses', {
       body: requestBody,
-    });
+    }) as Response;
 
     const data = await response.json() as any;
 

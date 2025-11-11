@@ -62,8 +62,13 @@ nano .env.local
 # - SEC_USER_AGENT=YourName your.email@domain.com
 # (Supabase and Temporal config already synced automatically)
 
-# Install & build
+# Install dependencies (required for both temporal-worker and openai-client lib)
+cd ../../libs/openai-client
 pnpm install
+cd ../../apps/temporal-worker
+pnpm install
+
+# Build
 pnpm run build
 
 # Start worker
@@ -122,7 +127,13 @@ All other values (Supabase, Temporal) are already configured automatically!
 ### 3. Start Worker
 
 ```bash
+# Install dependencies (required for both temporal-worker and openai-client lib)
+cd libs/openai-client
 pnpm install
+cd ../../apps/temporal-worker
+pnpm install
+
+# Build and start
 pnpm run build
 node dist/worker.js
 ```

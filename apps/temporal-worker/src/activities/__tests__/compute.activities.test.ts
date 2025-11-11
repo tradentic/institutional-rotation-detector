@@ -8,8 +8,8 @@ import {
   shortReliefV2,
   uhf,
   uptakeFromFilings,
-} from '../compute.activities.ts';
-import { computeRotationScore } from '../../lib/scoring.ts';
+} from '../compute.activities.js';
+import { computeRotationScore } from '../../lib/scoring.js';
 
 type Row = Record<string, any>;
 

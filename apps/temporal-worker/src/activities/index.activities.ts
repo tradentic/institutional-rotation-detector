@@ -1,10 +1,10 @@
-import { createSupabaseClient } from '../lib/supabase.ts';
+import { createSupabaseClient } from '../lib/supabase.js';
 
 // Re-export Form4 activities
-export * from './form4.activities.ts';
+export * from './form4.activities.js';
 
 // Re-export Options activities
-export * from './options.activities.ts';
+export * from './options.activities.js';
 
 export interface IndexPenaltyInput {
   filingDate: string;
