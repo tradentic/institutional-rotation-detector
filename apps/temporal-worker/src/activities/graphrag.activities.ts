@@ -119,19 +119,18 @@ Key relations: ${facts
     .join('; ')}
 Write two paragraphs highlighting the drivers. Cite accessions if present.`;
 
-  const client = createGPT5Client();
-  const text = await runResponses({
-    client,
-    input: {
-      model: 'gpt-4.1',
-      input: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    },
+  // Use modern API with explicit configuration
+  const client = createClient({ model: 'gpt-5-mini' });
+
+  const response = await client.createResponse({
+    input: prompt,
+    reasoning: { effort: 'minimal' }, // Simple summarization needs minimal effort
+    text: { verbosity: 'low' }, // Concise output for summaries
+    max_output_tokens: 500,
   });
+
+  const text = response.output_text;
+
   const update = await supabase
     .from('graph_communities')
     .update({ summary: text || community.summary })
