@@ -1,0 +1,39 @@
+{
+  "name": "@rotation-detector/admin",
+  "version": "1.0.0",
+  "description": "Next.js 15 Admin Application for Institutional Rotation Detector",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^15.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@temporalio/client": "^1.13.1",
+    "@supabase/supabase-js": "^2.80.0",
+    "zod": "^3.22.4",
+    "date-fns": "^3.0.6",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.1",
+    "lucide-react": "^0.344.0",
+    "@radix-ui/react-slot": "^1.0.2",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.24",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.3",
+    "tailwindcss": "^3.4.1",
+    "postcss": "^8.4.35",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^15.0.3"
+  }
+}
