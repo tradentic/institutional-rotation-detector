@@ -30,28 +30,34 @@ Guide for contributing to the Institutional Rotation Detector project.
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# Install dependencies
-cd apps/temporal-worker
+# Install dependencies (from repo root - installs all apps and libs)
 pnpm install
 
-# Set up environment
-cp .env.example .env
-# Edit .env with your credentials
+# Install Supabase and Temporal CLIs
+brew install supabase/tap/supabase temporal
 
-# Set up database
-psql -d rotation_detector -f db/migrations/001_init.sql
-psql -d rotation_detector -f db/migrations/002_indexes.sql
-psql -d rotation_detector -f db/migrations/010_graphrag_init.sql
-psql -d rotation_detector -f db/migrations/011_graphrag_indexes.sql
+# Start Supabase (Terminal 1)
+supabase start
 
-# Start Temporal dev server
+# Apply all database migrations via Supabase CLI
+supabase db reset
+
+# Sync environment variables to all apps
+./tools/sync-supabase-env.sh
+./tools/sync-temporal-env.sh
+
+# Add your API keys to apps/temporal-worker/.env.local
+# - OPENAI_API_KEY
+# - SEC_USER_AGENT
+
+# Start Temporal dev server (Terminal 2)
 temporal server start-dev
 
 # Create search attributes
 ./tools/setup-temporal-attributes.sh
 
-# Build project
-pnpm run build
+# Build project (from repo root)
+pnpm build
 
 # Run tests
 pnpm test
@@ -123,15 +129,21 @@ temporal server start-dev
 
 **Terminal 2: Worker**
 ```bash
+# Build from repo root
+pnpm run build:worker
+
+# Start worker
 cd apps/temporal-worker
-npm run build
 node dist/worker.js
 ```
 
 **Terminal 3: Tests**
 ```bash
-cd apps/temporal-worker
-npm test -- --watch
+# Run tests from repo root
+pnpm test
+
+# Or run in watch mode
+pnpm test --watch
 ```
 
 ---
@@ -729,11 +741,14 @@ Follow Semantic Versioning (semver):
 
 ### Adding a Database Table
 
-1. Create migration: `db/migrations/00X_description.sql`
-2. Add TypeScript interface in `src/lib/schema.ts`
-3. Update documentation in `docs/DATA_MODEL.md`
-4. Create indexes in separate migration if needed
-5. Test migration on dev database
+1. Create migration: `supabase migration new description`
+2. Edit the generated migration file in `supabase/migrations/`
+3. Add TypeScript interface in `apps/temporal-worker/src/lib/schema.ts`
+4. Apply migration: `supabase db reset`
+5. Update documentation in `docs/DATA_MODEL.md`
+6. Create indexes in the same or separate migration if needed
+
+**Important:** Always use `supabase migration new` and `supabase db reset` - never manually create or run migrations with psql.
 
 ### Adding an API Endpoint
 
