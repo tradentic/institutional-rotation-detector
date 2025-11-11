@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@libs/openai-client": "workspace:*",
     "@supabase/supabase-js": "^2.43.4",
     "@temporalio/activity": "^1.10.6",
     "@temporalio/client": "^1.10.6",

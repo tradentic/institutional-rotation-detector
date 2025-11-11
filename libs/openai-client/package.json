@@ -1,5 +1,5 @@
 {
-  "name": "@libs/openai-gpt5",
+  "name": "@libs/openai-client",
   "version": "1.0.0",
   "description": "Shared OpenAI GPT-5 client library with CoT session management and E2B integration",
   "type": "module",
