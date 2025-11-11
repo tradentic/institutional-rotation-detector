@@ -513,22 +513,22 @@ These must be created before running workflows:
 
 **By ticker:**
 ```bash
-temporal workflow list --query 'Ird_Ticker="AAPL"'
+temporal workflow list --namespace ird --query 'Ticker="AAPL"'
 ```
 
 **By run kind:**
 ```bash
-temporal workflow list --query 'Ird_RunKind="backfill"'
+temporal workflow list --namespace ird --query 'RunKind="backfill"'
 ```
 
 **By date range:**
 ```bash
-temporal workflow list --query 'Ird_PeriodEnd >= "2024-01-01T00:00:00Z" AND Ird_PeriodEnd <= "2024-12-31T23:59:59Z"'
+temporal workflow list --namespace ird --query 'PeriodEnd >= "2024-01-01T00:00:00Z" AND PeriodEnd <= "2024-12-31T23:59:59Z"'
 ```
 
 **Complex query:**
 ```bash
-temporal workflow list --query 'Ird_Ticker="AAPL" AND Ird_RunKind="daily" AND Ird_WindowKey="2024Q1"'
+temporal workflow list --namespace ird --query 'Ticker="AAPL" AND RunKind="daily" AND WindowKey="2024Q1"'
 ```
 
 ---

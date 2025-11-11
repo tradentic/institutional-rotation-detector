@@ -4,9 +4,8 @@
  * Extends the Temporal SDK's WorkflowSearchAttributes interface
  * with project-specific custom search attributes.
  *
- * All attributes use the "Ird_" namespace prefix (Pascal case) to identify
- * them as belonging to the Institutional Rotation Detector project and
- * prevent conflicts with other projects sharing the same Temporal namespace.
+ * These attributes are registered in the dedicated "ird" Temporal namespace,
+ * providing isolation from other projects without requiring attribute name prefixes.
  *
  * These attributes must be registered in Temporal before use.
  * See: tools/setup-temporal-attributes.sh
@@ -17,25 +16,25 @@
 
 declare module '@temporalio/workflow' {
   interface WorkflowSearchAttributes {
-    // Core rotation detection attributes (namespaced with Ird_ prefix)
-    Ird_Ticker?: string[];
-    Ird_CIK?: string[];
-    Ird_FilerCIK?: string[];
-    Ird_Form?: string[];
-    Ird_Accession?: string[];
-    Ird_PeriodEnd?: Date[];
-    Ird_WindowKey?: string[];
-    Ird_BatchId?: string[];
-    Ird_RunKind?: string[];
+    // Core rotation detection attributes
+    Ticker?: string[];
+    CIK?: string[];
+    FilerCIK?: string[];
+    Form?: string[];
+    Accession?: string[];
+    PeriodEnd?: Date[];
+    WindowKey?: string[];
+    BatchId?: string[];
+    RunKind?: string[];
 
-    // Microstructure data attributes (namespaced with Ird_ prefix)
-    Ird_Symbol?: string[];
-    Ird_Dataset?: string[];
-    Ird_Granularity?: string[];
-    Ird_WeekEnd?: Date[];
-    Ird_TradeDate?: Date[];
-    Ird_SettlementDate?: Date[];
-    Ird_Provenance?: string[];
+    // Microstructure data attributes
+    Symbol?: string[];
+    Dataset?: string[];
+    Granularity?: string[];
+    WeekEnd?: Date[];
+    TradeDate?: Date[];
+    SettlementDate?: Date[];
+    Provenance?: string[];
   }
 }
 

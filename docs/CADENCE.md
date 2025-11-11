@@ -313,14 +313,16 @@ All microstructure workflows set search attributes for monitoring:
 **Query Examples:**
 ```sql
 -- Find all FINRA OTC ingestion runs for a specific week
-Ird_Dataset='FINRA_OTC' AND Ird_WeekEnd='2024-11-03'
+Dataset='FINRA_OTC' AND WeekEnd='2024-11-03'
 
 -- Find failed IEX ingestion runs
-Ird_Dataset='IEX_HIST' AND ExecutionStatus='Failed'
+Dataset='IEX_HIST' AND ExecutionStatus='Failed'
 
 -- Find all backfill runs
-Ird_RunKind='backfill'
+RunKind='backfill'
 ```
+
+**Note:** All queries must specify `--namespace ird` when using the Temporal CLI.
 
 ---
 

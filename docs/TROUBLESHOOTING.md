@@ -421,7 +421,7 @@ temporal workflow cancel --workflow-id <id>
 
 **Symptoms:**
 ```
-Error: search attribute "Ird_Ticker" is not defined
+Error: search attribute "Ticker" is not defined
 ```
 
 **Solutions:**
@@ -431,7 +431,7 @@ Error: search attribute "Ird_Ticker" is not defined
 ./tools/setup-temporal-attributes.sh
 
 # Verify
-temporal operator search-attribute list --namespace default
+temporal operator search-attribute list --namespace ird
 ```
 
 **2. Upsert in workflow:**
@@ -454,11 +454,14 @@ export async function myWorkflow(input: Input) {
 
 **3. Query syntax:**
 ```bash
-# Correct - Note the Ird_ namespace prefix
-temporal workflow list --query 'Ird_Ticker="AAPL"'
+# Correct - Must specify namespace
+temporal workflow list --namespace ird --query 'Ticker="AAPL"'
 
-# Incorrect
-temporal workflow list --query 'Ird_Ticker=AAPL'  # Missing quotes
+# Incorrect - Missing namespace
+temporal workflow list --query 'Ticker="AAPL"'
+
+# Incorrect - Missing quotes
+temporal workflow list --namespace ird --query 'Ticker=AAPL'
 ```
 
 ---

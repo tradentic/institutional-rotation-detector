@@ -15,7 +15,7 @@ error() { echo "[sync-temporal-env] ERROR: $*" >&2; }
 
 # Default Temporal configuration for local development
 TEMPORAL_ADDRESS="${TEMPORAL_ADDRESS:-localhost:7233}"
-TEMPORAL_NAMESPACE="${TEMPORAL_NAMESPACE:-default}"
+TEMPORAL_NAMESPACE="${TEMPORAL_NAMESPACE:-ird}"
 TEMPORAL_TASK_QUEUE="${TEMPORAL_TASK_QUEUE:-rotation-detector}"
 
 log "Using Temporal configuration:"
