@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase.ts';
-import { createOpenAIClient, runResponses } from '../lib/openai.ts';
+import { createGPT5Client, runResponses } from '@libs/openai-client';
 
 export interface BundleForSynthesisInput {
   edgeIds: string[];
@@ -103,7 +103,7 @@ export async function synthesizeWithOpenAI(input: SynthesizeInput): Promise<Synt
   if (input.bundle.edges.length === 0) {
     return { explanationId: randomUUID(), content: 'No edges supplied for explanation.', accessions: [] };
   }
-  const client = createOpenAIClient();
+  const client = createGPT5Client();
   const accessions = input.bundle.filings.map((f) => f.accession);
   const prompt = `You explain investor rotation edges using provided data.
 Edges: ${input.bundle.edges

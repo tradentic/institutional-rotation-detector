@@ -1,0 +1,36 @@
+{
+  "name": "@libs/openai-gpt5",
+  "version": "1.0.0",
+  "description": "Shared OpenAI GPT-5 client library with CoT session management and E2B integration",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "openai",
+    "gpt-5",
+    "chain-of-thought",
+    "cot",
+    "e2b",
+    "responses-api"
+  ],
+  "author": "Tradentic",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "openai": "^4.54.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "openai": "^4.0.0"
+  }
+}

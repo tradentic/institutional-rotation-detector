@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../lib/supabase.ts';
-import { createOpenAIClient } from '../lib/openai.ts';
 import { createSecClient } from '../lib/secClient.ts';
+import { runResponse } from '@libs/openai-client';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.
@@ -139,8 +139,7 @@ export async function createClusterSummary(
 
   if (provError) throw provError;
 
-  // Generate narrative summary
-  const openai = createOpenAIClient();
+  // Generate narrative summary using GPT-5
   const prompt = `Summarize this institutional rotation cluster for an investor audience:
 
 Cluster ID: ${input.clusterId}
@@ -163,13 +162,14 @@ Key filings: ${provenance
 
 Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4',
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 300,
+  // Use Responses API (gpt-5-mini for simple summarization)
+  const summary = await runResponse({
+    model: 'gpt-5-mini',
+    prompt,
+    effort: 'minimal',
+    verbosity: 'low',
+    maxTokens: 300,
   });
-
-  const summary = response.choices[0]?.message?.content ?? 'No summary generated.';
 
   // Store as a graph node
   const nodeId = `cluster:${input.clusterId}`;
