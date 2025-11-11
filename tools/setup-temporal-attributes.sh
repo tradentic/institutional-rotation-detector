@@ -4,6 +4,22 @@ set -e
 echo "🔍 Setting up Temporal search attributes..."
 echo ""
 
+# Add Temporal CLI to PATH if not already present
+export PATH="$PATH:/root/.temporalio/bin"
+
+# Check if temporal CLI is available
+if ! command -v temporal &> /dev/null; then
+    echo "❌ Temporal CLI not found!"
+    echo ""
+    echo "📥 Please install Temporal CLI first:"
+    echo "   curl -sSf https://temporal.download/cli.sh | sh"
+    echo ""
+    echo "   Then add to PATH:"
+    echo "   export PATH=\"\$PATH:/root/.temporalio/bin\""
+    echo ""
+    exit 1
+fi
+
 # Configuration
 TEMPORAL_ADDRESS="${TEMPORAL_ADDRESS:-localhost:7233}"
 TEMPORAL_NAMESPACE="${TEMPORAL_NAMESPACE:-default}"
@@ -16,7 +32,14 @@ RETRIES=0
 until temporal server health --address "${TEMPORAL_ADDRESS}" 2>/dev/null; do
   if [ $RETRIES -ge $MAX_RETRIES ]; then
     echo "❌ Temporal server did not become ready after ${MAX_RETRIES} attempts"
-    echo "   Make sure Temporal is running: temporal server start-dev"
+    echo ""
+    echo "💡 Make sure Temporal server is running:"
+    echo "   export PATH=\"\$PATH:/root/.temporalio/bin\""
+    echo "   temporal server start-dev"
+    echo ""
+    echo "   Or check if it's running on a different address:"
+    echo "   netstat -tlnp | grep 7233"
+    echo ""
     exit 1
   fi
   echo "   Temporal not ready, waiting... (attempt $((RETRIES+1))/${MAX_RETRIES})"
