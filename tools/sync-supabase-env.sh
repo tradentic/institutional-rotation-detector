@@ -38,18 +38,27 @@ fi
 # Extract values from env format (KEY="value")
 # Using sed to extract the value between quotes
 SUPABASE_URL=$(echo "$SUPABASE_ENV" | grep "^API_URL=" | sed 's/^API_URL="\(.*\)"$/\1/')
-SUPABASE_ANON_KEY=$(echo "$SUPABASE_ENV" | grep "^ANON_KEY=" | sed 's/^ANON_KEY="\(.*\)"$/\1/')
-SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_ENV" | grep "^SERVICE_ROLE_KEY=" | sed 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/')
 DATABASE_URL=$(echo "$SUPABASE_ENV" | grep "^DB_URL=" | sed 's/^DB_URL="\(.*\)"$/\1/')
+
+# Try new key names first (PUBLISHABLE_KEY, SECRET_KEY), fall back to old names (ANON_KEY, SERVICE_ROLE_KEY)
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_ENV" | grep "^PUBLISHABLE_KEY=" | sed 's/^PUBLISHABLE_KEY="\(.*\)"$/\1/')
+if [[ -z "$SUPABASE_ANON_KEY" ]]; then
+  SUPABASE_ANON_KEY=$(echo "$SUPABASE_ENV" | grep "^ANON_KEY=" | sed 's/^ANON_KEY="\(.*\)"$/\1/')
+fi
+
+SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_ENV" | grep "^SECRET_KEY=" | sed 's/^SECRET_KEY="\(.*\)"$/\1/')
+if [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+  SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_ENV" | grep "^SERVICE_ROLE_KEY=" | sed 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/')
+fi
 
 # Validate extracted values
 if [[ -z "$SUPABASE_URL" ]] || [[ -z "$SUPABASE_ANON_KEY" ]] || [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
   error "Failed to extract Supabase credentials from 'supabase status -o env'"
   error ""
-  error "Expected output format:"
+  error "Expected output format (new or old):"
   error '  API_URL="http://..."'
-  error '  ANON_KEY="eyJ..."'
-  error '  SERVICE_ROLE_KEY="eyJ..."'
+  error '  PUBLISHABLE_KEY="sb_publishable_..." (or ANON_KEY="eyJ...")'
+  error '  SECRET_KEY="sb_secret_..." (or SERVICE_ROLE_KEY="eyJ...")'
   error '  DB_URL="postgresql://..."'
   error ""
   error "Actual output:"
