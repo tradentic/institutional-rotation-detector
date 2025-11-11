@@ -1,5 +1,11 @@
 import { NextRequest } from 'next/server';
 import { getTemporalClient } from '@/lib/temporal-client';
+import {
+  parseHistoryEvents,
+  EventCategory,
+  getDefaultCategories,
+  ParsedEvent,
+} from '@/lib/temporal-events';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,11 +16,11 @@ function formatTime(date: Date) {
 }
 
 // Helper to calculate progress percentage based on status
-function calculateProgress(status: string, historyLength: number): number {
+function calculateProgress(status: string, historyLength: number, totalEstimatedEvents: number = 100): number {
   switch (status) {
     case 'RUNNING':
-      // Estimate progress based on history length (rough approximation)
-      return Math.min(historyLength * 2, 95);
+      // Calculate percentage based on history length vs estimated total
+      return Math.min(Math.round((historyLength / totalEstimatedEvents) * 100), 95);
     case 'COMPLETED':
       return 100;
     case 'FAILED':
@@ -32,6 +38,13 @@ export async function GET(request: NextRequest) {
   if (!workflowId) {
     return new Response('Missing workflow ID', { status: 400 });
   }
+
+  // Parse event category filters from query params
+  // Format: ?categories=workflow,activity,timer
+  const categoriesParam = request.nextUrl.searchParams.get('categories');
+  const enabledCategories: EventCategory[] = categoriesParam
+    ? (categoriesParam.split(',') as EventCategory[])
+    : getDefaultCategories();
 
   // Create a ReadableStream for SSE
   const stream = new ReadableStream({
@@ -52,15 +65,58 @@ export async function GET(request: NextRequest) {
         sendEvent({
           type: 'connected',
           workflowId,
-          message: 'Connected to workflow stream',
+          message: `Connected to workflow stream (filters: ${enabledCategories.join(', ')})`,
           timestamp: formatTime(new Date()),
         });
 
-        // Poll workflow status
+        // Track last seen event ID to avoid sending duplicates
+        let lastEventId = 0;
+
+        // Poll workflow history for new events
         const pollInterval = setInterval(async () => {
           try {
             const description = await handle.describe();
-            const progress = calculateProgress(description.status.name, description.historyLength);
+
+            // Fetch workflow history
+            // Note: For very large workflows, you might want to paginate or only fetch recent events
+            const history = handle.fetchHistory();
+            const historyEvents: any[] = [];
+
+            for await (const event of history) {
+              historyEvents.push(event);
+            }
+
+            // Parse new events (only those we haven't seen yet)
+            const newEvents = historyEvents.filter((e) => e.eventId > lastEventId);
+
+            if (newEvents.length > 0) {
+              const parsedEvents = parseHistoryEvents(newEvents, enabledCategories);
+
+              // Send each parsed event as a log entry
+              for (const event of parsedEvents) {
+                sendEvent({
+                  type: 'log',
+                  workflowId,
+                  level: event.level,
+                  message: event.message,
+                  timestamp: formatTime(event.timestamp),
+                  eventId: event.eventId,
+                  eventType: event.eventType,
+                  category: event.category,
+                  details: event.details,
+                });
+              }
+
+              // Update last seen event ID
+              lastEventId = Math.max(...newEvents.map((e) => e.eventId));
+            }
+
+            // Send progress update
+            const progress = calculateProgress(
+              description.status.name,
+              description.historyLength,
+              description.historyLength + 20 // Rough estimate of remaining events
+            );
 
             sendEvent({
               type: 'progress',
@@ -72,19 +128,7 @@ export async function GET(request: NextRequest) {
               historyLength: description.historyLength,
             });
 
-            // Send activity updates (simulated for now - in real implementation,
-            // you'd need to query workflow history for actual activity info)
-            if (description.status.name === 'RUNNING') {
-              sendEvent({
-                type: 'log',
-                workflowId,
-                level: 'info',
-                message: `Processing... (history events: ${description.historyLength})`,
-                timestamp: formatTime(new Date()),
-              });
-            }
-
-            // If workflow is complete, close the stream
+            // If workflow is complete, send final event and close
             if (
               description.status.name === 'COMPLETED' ||
               description.status.name === 'FAILED' ||
@@ -106,6 +150,7 @@ export async function GET(request: NextRequest) {
             sendEvent({
               type: 'error',
               workflowId,
+              level: 'error',
               message: error instanceof Error ? error.message : 'Unknown error',
               timestamp: formatTime(new Date()),
             });
@@ -123,6 +168,7 @@ export async function GET(request: NextRequest) {
         sendEvent({
           type: 'error',
           workflowId,
+          level: 'error',
           message: error instanceof Error ? error.message : 'Failed to connect to workflow',
           timestamp: formatTime(new Date()),
         });

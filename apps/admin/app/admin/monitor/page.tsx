@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input';
 import { WorkflowProgress } from '@/components/monitor/workflow-progress';
 import { ConsoleOutput, type LogEntry } from '@/components/monitor/console-output';
 import { WorkflowList, type WorkflowInfo } from '@/components/monitor/workflow-list';
+import { EventFilterPanel } from '@/components/monitor/event-filter-panel';
+import { EventCategory, getDefaultCategories } from '@/lib/temporal-events';
 import { Plus } from 'lucide-react';
 
 export default function MonitorPage() {
@@ -13,6 +15,7 @@ export default function MonitorPage() {
   const [workflowInput, setWorkflowInput] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<EventCategory[]>(getDefaultCategories());
 
   // Simulate workflow discovery (in real implementation, query Temporal)
   useEffect(() => {
@@ -30,23 +33,30 @@ export default function MonitorPage() {
   useEffect(() => {
     const eventSources: EventSource[] = [];
 
+    // Build category filter query param
+    const categoriesParam = selectedCategories.join(',');
+
     monitoredWorkflows.forEach((workflowId) => {
-      const eventSource = new EventSource(`/api/workflows/stream?id=${workflowId}`);
+      const eventSource = new EventSource(
+        `/api/workflows/stream?id=${workflowId}&categories=${categoriesParam}`
+      );
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
 
-          // Add log entry
-          const logEntry: LogEntry = {
-            id: `${workflowId}-${Date.now()}-${Math.random()}`,
-            workflowId,
-            timestamp: data.timestamp || new Date().toTimeString().split(' ')[0],
-            level: data.type === 'error' ? 'error' : data.type === 'complete' ? 'success' : 'info',
-            message: data.message,
-          };
+          // Only create log entries for actual log events (not progress updates)
+          if (data.type === 'log' || data.type === 'error' || data.type === 'connected' || data.type === 'complete') {
+            const logEntry: LogEntry = {
+              id: `${workflowId}-${Date.now()}-${Math.random()}`,
+              workflowId,
+              timestamp: data.timestamp || new Date().toTimeString().split(' ')[0],
+              level: data.level || (data.type === 'error' ? 'error' : data.type === 'complete' ? 'success' : 'info'),
+              message: data.message,
+            };
 
-          setLogs((prev) => [...prev, logEntry]);
+            setLogs((prev) => [...prev, logEntry]);
+          }
 
           // Update workflow status
           if (data.type === 'complete' || data.type === 'error') {
@@ -69,7 +79,7 @@ export default function MonitorPage() {
     return () => {
       eventSources.forEach((es) => es.close());
     };
-  }, [monitoredWorkflows]);
+  }, [monitoredWorkflows, selectedCategories]); // Re-subscribe when categories change
 
   const handleAddWorkflow = () => {
     if (workflowInput && !monitoredWorkflows.includes(workflowInput)) {
@@ -102,6 +112,12 @@ export default function MonitorPage() {
           Real-time workflow execution monitoring and console output
         </p>
       </div>
+
+      {/* Event Filters */}
+      <EventFilterPanel
+        selectedCategories={selectedCategories}
+        onCategoriesChange={setSelectedCategories}
+      />
 
       {/* Add Workflow */}
       <div className="flex gap-2">
