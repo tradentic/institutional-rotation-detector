@@ -50,9 +50,8 @@ temporal server start-dev
 ./tools/setup-temporal-attributes.sh
 
 # Sync environment variables automatically
-./tools/sync-supabase-env.sh   # Syncs Supabase credentials to .env.local
-./tools/sync-temporal-env.sh   # Syncs Temporal config to .env.local
-./tools/sync-api-env.sh        # Syncs API config from temporal-worker
+./tools/sync-supabase-env.sh   # Syncs Supabase credentials to all apps
+./tools/sync-temporal-env.sh   # Syncs Temporal config to all apps
 
 # Add your API keys (required)
 cd apps/temporal-worker
@@ -100,9 +99,8 @@ Wait for devcontainer to build (3-5 minutes). The following starts automatically
 ### 2. Configure Environment
 
 **Environment variables are automatically synced!** The devcontainer setup runs:
-- `sync-supabase-env.sh` - Extracts Supabase credentials automatically
-- `sync-temporal-env.sh` - Configures Temporal settings automatically
-- `sync-api-env.sh` - Syncs API config from temporal-worker
+- `sync-supabase-env.sh` - Extracts Supabase credentials to all apps
+- `sync-temporal-env.sh` - Configures Temporal settings for all apps
 
 You only need to add your API keys:
 

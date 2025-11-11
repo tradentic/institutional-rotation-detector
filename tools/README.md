@@ -171,38 +171,6 @@ Configures Temporal connection settings with defaults for local development.
 
 ---
 
-#### `sync-api-env.sh`
-
-Syncs API app configuration from temporal-worker (they share the same environment).
-
-**Purpose:**
-- Keep API and temporal-worker configs in sync
-- Avoid duplicate manual configuration
-- Support both copy and symlink modes
-
-**Usage:**
-```bash
-# Copy .env.local from temporal-worker to api (default)
-./tools/sync-api-env.sh
-
-# Create a symlink instead (auto-sync on changes)
-./tools/sync-api-env.sh --symlink
-```
-
-**What it does:**
-- **Copy mode (default)**: Copies `apps/temporal-worker/.env.local` to `apps/api/.env.local`
-- **Symlink mode**: Creates symlink for automatic syncing
-
-**Requirements:**
-- `apps/temporal-worker/.env.local` must exist
-
-**When to use:**
-- After running `sync-supabase-env.sh` and `sync-temporal-env.sh`
-- When temporal-worker config changes (copy mode only)
-- Use `--symlink` for automatic syncing during development
-
----
-
 #### Complete Environment Setup Example
 
 ```bash
@@ -211,9 +179,8 @@ supabase start                    # Terminal 1
 temporal server start-dev         # Terminal 2
 
 # 2. Sync all environment variables (Terminal 3)
-./tools/sync-supabase-env.sh     # Extract Supabase credentials
-./tools/sync-temporal-env.sh     # Set Temporal defaults
-./tools/sync-api-env.sh          # Sync API from temporal-worker
+./tools/sync-supabase-env.sh     # Extract Supabase credentials to all apps
+./tools/sync-temporal-env.sh     # Set Temporal defaults for all apps
 
 # 3. Add your API keys (these can't be auto-detected)
 cd apps/temporal-worker
