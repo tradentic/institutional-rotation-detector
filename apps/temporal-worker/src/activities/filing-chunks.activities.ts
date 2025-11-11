@@ -139,7 +139,7 @@ export async function createClusterSummary(
 
   if (provError) throw provError;
 
-  // Generate narrative summary
+  // Generate narrative summary using GPT-5
   const openai = createOpenAIClient();
   const prompt = `Summarize this institutional rotation cluster for an investor audience:
 
@@ -163,13 +163,16 @@ Key filings: ${provenance
 
 Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4',
-    messages: [{ role: 'user', content: prompt }],
-    max_tokens: 300,
+  // Use GPT-5 Responses API (gpt-5-mini for simple summarization)
+  const { runResponse } = await import('../lib/openai.js');
+  const summary = await runResponse({
+    client: openai,
+    model: 'gpt-5-mini',
+    prompt,
+    effort: 'minimal',
+    verbosity: 'low',
+    maxTokens: 300,
   });
-
-  const summary = response.choices[0]?.message?.content ?? 'No summary generated.';
 
   // Store as a graph node
   const nodeId = `cluster:${input.clusterId}`;
