@@ -891,6 +891,20 @@ After your local environment is running:
 
 ---
 
+## GitHub Codespaces
+
+For Codespaces setup, see the [QUICK_START.md](../QUICK_START.md#github-codespaces-setup) guide.
+
+Codespaces automatically:
+- Installs all dependencies (`pnpm install`)
+- Builds the temporal worker (`pnpm run build:worker`)
+- Starts Supabase, Temporal, and Redis
+- Syncs environment variables
+
+You only need to add your `OPENAI_API_KEY` and `SEC_USER_AGENT` to `apps/temporal-worker/.env.local` and start the worker.
+
+---
+
 ## Related Documentation
 
 - [Setup Guide](SETUP.md) - Production setup
@@ -899,5 +913,7 @@ After your local environment is running:
 - [Troubleshooting](TROUBLESHOOTING.md) - Common issues
 
 ---
+
+**Last Updated**: 2025-11-11
 
 For questions or issues, see [main README](../README.md#support).

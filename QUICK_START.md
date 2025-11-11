@@ -110,26 +110,29 @@ pnpm run build:admin  # Build just admin UI
 
 Click "Code" → "Codespaces" → "Create codespace on main"
 
-Wait for devcontainer to build (3-5 minutes). The following starts automatically:
-- ✅ Supabase
-- ✅ Temporal server
-- ✅ Redis
-- ✅ Temporal search attributes setup
+Wait for devcontainer to build (3-5 minutes). **Everything is automated!** The setup:
 
-### 2. Configure Environment
+**✅ Services Started:**
+- Supabase (with migrations applied)
+- Temporal server
+- Redis
+- Temporal search attributes configured
 
-**Environment variables are automatically synced!** The devcontainer setup runs:
-- `sync-supabase-env.sh` - Extracts Supabase credentials to all apps
-- `sync-temporal-env.sh` - Configures Temporal settings for all apps
+**✅ Dependencies & Build:**
+- All workspace dependencies installed (`pnpm install`)
+- Temporal worker built and ready (`pnpm run build:worker`)
+- Environment variables synced to all apps
 
-You only need to add your API keys:
+### 2. Add Your API Keys
+
+The **only** manual step - add your API keys to `.env.local`:
 
 ```bash
 cd apps/temporal-worker
 nano .env.local
 ```
 
-Add these two values to `.env.local`:
+Add these two values:
 ```bash
 OPENAI_API_KEY=sk-your-key-here
 SEC_USER_AGENT=YourName your.email@domain.com
@@ -139,13 +142,10 @@ All other values (Supabase, Temporal) are already configured automatically!
 
 **Note:** The API app uses the same configuration from `apps/temporal-worker`, so you don't need a separate `.env.local` file for it.
 
-### 3. Build and Start Worker
+### 3. Start Worker
 
 ```bash
-# Build temporal worker (from repo root)
-pnpm run build:worker
-
-# Start worker
+# Worker is already built, just start it!
 cd apps/temporal-worker
 node dist/worker.js
 ```
