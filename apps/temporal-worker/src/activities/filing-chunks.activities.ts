@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../lib/supabase.ts';
-import { createOpenAIClient } from '../lib/openai.ts';
 import { createSecClient } from '../lib/secClient.ts';
+import { runResponse } from '@libs/openai-client';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.
@@ -164,7 +164,7 @@ Key filings: ${provenance
 Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
 
   // Use GPT-5 Responses API (gpt-5-mini for simple summarization)
-  const { runResponse } = await import('../lib/openai.js');
+  const { runResponse } = await import('../../../../libs/openai-gpt5/src/index.js');
   const summary = await runResponse({
     client: openai,
     model: 'gpt-5-mini',

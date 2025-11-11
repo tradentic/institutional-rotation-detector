@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase.ts';
-import { createOpenAIClient, runResponses } from '../lib/openai.ts';
+import { createGPT5Client, runResponses } from '@libs/openai-client';
 import { louvainLikeCommunities, topNodes } from '../lib/pagerank_louvain.ts';
 
 export interface ComputeCommunitiesInput {

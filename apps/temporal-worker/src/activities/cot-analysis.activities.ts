@@ -17,7 +17,7 @@ import {
   CoTSession,
   createAnalysisSession,
   createCodeSession,
-} from '../lib/cot-session.js';
+} from '../../../../libs/openai-gpt5/src/index.js';
 
 // ============================================================================
 // Example 1: Multi-Step Rotation Analysis
