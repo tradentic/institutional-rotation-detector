@@ -79,10 +79,10 @@ export async function GET(request: NextRequest) {
 
             // Fetch workflow history
             // Note: For very large workflows, you might want to paginate or only fetch recent events
-            const history = handle.fetchHistory();
+            const history = await handle.fetchHistory();
             const historyEvents: any[] = [];
 
-            for await (const event of history) {
+            for await (const event of history as any) {
               historyEvents.push(event);
             }
 
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
               description.status.name === 'COMPLETED' ||
               description.status.name === 'FAILED' ||
               description.status.name === 'TERMINATED' ||
-              description.status.name === 'CANCELED'
+              description.status.name === 'CANCELLED'
             ) {
               sendEvent({
                 type: 'complete',

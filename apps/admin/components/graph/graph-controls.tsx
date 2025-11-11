@@ -156,7 +156,7 @@ export function GraphControls({
           </div>
           {searchQuery && (
             <p className="text-xs text-gray-500 mt-1">
-              Searching for "{searchQuery}"...
+              Searching for &quot;{searchQuery}&quot;...
             </p>
           )}
         </div>

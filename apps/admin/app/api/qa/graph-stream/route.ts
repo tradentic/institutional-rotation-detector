@@ -307,7 +307,7 @@ async function generateCrossCommunityGraph(
         workflowId,
         data: {
           edge,
-          reason: `Position ${isIncrease ? 'increase' : 'decrease'} of ${Math.abs(edge.metadata.percentChange).toFixed(1)}%`,
+          reason: `Position ${isIncrease ? 'increase' : 'decrease'} of ${Math.abs(edge.metadata.percentChange ?? 0).toFixed(1)}%`,
         },
       };
       sendEvent(edgeEvent);

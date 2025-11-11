@@ -42,7 +42,7 @@ export function GraphVisualization({
   newEdgeIds = new Set(),
   animatingNodeIds = new Set(),
 }: GraphVisualizationProps) {
-  const fgRef = useRef<any>();
+  const fgRef = useRef<any>(null);
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);

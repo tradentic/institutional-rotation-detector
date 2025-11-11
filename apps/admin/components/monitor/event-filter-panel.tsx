@@ -170,7 +170,7 @@ export function EventFilterPanel({ selectedCategories, onCategoriesChange }: Eve
             {/* Warning if no categories selected */}
             {selectedCategories.length === 0 && (
               <div className="text-sm text-orange-600 bg-orange-50 p-3 rounded-lg border border-orange-200">
-                ⚠️ No event categories selected. You won't see any events in the console.
+                ⚠️ No event categories selected. You won&apos;t see any events in the console.
               </div>
             )}
 
@@ -179,7 +179,7 @@ export function EventFilterPanel({ selectedCategories, onCategoriesChange }: Eve
               JSON.stringify(selectedCategories.sort()) ===
                 JSON.stringify(getDefaultCategories().sort()) && (
                 <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-200">
-                  💡 Using default filters. Most useful events are shown. Enable "Other" to see
+                  💡 Using default filters. Most useful events are shown. Enable &quot;Other&quot; to see
                   low-level workflow task events.
                 </div>
               )}
