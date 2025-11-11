@@ -1,9 +1,11 @@
 /**
  * Chain of Thought (CoT) Session Manager
  *
- * First-class support for multi-turn GPT-5 conversations with CoT persistence.
+ * First-class support for multi-turn conversations with CoT persistence.
+ * Model-agnostic - works with any AIClient implementation (GPT-5, GPT-6, etc).
+ *
  * Critical for efficient agentic workflows that need to:
- * 1. Analyze data with GPT-5
+ * 1. Analyze data with AI
  * 2. Execute code with E2B on large datasets
  * 3. Continue reasoning with results WITHOUT re-reasoning from scratch
  *
@@ -16,7 +18,10 @@
  *
  * @example
  * ```typescript
- * const session = new CoTSession({ model: 'gpt-5' });
+ * import { createClient } from '../factory.js';
+ *
+ * const client = createClient({ model: 'gpt-5' });
+ * const session = new CoTSession({ client });
  *
  * // Turn 1: Initial analysis
  * const step1 = await session.respond('Analyze this dataset structure...');
@@ -31,32 +36,35 @@
  * ```
  */
 
-import OpenAI from 'openai';
-import {
-  GPT5Model,
+import type {
+  AIClient,
   ReasoningEffort,
   Verbosity,
   Tool,
-  ResponseCreateParams,
+  RequestParams,
   ResponseResult,
   ResponseItem,
   E2BCodeExecutionConfig,
-  createOpenAIClient,
-  createResponse,
-} from './openai.js';
-import { executeCode, handleCodeExecutionToolCall } from './e2b-executor.js';
+} from './types.js';
+import { executeCode, handleCodeExecutionToolCall } from './e2b.js';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export interface CoTSessionConfig {
-  model?: GPT5Model;
+  /**
+   * AI client (required) - create with createClient() from factory
+   */
+  client: AIClient;
+
+  /**
+   * Optional overrides (defaults from client if not provided)
+   */
   effort?: ReasoningEffort;
   verbosity?: Verbosity;
   systemPrompt?: string;
   maxTurns?: number;
-  client?: OpenAI;
   tools?: Tool[];
   e2b?: E2BCodeExecutionConfig;
 }
@@ -83,7 +91,7 @@ export interface CoTTurn {
 
 export interface CoTSessionState {
   sessionId: string;
-  model: GPT5Model;
+  model: string; // Model-agnostic (gpt-5, gpt-6, etc.)
   effort: ReasoningEffort;
   verbosity: Verbosity;
   systemPrompt?: string;
@@ -104,18 +112,18 @@ export interface CoTSessionState {
 
 export class CoTSession {
   private state: CoTSessionState;
-  private client: OpenAI;
+  private client: AIClient;
   private tools: Tool[];
   private e2bConfig?: E2BCodeExecutionConfig;
 
-  constructor(config: CoTSessionConfig = {}) {
-    this.client = config.client ?? createOpenAIClient();
+  constructor(config: CoTSessionConfig) {
+    this.client = config.client;
     this.tools = config.tools ?? [];
     this.e2bConfig = config.e2b;
 
     this.state = {
       sessionId: this.generateSessionId(),
-      model: config.model ?? 'gpt-5-mini',
+      model: this.client.getModel(),
       effort: config.effort ?? 'medium',
       verbosity: config.verbosity ?? 'medium',
       systemPrompt: config.systemPrompt,
@@ -165,8 +173,7 @@ export class CoTSession {
     const turnNumber = this.state.turns.length + 1;
 
     // Build request params
-    const params: ResponseCreateParams = {
-      model: this.state.model,
+    const params: RequestParams = {
       input: this.buildInput(input),
       reasoning: {
         effort: overrides.effort ?? this.state.effort,
@@ -180,8 +187,8 @@ export class CoTSession {
       e2b_execution: overrides.e2b_execution ?? this.e2bConfig,
     };
 
-    // Make request
-    const response = await createResponse(params, this.client);
+    // Make request (model-agnostic!)
+    const response = await this.client.createResponse(params);
 
     // Handle tool calls if present
     const toolCalls = await this.handleToolCalls(response);
@@ -221,8 +228,7 @@ export class CoTSession {
   ): Promise<ResponseResult> {
     const turnNumber = this.state.turns.length + 1;
 
-    const params: ResponseCreateParams = {
-      model: this.state.model,
+    const params: RequestParams = {
       input: this.buildInput(input),
       reasoning: { effort: overrides.effort ?? this.state.effort },
       text: { verbosity: overrides.verbosity ?? this.state.verbosity },
@@ -232,7 +238,7 @@ export class CoTSession {
       e2b_execution: overrides.e2b_execution ?? this.e2bConfig,
     };
 
-    const response = await createResponse(params, this.client);
+    const response = await this.client.createResponse(params);
 
     const toolCalls = await this.handleToolCalls(response);
 
@@ -383,7 +389,7 @@ export class CoTSession {
   // Private Methods
   // ============================================================================
 
-  private buildInput(userInput: string): ResponseCreateParams['input'] {
+  private buildInput(userInput: string): RequestParams['input'] {
     if (this.state.systemPrompt) {
       return [
         { role: 'system' as const, content: this.state.systemPrompt },
@@ -424,18 +430,27 @@ export class CoTSession {
 }
 
 // ============================================================================
-// Factory Functions
+// Factory Functions (Model-Agnostic)
 // ============================================================================
 
 /**
  * Create a CoT session optimized for data analysis workflows
+ *
+ * @example
+ * ```typescript
+ * import { createClient } from '../factory.js';
+ *
+ * const client = createClient({ model: 'gpt-5' });
+ * const session = createAnalysisSession({ client, enableE2B: true });
+ * ```
  */
 export function createAnalysisSession(config: {
+  client: AIClient;
   systemPrompt?: string;
   enableE2B?: boolean;
 }): CoTSession {
   return new CoTSession({
-    model: 'gpt-5',
+    client: config.client,
     effort: 'high',
     verbosity: 'high',
     systemPrompt: config.systemPrompt ?? 'You are an expert data analyst. Provide detailed, step-by-step analysis.',
@@ -445,12 +460,21 @@ export function createAnalysisSession(config: {
 
 /**
  * Create a CoT session optimized for fast, cost-effective tasks
+ *
+ * @example
+ * ```typescript
+ * import { createClient } from '../factory.js';
+ *
+ * const client = createClient({ model: 'gpt-5-mini' });
+ * const session = createFastSession({ client });
+ * ```
  */
 export function createFastSession(config: {
+  client: AIClient;
   systemPrompt?: string;
 }): CoTSession {
   return new CoTSession({
-    model: 'gpt-5-mini',
+    client: config.client,
     effort: 'minimal',
     verbosity: 'low',
     systemPrompt: config.systemPrompt,
@@ -459,13 +483,22 @@ export function createFastSession(config: {
 
 /**
  * Create a CoT session optimized for code generation and execution
+ *
+ * @example
+ * ```typescript
+ * import { createClient } from '../factory.js';
+ *
+ * const client = createClient({ model: 'gpt-5' });
+ * const session = createCodeSession({ client, enableE2B: true });
+ * ```
  */
 export function createCodeSession(config: {
+  client: AIClient;
   systemPrompt?: string;
   enableE2B?: boolean;
 }): CoTSession {
   return new CoTSession({
-    model: 'gpt-5',
+    client: config.client,
     effort: 'high',
     verbosity: 'high',
     systemPrompt: config.systemPrompt ?? 'You are an expert programmer. Write clean, efficient, well-documented code.',
@@ -482,21 +515,29 @@ export function createCodeSession(config: {
 
 /**
  * Restore a session from saved state
+ *
+ * @example
+ * ```typescript
+ * import { createClient } from '../factory.js';
+ *
+ * const client = createClient({ model: 'gpt-5-mini' });
+ * const savedState = await loadSessionState(sessionId);
+ * const session = restoreSession(savedState, client);
+ * ```
  */
 export function restoreSession(
   state: CoTSessionState,
-  client?: OpenAI
+  client: AIClient
 ): CoTSession {
   const session = new CoTSession({
-    model: state.model,
+    client,
     effort: state.effort,
     verbosity: state.verbosity,
     systemPrompt: state.systemPrompt,
-    client,
   });
 
-  // Restore state
-  session['state'] = { ...state };
+  // Restore state (override model from client)
+  session['state'] = { ...state, model: client.getModel() };
 
   return session;
 }

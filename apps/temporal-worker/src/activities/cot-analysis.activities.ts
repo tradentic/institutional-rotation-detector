@@ -17,7 +17,8 @@ import {
   CoTSession,
   createAnalysisSession,
   createCodeSession,
-} from '../../../../libs/openai-gpt5/src/index.js';
+  createClient,
+} from '../../../../libs/openai-client/src/index.js';
 
 // ============================================================================
 // Example 1: Multi-Step Rotation Analysis
@@ -78,8 +79,10 @@ export async function analyzeRotationPatterns(
     throw new Error('No rotation edges found for analysis');
   }
 
-  // Create CoT session for analysis
+  // Create client and CoT session for analysis
+  const client = createClient({ model: 'gpt-5' });
   const session = createAnalysisSession({
+    client,
     systemPrompt: 'You are an expert quantitative analyst specializing in institutional rotation patterns. Provide step-by-step analysis with statistical rigor.',
     enableE2B: true,
   });
@@ -199,8 +202,10 @@ export async function analyzeCorrelations(
     throw new Error('No price data found');
   }
 
-  // Create code session with E2B
+  // Create client and code session with E2B
+  const client = createClient({ model: 'gpt-5' });
   const session = createCodeSession({
+    client,
     systemPrompt: 'You are a quantitative analyst. Use Python to analyze financial data.',
     enableE2B: true,
   });
@@ -299,7 +304,9 @@ export interface ExploreDatasetResult {
 export async function exploreDataset(
   input: ExploreDatasetInput
 ): Promise<ExploreDatasetResult> {
+  const client = createClient({ model: 'gpt-5' });
   const session = createCodeSession({
+    client,
     systemPrompt: `You are a data scientist exploring a database.
 Table: ${input.tableName}
 Use SQL or Python to answer questions. Be thorough but concise.`,
@@ -378,7 +385,9 @@ export interface ExecuteWorkflowResult {
 export async function executeWorkflow(
   input: ExecuteWorkflowInput
 ): Promise<ExecuteWorkflowResult> {
+  const client = createClient({ model: 'gpt-5' });
   const session = createCodeSession({
+    client,
     systemPrompt: input.systemPrompt ?? 'You are an analytical assistant.',
     enableE2B: true,
   });

@@ -1,12 +1,13 @@
 /**
- * E2B Code Execution Module
+ * E2B Code Execution Module (Model-Agnostic)
  *
  * Optional module for executing Python code in sandboxed E2B environments.
- * This integrates with GPT-5's custom tools feature to enable code execution.
+ * This integrates with AI models' custom tools feature to enable code execution.
+ * Works with any AIClient implementation (GPT-5, GPT-6, etc).
  *
  * Usage:
  * 1. Set E2B_API_KEY environment variable
- * 2. Enable in ResponseCreateParams: e2b_execution: { enabled: true }
+ * 2. Enable in RequestParams: e2b_execution: { enabled: true }
  *
  * @see https://e2b.dev/docs
  */
@@ -27,7 +28,7 @@ export interface E2BSandboxConfig {
 /**
  * Execute Python code in an E2B sandbox
  *
- * This function is called when GPT-5 uses the code_exec custom tool.
+ * This function is called when the AI model uses the code_exec custom tool.
  * The code is executed in a secure, isolated Python environment.
  *
  * @param code - Python code to execute
@@ -77,12 +78,12 @@ export async function executeCode(
 }
 
 /**
- * Handle tool call from GPT-5 when code_exec tool is invoked
+ * Handle tool call when code_exec tool is invoked
  *
- * This processes the raw text input from GPT-5's custom tool and
+ * This processes the raw text input from the AI model's custom tool and
  * executes it in the E2B sandbox.
  *
- * @param toolInput - Raw Python code from GPT-5
+ * @param toolInput - Raw Python code from the AI model
  * @param config - E2B configuration
  * @returns Formatted execution result
  */

@@ -140,7 +140,6 @@ export async function createClusterSummary(
   if (provError) throw provError;
 
   // Generate narrative summary using GPT-5
-  const openai = createOpenAIClient();
   const prompt = `Summarize this institutional rotation cluster for an investor audience:
 
 Cluster ID: ${input.clusterId}
@@ -163,10 +162,8 @@ Key filings: ${provenance
 
 Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
 
-  // Use GPT-5 Responses API (gpt-5-mini for simple summarization)
-  const { runResponse } = await import('../../../../libs/openai-gpt5/src/index.js');
+  // Use Responses API (gpt-5-mini for simple summarization)
   const summary = await runResponse({
-    client: openai,
     model: 'gpt-5-mini',
     prompt,
     effort: 'minimal',

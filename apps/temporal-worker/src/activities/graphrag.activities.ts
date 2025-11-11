@@ -119,7 +119,7 @@ Key relations: ${facts
     .join('; ')}
 Write two paragraphs highlighting the drivers. Cite accessions if present.`;
 
-  const client = createOpenAIClient();
+  const client = createGPT5Client();
   const text = await runResponses({
     client,
     input: {

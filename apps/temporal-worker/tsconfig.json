@@ -11,8 +11,8 @@
     "skipLibCheck": true,
     "types": ["vitest/globals"],
     "paths": {
-      "@libs/openai-gpt5": ["../../libs/openai-gpt5/src/index.ts"],
-      "@libs/openai-gpt5/*": ["../../libs/openai-gpt5/src/*"]
+      "@libs/openai-client": ["../../libs/openai-client/src/index.ts"],
+      "@libs/openai-client/*": ["../../libs/openai-client/src/*"]
     }
   },
   "include": ["src/**/*"],
