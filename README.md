@@ -102,7 +102,7 @@ node dist/worker.js
 ```
 
 **See [QUICK_START.md](QUICK_START.md) for step-by-step instructions and troubleshooting.**
-**See [Local Development Guide](docs/LOCAL_DEVELOPMENT.md) for advanced configuration.**
+**See [Local Development Guide](docs/guides/LOCAL_DEVELOPMENT.md) for advanced configuration.**
 
 ### Cloud Deployment
 
@@ -135,7 +135,7 @@ pnpm build
 # - Kubernetes
 ```
 
-**See [Setup Guide](docs/SETUP.md) and [Deployment Guide](docs/DEPLOYMENT.md) for details.**
+**See [Setup Guide](docs/guides/SETUP.md) and [Deployment Guide](docs/operations/DEPLOYMENT.md) for details.**
 
 ### Run Your First Analysis
 
@@ -162,15 +162,22 @@ curl "http://localhost:3000/api/graph?ticker=AAPL&period=2024-01"
 institutional-rotation-detector/
 ├── apps/
 │   ├── api/              # REST API endpoints
+│   ├── admin/            # Admin UI
 │   └── temporal-worker/  # Temporal workflows and activities
-├── db/
-│   └── migrations/       # Database schema migrations
+├── libs/                 # Shared libraries
+│   └── openai-client/    # OpenAI integration
+├── supabase/
+│   └── migrations/       # Database schema migrations (20 migrations)
 ├── docs/                 # Detailed documentation
-│   ├── SETUP.md          # Installation and configuration guide
-│   ├── ARCHITECTURE.md   # System design and patterns
-│   ├── WORKFLOWS.md      # Temporal workflow reference
-│   └── ...
-└── tools/                # Utility scripts
+│   ├── index.md          # Documentation portal (Docusaurus-ready)
+│   ├── guides/           # Getting started guides
+│   ├── architecture/     # System design and patterns
+│   ├── features/         # Core features and algorithms
+│   ├── data/             # Data sources and APIs
+│   ├── operations/       # Deployment and ops
+│   ├── specs/            # Technical specifications
+│   └── internal/         # Internal/historical docs
+└── tools/                # Utility scripts and env sync
 ```
 
 ## Core Concepts
@@ -210,28 +217,30 @@ The system identifies institutional rotation through a multi-step process:
 
 ## Documentation
 
+📖 **[Complete Documentation Index](docs/index.md)** - Full documentation portal (Docusaurus-ready)
+
 ### Getting Started
-- **[Local Development](docs/LOCAL_DEVELOPMENT.md)** - Complete local setup with Supabase and Temporal
-- **[Setup Guide](docs/SETUP.md)** - Production installation and configuration
-- **[Quick Start Examples](docs/WORKFLOWS.md#running-workflows)** - Run your first workflows
+- **[Local Development](docs/guides/LOCAL_DEVELOPMENT.md)** - Complete local setup with Supabase and Temporal
+- **[Setup Guide](docs/guides/SETUP.md)** - Production installation and configuration
+- **[Quick Start Examples](docs/architecture/WORKFLOWS.md#running-workflows)** - Run your first workflows
 
 ### System Documentation
-- **[Architecture](docs/ARCHITECTURE.md)** - System design and component overview
-- **[Workflows](docs/WORKFLOWS.md)** - Temporal workflow reference and patterns
-- **[API Reference](docs/API.md)** - REST endpoint documentation
-- **[Data Model](docs/DATA_MODEL.md)** - Database schema and relationships
+- **[Architecture](docs/architecture/ARCHITECTURE.md)** - System design and component overview
+- **[Workflows](docs/architecture/WORKFLOWS.md)** - Temporal workflow reference and patterns
+- **[API Reference](docs/data/API.md)** - REST endpoint documentation
+- **[Data Model](docs/architecture/DATA_MODEL.md)** - Database schema and relationships
 
 ### Domain Knowledge
-- **[Rotation Detection](docs/ROTATION_DETECTION.md)** - Algorithm and methodology
-- **[Microstructure Layer](docs/MICROSTRUCTURE.md)** - Real-time flow detection with VPIN and broker attribution ([Technical Spec](docs/spec/MICROSTRUCTURE_TECHNICAL.md))
-- **[GraphRAG](docs/GRAPHRAG.md)** - Graph-based analysis and AI synthesis
-- **[Data Sources](docs/DATA_SOURCES.md)** - SEC EDGAR, UnusualWhales, FINRA, IEX, ETF integrations
-- **[UnusualWhales API Analysis](docs/unusualwhales-api-analysis.md)** - Comprehensive options flow endpoint analysis
+- **[Rotation Detection](docs/features/ROTATION_DETECTION.md)** - Algorithm and methodology
+- **[Microstructure Layer](docs/features/MICROSTRUCTURE.md)** - Real-time flow detection with VPIN and broker attribution ([Technical Spec](docs/specs/MICROSTRUCTURE_TECHNICAL.md))
+- **[GraphRAG](docs/features/GRAPHRAG.md)** - Graph-based analysis and AI synthesis
+- **[Data Sources](docs/data/DATA_SOURCES.md)** - SEC EDGAR, UnusualWhales, FINRA, IEX, ETF integrations
+- **[UnusualWhales API Analysis](docs/data/unusualwhales-api-analysis.md)** - Comprehensive options flow endpoint analysis
 
 ### Operations
-- **[Deployment](docs/DEPLOYMENT.md)** - Production deployment guide
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
-- **[Development](docs/DEVELOPMENT.md)** - Contributing and development guide
+- **[Deployment](docs/operations/DEPLOYMENT.md)** - Production deployment guide
+- **[Troubleshooting](docs/guides/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[Development](docs/guides/DEVELOPMENT.md)** - Contributing and development guide
 
 ## Technology Stack
 
@@ -253,7 +262,7 @@ The system identifies institutional rotation through a multi-step process:
 
 ## Contributing
 
-See [DEVELOPMENT.md](docs/DEVELOPMENT.md) (Phase 2) for contributing guidelines.
+See [DEVELOPMENT.md](docs/guides/DEVELOPMENT.md) for contributing guidelines.
 
 ## License
 
