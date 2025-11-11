@@ -6,6 +6,7 @@ import { GraphVisualization } from '@/components/graph/graph-visualization';
 import { GraphControls } from '@/components/graph/graph-controls';
 import { GraphLegend } from '@/components/graph/graph-legend';
 import { GraphStats } from '@/components/graph/graph-stats';
+import { GraphPlaybackControls, AnimationSpeed, GraphSnapshot } from '@/components/graph/graph-playback-controls';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -33,6 +34,19 @@ import {
   calculateGraphProgress,
   getProgressMessage,
 } from '@/lib/graph-streaming';
+import {
+  PlaybackState,
+  createInitialPlaybackState,
+  addEventToHistory,
+  seekToEvent,
+  resetPlayback,
+  togglePause,
+  setSpeed,
+  captureSnapshot,
+  loadSnapshot as loadPlaybackSnapshot,
+  exportSnapshot,
+  applySpeedToDelay,
+} from '@/lib/graph-playback';
 import { Network, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 interface QAWithGraphProps {
@@ -52,7 +66,10 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
   );
   const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set());
   const [newEdgeIds, setNewEdgeIds] = useState<Set<string>>(new Set());
+  const [playbackState, setPlaybackState] = useState<PlaybackState>(createInitialPlaybackState());
+  const [animationSpeed, setAnimationSpeed] = useState<AnimationSpeed>('medium');
   const disconnectRef = useRef<(() => void) | null>(null);
+  const eventQueueRef = useRef<GraphEvent[]>([]);
 
   // Determine if graph should be offered
   const shouldOfferGraph = shouldShowGraphVisualization(questions, category);
@@ -93,6 +110,15 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
   const handleGraphEvent = useCallback((event: GraphEvent) => {
     console.log('Graph event:', event.type, event.data);
 
+    // Add to playback history
+    setPlaybackState((prev) => addEventToHistory(prev, event));
+
+    // Check if paused - if so, queue event instead of processing
+    if (playbackState.isPaused) {
+      eventQueueRef.current.push(event);
+      return;
+    }
+
     // Apply event to incremental state
     setIncrementalState((prev) => applyGraphEvent(prev, event));
 
@@ -127,7 +153,7 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
     if (event.type === 'nodeAdded' && !showGraph) {
       setShowGraph(true);
     }
-  }, [showGraph]);
+  }, [showGraph, playbackState.isPaused]);
 
   // Finalize graph after streaming completes
   const finalizeGraph = useCallback(() => {
@@ -211,6 +237,58 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
       layout: getRecommendedLayout(graphType),
     });
   };
+
+  // Playback control handlers
+  const handlePauseResume = useCallback(() => {
+    setPlaybackState((prev) => togglePause(prev));
+  }, []);
+
+  const handleRestart = useCallback(() => {
+    setPlaybackState((prev) => resetPlayback(prev));
+    setIncrementalState(createInitialGraphState());
+    setNewNodeIds(new Set());
+    setNewEdgeIds(new Set());
+  }, []);
+
+  const handleSpeedChange = useCallback((speed: AnimationSpeed) => {
+    setAnimationSpeed(speed);
+    setPlaybackState((prev) => setSpeed(prev, speed));
+  }, []);
+
+  const handleSeek = useCallback((eventIndex: number) => {
+    const newState = seekToEvent(playbackState, eventIndex);
+    setPlaybackState(newState);
+    setIncrementalState(newState.graphState);
+  }, [playbackState]);
+
+  const handleCaptureSnapshot = useCallback(() => {
+    setPlaybackState((prev) =>
+      captureSnapshot(
+        prev,
+        `Snapshot: ${incrementalState.nodes.length} nodes, ${incrementalState.edges.length} edges`
+      )
+    );
+  }, [incrementalState]);
+
+  const handleLoadSnapshot = useCallback((snapshotId: string) => {
+    const newState = loadPlaybackSnapshot(playbackState, snapshotId);
+    setPlaybackState(newState);
+    setIncrementalState(newState.graphState);
+  }, [playbackState]);
+
+  const handleExportSnapshot = useCallback((snapshotId: string) => {
+    const snapshot = playbackState.snapshots.find((s) => s.id === snapshotId);
+    if (!snapshot) return;
+
+    const data = exportSnapshot(snapshot);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `graph-snapshot-${snapshot.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [playbackState.snapshots]);
 
   // If graph shouldn't be shown, just render results
   if (!shouldOfferGraph) {
@@ -304,6 +382,24 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
 
                 {/* Graph Controls */}
                 <div className="grid grid-cols-1 gap-4">
+                  {/* Playback Controls */}
+                  <GraphPlaybackControls
+                    isStreaming={isStreamingGraph}
+                    isPaused={playbackState.isPaused}
+                    onPauseResume={handlePauseResume}
+                    onRestart={handleRestart}
+                    animationSpeed={animationSpeed}
+                    onSpeedChange={handleSpeedChange}
+                    totalEvents={playbackState.events.length}
+                    currentEventIndex={playbackState.currentEventIndex}
+                    onSeek={handleSeek}
+                    canSeek={!isStreamingGraph && playbackState.events.length > 0}
+                    snapshots={playbackState.snapshots}
+                    onCaptureSnapshot={handleCaptureSnapshot}
+                    onLoadSnapshot={handleLoadSnapshot}
+                    onExportSnapshot={handleExportSnapshot}
+                  />
+
                   <GraphControls
                     graphState={displayGraphState}
                     onLayoutChange={handleLayoutChange}
