@@ -67,16 +67,19 @@ For a complete local development environment with Supabase and Temporal running 
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# 2. Install CLIs
+# 2. Install dependencies (all apps and libraries)
+pnpm install
+
+# 3. Install CLIs
 brew install supabase/tap/supabase temporal
 
-# 3. Start Supabase (Terminal 1)
+# 4. Start Supabase (Terminal 1)
 supabase start
 
-# 4. Start Temporal (Terminal 2)
+# 5. Start Temporal (Terminal 2)
 temporal server start-dev
 
-# 5. Setup & Start Worker (Terminal 3)
+# 6. Setup & Start Worker (Terminal 3)
 ./tools/setup-temporal-attributes.sh
 
 # Sync environment variables automatically
@@ -88,12 +91,11 @@ nano .env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
 
-# Install dependencies (required for both temporal-worker and openai-client lib)
-cd ../../libs/openai-client && pnpm install
-cd ../../apps/temporal-worker && pnpm install
-
 # Build and start
-pnpm run build
+cd ../..
+pnpm run build:worker
+
+cd apps/temporal-worker
 node dist/worker.js
 ```
 

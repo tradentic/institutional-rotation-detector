@@ -11,7 +11,16 @@ This guide will get you up and running in under 10 minutes.
 
 ## Local Development Setup
 
-### 1. Install CLIs
+### 1. Install Dependencies
+
+**Install workspace dependencies (from repo root):**
+```bash
+pnpm install
+```
+
+This installs all dependencies for all apps and libraries in the monorepo.
+
+### 2. Install CLIs
 
 **Supabase CLI:**
 ```bash
@@ -31,7 +40,7 @@ brew install temporal
 curl -sSf https://temporal.download/cli.sh | sh
 ```
 
-### 2. Start Services
+### 3. Start Services
 
 **Terminal 1 - Supabase:**
 ```bash
@@ -62,20 +71,16 @@ nano .env.local
 # - SEC_USER_AGENT=YourName your.email@domain.com
 # (Supabase and Temporal config already synced automatically)
 
-# Install dependencies (required for both temporal-worker and openai-client lib)
-cd ../../libs/openai-client
-pnpm install
-cd ../../apps/temporal-worker
-pnpm install
-
-# Build
-pnpm run build
+# Build temporal worker (from repo root)
+cd ../..
+pnpm run build:worker
 
 # Start worker
+cd apps/temporal-worker
 node dist/worker.js
 ```
 
-### 3. Verify Everything Works
+### 4. Verify Everything Works
 
 ```bash
 # In Terminal 4 - Test workflow
@@ -88,6 +93,16 @@ temporal workflow start \
 **Access UIs:**
 - Temporal UI: http://localhost:8233
 - Supabase Studio: http://localhost:54323
+
+---
+
+**💡 Pro Tip:** You can build all apps at once from the repo root:
+```bash
+pnpm run build        # Build all apps and libraries
+pnpm run build:worker # Build just temporal-worker
+pnpm run build:api    # Build just API
+pnpm run build:admin  # Build just admin UI
+```
 
 ## GitHub Codespaces Setup
 
@@ -124,17 +139,14 @@ All other values (Supabase, Temporal) are already configured automatically!
 
 **Note:** The API app uses the same configuration from `apps/temporal-worker`, so you don't need a separate `.env.local` file for it.
 
-### 3. Start Worker
+### 3. Build and Start Worker
 
 ```bash
-# Install dependencies (required for both temporal-worker and openai-client lib)
-cd libs/openai-client
-pnpm install
-cd ../../apps/temporal-worker
-pnpm install
+# Build temporal worker (from repo root)
+pnpm run build:worker
 
-# Build and start
-pnpm run build
+# Start worker
+cd apps/temporal-worker
 node dist/worker.js
 ```
 
@@ -213,10 +225,15 @@ temporal operator search-attribute list
 ### Worker
 
 ```bash
-# Rebuild
+# Rebuild from repo root
+pnpm run build:worker
+
+# Or rebuild from worker directory
+cd apps/temporal-worker
 pnpm run build
 
 # Run
+cd apps/temporal-worker  # if not already there
 node dist/worker.js
 
 # Run with environment variables
@@ -243,9 +260,12 @@ temporal server start-dev
 
 ### Worker errors - "missing activity"
 ```bash
-# Rebuild
+# Rebuild from root
+pnpm run build:worker
+
+# Or from worker directory
 cd apps/temporal-worker
-npm run build
+pnpm run build
 ```
 
 ### Database connection failed
