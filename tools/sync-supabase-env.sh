@@ -8,7 +8,7 @@ set -euo pipefail
 #        If not provided, syncs all known apps (temporal-worker, api)
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || cd "$HERE/.." && pwd)"
+ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || (cd "$HERE/.." && pwd))"
 
 log() { echo "[sync-supabase-env] $*"; }
 error() { echo "[sync-supabase-env] ERROR: $*" >&2; }
@@ -27,17 +27,35 @@ fi
 
 # Extract Supabase credentials from status
 log "Extracting Supabase credentials from 'supabase status'..."
-SUPABASE_STATUS=$(supabase status)
+SUPABASE_STATUS=$(supabase status 2>&1)
 
-SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep "API URL:" | awk '{print $3}')
-SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep "anon key:" | awk '{print $3}')
-SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep "service_role key:" | awk '{print $3}')
-DATABASE_URL=$(echo "$SUPABASE_STATUS" | grep "DB URL:" | awk '{print $3}')
+if [[ "${DEBUG:-false}" == "true" ]]; then
+  log "Raw supabase status output:"
+  echo "$SUPABASE_STATUS"
+  log "---"
+fi
+
+# Try to extract values with flexible pattern matching
+SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep -i "api url" | awk '{print $NF}')
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -i "anon key" | awk '{print $NF}')
+SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep -i "service_role key" | awk '{print $NF}')
+DATABASE_URL=$(echo "$SUPABASE_STATUS" | grep -i "db url" | awk '{print $NF}')
 
 # Validate extracted values
 if [[ -z "$SUPABASE_URL" ]] || [[ -z "$SUPABASE_ANON_KEY" ]] || [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
   error "Failed to extract Supabase credentials from 'supabase status'"
-  error "Please ensure Supabase is running properly"
+  error ""
+  error "Expected output format:"
+  error "  API URL: http://..."
+  error "  anon key: eyJ..."
+  error "  service_role key: eyJ..."
+  error "  DB URL: postgresql://..."
+  error ""
+  error "Actual output:"
+  echo "$SUPABASE_STATUS" | head -20
+  error ""
+  error "Tip: Run 'supabase status' manually to see the full output"
+  error "     Run with DEBUG=true for verbose output"
   exit 1
 fi
 
@@ -104,9 +122,11 @@ if [[ $# -gt 0 ]]; then
   update_env_file "$TARGET_DIR"
 else
   # Update all known app directories
+  log "Root directory: $ROOT"
   APPS=(
     "$ROOT/apps/temporal-worker"
     "$ROOT/apps/api"
+    "$ROOT/apps/admin"
   )
 
   for app_dir in "${APPS[@]}"; do

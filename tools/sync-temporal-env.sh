@@ -8,7 +8,7 @@ set -euo pipefail
 #        If not provided, syncs all known apps (temporal-worker, api)
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || cd "$HERE/.." && pwd)"
+ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || (cd "$HERE/.." && pwd))"
 
 log() { echo "[sync-temporal-env] $*"; }
 error() { echo "[sync-temporal-env] ERROR: $*" >&2; }
@@ -79,9 +79,11 @@ if [[ $# -gt 0 ]]; then
   update_env_file "$TARGET_DIR"
 else
   # Update all known app directories
+  log "Root directory: $ROOT"
   APPS=(
     "$ROOT/apps/temporal-worker"
     "$ROOT/apps/api"
+    "$ROOT/apps/admin"
   )
 
   for app_dir in "${APPS[@]}"; do
