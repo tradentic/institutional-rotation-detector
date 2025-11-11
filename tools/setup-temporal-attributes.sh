@@ -31,73 +31,73 @@ echo ""
 echo "📋 Creating search attributes in namespace '${TEMPORAL_NAMESPACE}'..."
 echo ""
 
-# Core rotation detection attributes (namespaced with ird_ prefix)
+# Core rotation detection attributes (namespaced with Ird_ prefix)
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Ticker --type Keyword 2>/dev/null || echo "  ✓ ird_Ticker (already exists)"
+  --name Ird_Ticker --type Keyword 2>/dev/null || echo "  ✓ Ird_Ticker (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_CIK --type Keyword 2>/dev/null || echo "  ✓ ird_CIK (already exists)"
+  --name Ird_CIK --type Keyword 2>/dev/null || echo "  ✓ Ird_CIK (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_FilerCIK --type Keyword 2>/dev/null || echo "  ✓ ird_FilerCIK (already exists)"
+  --name Ird_FilerCIK --type Keyword 2>/dev/null || echo "  ✓ Ird_FilerCIK (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Form --type Keyword 2>/dev/null || echo "  ✓ ird_Form (already exists)"
+  --name Ird_Form --type Keyword 2>/dev/null || echo "  ✓ Ird_Form (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Accession --type Keyword 2>/dev/null || echo "  ✓ ird_Accession (already exists)"
+  --name Ird_Accession --type Keyword 2>/dev/null || echo "  ✓ Ird_Accession (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_PeriodEnd --type Datetime 2>/dev/null || echo "  ✓ ird_PeriodEnd (already exists)"
+  --name Ird_PeriodEnd --type Datetime 2>/dev/null || echo "  ✓ Ird_PeriodEnd (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_WindowKey --type Keyword 2>/dev/null || echo "  ✓ ird_WindowKey (already exists)"
+  --name Ird_WindowKey --type Keyword 2>/dev/null || echo "  ✓ Ird_WindowKey (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_BatchId --type Keyword 2>/dev/null || echo "  ✓ ird_BatchId (already exists)"
+  --name Ird_BatchId --type Keyword 2>/dev/null || echo "  ✓ Ird_BatchId (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_RunKind --type Keyword 2>/dev/null || echo "  ✓ ird_RunKind (already exists)"
+  --name Ird_RunKind --type Keyword 2>/dev/null || echo "  ✓ Ird_RunKind (already exists)"
 
 echo ""
-echo "🔬 Microstructure search attributes (namespaced with ird_ prefix)..."
+echo "🔬 Microstructure search attributes (namespaced with Ird_ prefix)..."
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Symbol --type Keyword 2>/dev/null || echo "  ✓ ird_Symbol (already exists)"
+  --name Ird_Symbol --type Keyword 2>/dev/null || echo "  ✓ Ird_Symbol (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Dataset --type Keyword 2>/dev/null || echo "  ✓ ird_Dataset (already exists)"
+  --name Ird_Dataset --type Keyword 2>/dev/null || echo "  ✓ Ird_Dataset (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Granularity --type Keyword 2>/dev/null || echo "  ✓ ird_Granularity (already exists)"
+  --name Ird_Granularity --type Keyword 2>/dev/null || echo "  ✓ Ird_Granularity (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_WeekEnd --type Datetime 2>/dev/null || echo "  ✓ ird_WeekEnd (already exists)"
+  --name Ird_WeekEnd --type Datetime 2>/dev/null || echo "  ✓ Ird_WeekEnd (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_TradeDate --type Datetime 2>/dev/null || echo "  ✓ ird_TradeDate (already exists)"
+  --name Ird_TradeDate --type Datetime 2>/dev/null || echo "  ✓ Ird_TradeDate (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_SettlementDate --type Datetime 2>/dev/null || echo "  ✓ ird_SettlementDate (already exists)"
+  --name Ird_SettlementDate --type Datetime 2>/dev/null || echo "  ✓ Ird_SettlementDate (already exists)"
 
 temporal operator search-attribute create \
   --namespace "${TEMPORAL_NAMESPACE}" \
-  --name ird_Provenance --type Keyword 2>/dev/null || echo "  ✓ ird_Provenance (already exists)"
+  --name Ird_Provenance --type Keyword 2>/dev/null || echo "  ✓ Ird_Provenance (already exists)"
 
 echo ""
 echo "✅ All search attributes configured successfully!"

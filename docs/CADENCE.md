@@ -313,13 +313,13 @@ All microstructure workflows set search attributes for monitoring:
 **Query Examples:**
 ```sql
 -- Find all FINRA OTC ingestion runs for a specific week
-Dataset='FINRA_OTC' AND WeekEnd='2024-11-03'
+Ird_Dataset='FINRA_OTC' AND Ird_WeekEnd='2024-11-03'
 
 -- Find failed IEX ingestion runs
-Dataset='IEX_HIST' AND ExecutionStatus='Failed'
+Ird_Dataset='IEX_HIST' AND ExecutionStatus='Failed'
 
 -- Find all backfill runs
-RunKind='backfill'
+Ird_RunKind='backfill'
 ```
 
 ---

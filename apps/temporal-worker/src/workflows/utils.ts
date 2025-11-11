@@ -41,23 +41,23 @@ let queryRegistered = false;
 let lastAppliedAttributes: Record<string, string[]> = {};
 
 const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }> = {
-  ticker: { name: 'ird_Ticker', type: SearchAttributeType.KEYWORD },
-  cik: { name: 'ird_CIK', type: SearchAttributeType.KEYWORD },
-  filerCik: { name: 'ird_FilerCIK', type: SearchAttributeType.KEYWORD },
-  form: { name: 'ird_Form', type: SearchAttributeType.KEYWORD },
-  accession: { name: 'ird_Accession', type: SearchAttributeType.KEYWORD },
-  periodEnd: { name: 'ird_PeriodEnd', type: SearchAttributeType.DATETIME },
-  windowKey: { name: 'ird_WindowKey', type: SearchAttributeType.KEYWORD },
-  batchId: { name: 'ird_BatchId', type: SearchAttributeType.KEYWORD },
-  runKind: { name: 'ird_RunKind', type: SearchAttributeType.KEYWORD },
+  ticker: { name: 'Ird_Ticker', type: SearchAttributeType.KEYWORD },
+  cik: { name: 'Ird_CIK', type: SearchAttributeType.KEYWORD },
+  filerCik: { name: 'Ird_FilerCIK', type: SearchAttributeType.KEYWORD },
+  form: { name: 'Ird_Form', type: SearchAttributeType.KEYWORD },
+  accession: { name: 'Ird_Accession', type: SearchAttributeType.KEYWORD },
+  periodEnd: { name: 'Ird_PeriodEnd', type: SearchAttributeType.DATETIME },
+  windowKey: { name: 'Ird_WindowKey', type: SearchAttributeType.KEYWORD },
+  batchId: { name: 'Ird_BatchId', type: SearchAttributeType.KEYWORD },
+  runKind: { name: 'Ird_RunKind', type: SearchAttributeType.KEYWORD },
   // Microstructure data attributes
-  symbol: { name: 'ird_Symbol', type: SearchAttributeType.KEYWORD },
-  dataset: { name: 'ird_Dataset', type: SearchAttributeType.KEYWORD },
-  granularity: { name: 'ird_Granularity', type: SearchAttributeType.KEYWORD },
-  weekEnd: { name: 'ird_WeekEnd', type: SearchAttributeType.DATETIME },
-  tradeDate: { name: 'ird_TradeDate', type: SearchAttributeType.DATETIME },
-  settlementDate: { name: 'ird_SettlementDate', type: SearchAttributeType.DATETIME },
-  provenance: { name: 'ird_Provenance', type: SearchAttributeType.TEXT },
+  symbol: { name: 'Ird_Symbol', type: SearchAttributeType.KEYWORD },
+  dataset: { name: 'Ird_Dataset', type: SearchAttributeType.KEYWORD },
+  granularity: { name: 'Ird_Granularity', type: SearchAttributeType.KEYWORD },
+  weekEnd: { name: 'Ird_WeekEnd', type: SearchAttributeType.DATETIME },
+  tradeDate: { name: 'Ird_TradeDate', type: SearchAttributeType.DATETIME },
+  settlementDate: { name: 'Ird_SettlementDate', type: SearchAttributeType.DATETIME },
+  provenance: { name: 'Ird_Provenance', type: SearchAttributeType.TEXT },
 };
 
 const cachedKeys = new Map<string, ReturnType<typeof defineSearchAttributeKey>>();

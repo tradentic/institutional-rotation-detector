@@ -421,7 +421,7 @@ temporal workflow cancel --workflow-id <id>
 
 **Symptoms:**
 ```
-Error: search attribute "Ticker" is not defined
+Error: search attribute "Ird_Ticker" is not defined
 ```
 
 **Solutions:**
@@ -454,11 +454,11 @@ export async function myWorkflow(input: Input) {
 
 **3. Query syntax:**
 ```bash
-# Correct
-temporal workflow list --query 'Ticker="AAPL"'
+# Correct - Note the Ird_ namespace prefix
+temporal workflow list --query 'Ird_Ticker="AAPL"'
 
 # Incorrect
-temporal workflow list --query 'Ticker=AAPL'  # Missing quotes
+temporal workflow list --query 'Ird_Ticker=AAPL'  # Missing quotes
 ```
 
 ---
