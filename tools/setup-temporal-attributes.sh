@@ -13,7 +13,7 @@ RETRY_DELAY=2
 # Wait for Temporal to be ready
 echo "⏳ Waiting for Temporal server at ${TEMPORAL_ADDRESS}..."
 RETRIES=0
-until temporal server health --address "${TEMPORAL_ADDRESS}" 2>/dev/null; do
+until temporal operator cluster health --address "${TEMPORAL_ADDRESS}" 2>/dev/null; do
   if [ $RETRIES -ge $MAX_RETRIES ]; then
     echo "❌ Temporal server did not become ready after ${MAX_RETRIES} attempts"
     echo "   Make sure Temporal is running: temporal server start-dev"
