@@ -180,11 +180,19 @@ The system identifies institutional rotation through a multi-step process:
 
 ### Workflows
 
+**Data Ingestion:**
 - `ingestIssuerWorkflow`: Fetches and processes all filings for a ticker across quarters
-- `rotationDetectWorkflow`: Analyzes a quarter for rotation signals
+- `rotationDetectWorkflow`: Analyzes a quarter for rotation signals with AI-powered anomaly detection
+
+**Graph Analysis:**
 - `graphBuildWorkflow`: Constructs knowledge graph from position data
-- `graphSummarizeWorkflow`: Generates community summaries using GraphRAG
+- `graphSummarizeWorkflow`: Generates community summaries using GraphRAG with GPT-5
+- `graphExploreWorkflow`: Interactive multi-turn graph exploration with Chain of Thought
+
+**Advanced Analytics:**
 - `eventStudyWorkflow`: Calculates market impact metrics
+- `statisticalAnalysisWorkflow`: E2B-powered statistical analysis with Python code execution
+- `crossCommunityAnalysisWorkflow`: Identifies systemic patterns across multiple communities
 
 ## Documentation
 

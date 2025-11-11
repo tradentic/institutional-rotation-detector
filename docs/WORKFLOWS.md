@@ -391,12 +391,12 @@ interface GraphSummarizeInput {
 1. **Compute Communities** - Run **Louvain algorithm** on graph (pure algorithm, no LLM)
 2. **For each community:**
    - Extract top nodes by **PageRank** (pure algorithm)
-   - Generate AI summary using GPT-5 (**short prompt**, not long context)
+   - Generate AI summary using GPT-5-mini (**short prompt**, not long context)
    - Store in `graph_communities` table
 
 **Uses:**
 - **Graph algorithms**: Louvain community detection, PageRank
-- **Short AI summaries**: GPT-5-mini with ~1K token prompts (minimal reasoning effort)
+- **Short AI summaries**: GPT-5-mini with ~500 token prompts (minimal reasoning effort, low verbosity)
 
 **Example:**
 ```bash

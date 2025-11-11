@@ -540,7 +540,7 @@ SELECT * FROM subgraph;
 
 This section covers the **LLM-powered** synthesis operations that generate natural language explanations from graph data + filing text.
 
-**Uses OpenAI GPT-4 Turbo** with 128K context window (future: GPT-5 with 200K+).
+**Uses OpenAI GPT-5 Responses API** with 200K+ context window.
 
 **Important:** This approach does **NOT use vector embeddings or semantic search**. Instead, it relies on:
 - Graph structure to identify relevant documents
@@ -579,10 +579,10 @@ This section covers the **LLM-powered** synthesis operations that generate natur
    - User question (optional)
 
 **Why No Semantic Search?**
-- Modern LLMs (128K+ context) can handle full document sets
+- Modern LLMs (200K+ context with GPT-5) can handle full document sets
 - Graph structure already identifies relevant filings
 - Avoids complexity of embedding generation/storage/search
-- Future-proof: scales with growing context windows (GPT-5, etc.)
+- Future-proof: scales naturally with growing context windows
 
 **Implementation:** `apps/temporal-worker/src/activities/longcontext.activities.ts:25-90`
 
@@ -611,9 +611,10 @@ This section covers the **LLM-powered** synthesis operations that generate natur
    - Add system instructions
 
 4. **Call OpenAI**
-   - Model: GPT-4 Turbo (128K context window)
-   - Temperature: 0.7 (balanced creativity/precision)
-   - Max tokens: 2000
+   - Model: GPT-5 via Responses API (200K+ context window)
+   - Reasoning effort: medium (for long context synthesis)
+   - Verbosity: medium (balanced detail)
+   - Max output tokens: 2000
    - Includes both edges (structured) and filing text (unstructured)
 
 5. **Store Explanation**
@@ -697,7 +698,7 @@ References: edge-1, filing 0001193125-24-123456
 
 ### Context Window Management
 
-**Challenge:** Large graphs exceed GPT-4 context window (128K tokens).
+**Challenge:** Very large graphs may exceed GPT-5 context window (200K+ tokens).
 
 **Solutions:**
 
@@ -757,7 +758,7 @@ const subgraph = {
 1. Build graph for period
 2. Run Louvain algorithm
 3. Identify communities
-4. Summarize each with GPT-4
+4. Summarize each with GPT-5-mini
 
 **Output:**
 > "Community 1 (Large Index Funds): Vanguard, BlackRock, State Street - coordinated selling during rebalance window. Community 2 (Quant Hedge Funds): Renaissance, Citadel, Two Sigma - opportunistic buying after price drop..."
@@ -822,20 +823,22 @@ const subgraph = {
 
 **OpenAI API Costs:**
 
-| Query Type | Tokens | Cost (GPT-4 Turbo) |
-|------------|--------|--------------------|
-| Simple explain | 5K input + 500 output | $0.06 |
-| Community summary | 20K input + 2K output | $0.22 |
-| Complex analysis | 50K input + 3K output | $0.53 |
+| Query Type | Tokens | Cost (GPT-5) | Notes |
+|------------|--------|--------------|-------|
+| Simple explain | 5K input + 500 output | ~$0.03 | Using gpt-5-mini |
+| Community summary | 20K input + 2K output | ~$0.12 | Using gpt-5-mini |
+| Complex analysis | 50K input + 3K output | ~$0.30 | Using gpt-5 with medium effort |
 
 **Monthly Estimates:**
-- 1,000 queries: $60-530
-- 10,000 queries: $600-5,300
+- 1,000 queries: $30-300
+- 10,000 queries: $300-3,000
 
 **Cost Optimization:**
 - Cache common queries
-- Use GPT-4o-mini for simple tasks
+- Use gpt-5-mini for simple tasks
+- Use gpt-5-nano for high-throughput classification
 - Batch similar queries
+- Leverage CoT sessions for multi-turn (60-80% token savings)
 
 ---
 
