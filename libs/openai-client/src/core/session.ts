@@ -405,17 +405,30 @@ export class CoTSession {
     const toolCalls: CoTTurn['toolCalls'] = [];
 
     for (const item of response.items) {
-      if (item.type === 'tool_call' && item.tool_call) {
-        const { id, name, input } = item.tool_call;
+      // Handle function calls (JSON schema driven)
+      if (item.type === 'function_call' && item.function_call) {
+        const { id, name, arguments: args } = item.function_call;
 
-        // Handle code_exec tool
-        if (name === 'code_exec' && typeof input === 'string') {
+        toolCalls.push({
+          id,
+          name,
+          input: args // JSON string
+        });
+      }
+
+      // Handle custom tool calls (free form text)
+      else if (item.type === 'custom_tool_call' && item.custom_tool_call) {
+        const { id, name, input } = item.custom_tool_call;
+
+        // Handle code_exec custom tool
+        if (name === 'code_exec') {
           const output = await handleCodeExecutionToolCall(
             input,
             this.e2bConfig
           );
           toolCalls.push({ id, name, input, output });
         } else {
+          // Other custom tools
           toolCalls.push({ id, name, input });
         }
       }

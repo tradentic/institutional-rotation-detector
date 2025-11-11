@@ -114,11 +114,24 @@ export class GPT5Client implements AIClient {
     const items: ResponseItem[] = (data.items || []).map((item: any) => {
       if (item.type === 'reasoning') {
         return { type: 'reasoning', reasoning: item.content };
-      } else if (item.type === 'tool_call') {
+      } else if (item.type === 'function_call') {
+        // Function calls have JSON-encoded arguments
         return {
-          type: 'tool_call',
-          tool_call: {
+          type: 'function_call',
+          function_call: {
             id: item.id,
+            call_id: item.call_id,
+            name: item.name,
+            arguments: item.arguments,
+          },
+        };
+      } else if (item.type === 'custom_tool_call') {
+        // Custom tool calls have plain text input
+        return {
+          type: 'custom_tool_call',
+          custom_tool_call: {
+            id: item.id,
+            call_id: item.call_id,
             name: item.name,
             input: item.input,
           },

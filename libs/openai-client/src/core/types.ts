@@ -58,15 +58,24 @@ export interface E2BCodeExecutionConfig {
 }
 
 /**
- * Response item - can be message, tool call, or reasoning
+ * Response item - can be message, function call, custom tool call, or reasoning
  */
 export interface ResponseItem {
-  type: 'message' | 'tool_call' | 'reasoning';
+  type: 'message' | 'function_call' | 'custom_tool_call' | 'reasoning';
   content?: string;
-  tool_call?: {
+  // For function calls (JSON schema driven)
+  function_call?: {
     id: string;
+    call_id: string;
     name: string;
-    input: string | Record<string, unknown>;
+    arguments: string; // JSON encoded
+  };
+  // For custom tool calls (free form text)
+  custom_tool_call?: {
+    id: string;
+    call_id: string;
+    name: string;
+    input: string; // Plain text
   };
   reasoning?: string;
 }

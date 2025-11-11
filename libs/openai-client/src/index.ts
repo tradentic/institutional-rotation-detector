@@ -61,14 +61,32 @@ export type {
 } from './core/types.js';
 
 // ============================================================================
-// Re-exports: Convenience (will be implemented)
+// CoT Session Exports (Model-Agnostic)
 // ============================================================================
 
-// Note: These will be implemented after refactoring core/session.ts and core/e2b.ts
-// to work with the AIClient interface instead of being GPT-5 specific
+export {
+  CoTSession,
+  createAnalysisSession,
+  createCodeSession,
+  createFastSession,
+  restoreSession,
+  type CoTSessionConfig,
+  type CoTSessionState,
+  type CoTTurn,
+} from './core/session.js';
 
-// export { CoTSession, createAnalysisSession, createCodeSession, createFastSession, restoreSession } from './core/session.js';
-// export { executeCode, handleCodeExecutionToolCall, isE2BAvailable, getE2BStatus } from './core/e2b.js';
+// ============================================================================
+// E2B Code Execution (Explicit usage outside of tool calling)
+// ============================================================================
+
+export {
+  executeCode,
+  handleCodeExecutionToolCall,
+  isE2BAvailable,
+  getE2BStatus,
+  type E2BExecutionResult,
+  type E2BSandboxConfig,
+} from './core/e2b.js';
 
 // ============================================================================
 // GPT-5 Specific Exports
