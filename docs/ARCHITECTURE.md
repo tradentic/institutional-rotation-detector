@@ -291,7 +291,7 @@ Rotation Events (in database)
 │  1. Run Louvain (community detection)      │
 │  2. Compute PageRank (node importance)     │
 │  3. Generate AI summary per community      │
-│     (uses GPT-4, short prompt)             │
+│     (uses GPT-5-mini, short prompt)        │
 └────────┬───────────────────────────────────┘
          │
          ▼
@@ -400,26 +400,37 @@ class SECClient {
 
 ### OpenAI Integration
 
-**Pattern**: Async completion with streaming
+**Pattern**: Model-agnostic client with GPT-5 Responses API
 
 ```typescript
+import { createClient } from '@libs/openai-client';
+
 async function summarizeCommunity(nodes: GraphNode[]) {
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4-turbo-preview',
-    messages: [
-      { role: 'system', content: 'You are a financial analyst...' },
-      { role: 'user', content: buildPrompt(nodes) }
-    ],
-    temperature: 0.7,
+  // Model-agnostic client - easy to upgrade to future models
+  const client = createClient({ model: 'gpt-5-mini' });
+
+  const response = await client.createResponse({
+    input: buildPrompt(nodes),
+    reasoning: { effort: 'minimal' }, // Explicit reasoning configuration
+    text: { verbosity: 'low' },       // Explicit verbosity control
+    max_output_tokens: 500,
   });
-  return completion.choices[0].message.content;
+
+  return response.output_text;
 }
 ```
 
+**Modern Patterns Used:**
+- ✅ Model-agnostic: `createClient({ model: 'gpt-5' | 'gpt-5-mini' })`
+- ✅ Explicit reasoning effort: `reasoning: { effort: 'minimal' | 'low' | 'medium' | 'high' }`
+- ✅ Explicit verbosity: `text: { verbosity: 'low' | 'medium' | 'high' }`
+- ✅ Chain of Thought (CoT): `createAnalysisSession()` for multi-turn with 60-80% token savings
+- ✅ E2B Code Execution: `createCodeSession({ enableE2B: true })` for statistical analysis
+
 **Considerations:**
 - Handle rate limits (exponential backoff)
-- Monitor token usage
-- Cache expensive calls
+- Monitor token usage (input, output, reasoning)
+- Use CoT sessions for multi-turn conversations
 - Validate responses
 - Handle errors gracefully
 
@@ -550,7 +561,7 @@ GraphRAG in this system uses a **dual approach**:
    - Results stored in `graph_nodes`, `graph_edges`, `graph_communities` tables
 
 2. **Long Context Synthesis** (`longcontext.activities.ts`):
-   - Uses OpenAI's **128K context window** (GPT-4 Turbo, future GPT-5 with 200K+)
+   - Uses OpenAI's **200K+ context window** (GPT-5 Responses API)
    - Bundles graph edges with filing text chunks
    - **No semantic pre-filtering** - sends full relevant text to LLM
    - Generates natural language explanations from structured + unstructured data
@@ -565,7 +576,7 @@ GraphRAG in this system uses a **dual approach**:
 **Why No Vector Store/Semantic Search?**
 
 This system deliberately **does not use** vector embeddings or semantic search:
-- ✅ **Modern LLMs handle large contexts** - 128K (GPT-4) to 200K+ (GPT-5) tokens
+- ✅ **Modern LLMs handle large contexts** - 200K+ tokens (GPT-5) and growing
 - ✅ **Simpler architecture** - no embedding generation, storage, or search overhead
 - ✅ **No embedding drift** - embeddings don't go stale over time
 - ✅ **Lower latency** - no vector search computation

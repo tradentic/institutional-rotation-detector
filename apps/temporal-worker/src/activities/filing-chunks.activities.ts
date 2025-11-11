@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../lib/supabase.ts';
 import { createSecClient } from '../lib/secClient.ts';
-import { runResponse } from '@libs/openai-client';
+import { createClient } from '@libs/openai-client';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.
@@ -139,7 +139,29 @@ export async function createClusterSummary(
 
   if (provError) throw provError;
 
-  // Generate narrative summary using GPT-5
+  // NEW: Fetch filing excerpts for top accessions (MEDIUM PRIORITY #1)
+  const topAccessions = provenance
+    ?.filter((p) => p.role === 'anchor' || p.role === 'seller')
+    .slice(0, 3)
+    .map((p) => p.accession) ?? [];
+
+  let filingContext = '';
+  if (topAccessions.length > 0) {
+    const { data: chunks } = await supabase
+      .from('filing_chunks')
+      .select('accession, content')
+      .in('accession', topAccessions)
+      .order('chunk_no', { ascending: true })
+      .limit(10); // Get first 10 chunks across all filings
+
+    if (chunks && chunks.length > 0) {
+      filingContext = chunks
+        .map((c) => `[${c.accession}] ${c.content.slice(0, 300)}...`)
+        .join('\n\n');
+    }
+  }
+
+  // Generate narrative summary using GPT-5 with filing context
   const prompt = `Summarize this institutional rotation cluster for an investor audience:
 
 Cluster ID: ${input.clusterId}
@@ -154,22 +176,21 @@ Sellers: ${edges?.filter((e) => e.seller_id).length ?? 0}
 Buyers: ${edges?.filter((e) => e.buyer_id).length ?? 0}
 Total Shares: ${edges?.reduce((sum, e) => sum + (Number(e.equity_shares) || 0), 0) ?? 0}
 
-Key filings: ${provenance
-    ?.filter((p) => p.role === 'anchor' || p.role === 'seller')
-    .map((p) => p.accession)
-    .slice(0, 5)
-    .join(', ') ?? 'none'}
+${filingContext ? `Key Filing Excerpts:\n${filingContext}\n` : ''}
 
-Write 2-3 sentences explaining what happened and why it might be a rotation signal.`;
+Write 2-3 sentences explaining what happened and why it might be a rotation signal. Cite accessions when referencing filing data.`;
 
-  // Use Responses API (gpt-5-mini for simple summarization)
-  const summary = await runResponse({
-    model: 'gpt-5-mini',
-    prompt,
-    effort: 'minimal',
-    verbosity: 'low',
-    maxTokens: 300,
+  // Use modern API with explicit configuration (gpt-5-mini for simple summarization)
+  const client = createClient({ model: 'gpt-5-mini' });
+
+  const response = await client.createResponse({
+    input: prompt,
+    reasoning: { effort: 'minimal' }, // Simple summarization needs minimal effort
+    text: { verbosity: 'low' }, // Concise output for summaries
+    max_output_tokens: 400, // Increased to accommodate filing citations
   });
+
+  const summary = response.output_text;
 
   // Store as a graph node
   const nodeId = `cluster:${input.clusterId}`;

@@ -2,6 +2,10 @@ import { proxyActivities, startChild } from '@temporalio/workflow';
 import { upsertWorkflowSearchAttributes } from './utils.ts';
 import type { EventStudyInput } from './eventStudy.workflow.ts';
 import type { IndexPenaltyResult } from '../activities/index.activities.ts';
+import type {
+  AnalyzeRotationEventInput,
+  AnalyzeRotationEventResult,
+} from '../activities/rotation-analysis.activities.ts';
 import { isQuarterEndEOWString } from '../lib/tradingCalendar.ts';
 
 const activities = proxyActivities<{
@@ -34,6 +38,7 @@ const activities = proxyActivities<{
     period: { start: string; end: string },
     rootIssuerCik: string
   ) => Promise<any>;
+  analyzeRotationEvent: (input: AnalyzeRotationEventInput) => Promise<AnalyzeRotationEventResult>;
 }>(
   {
     startToCloseTimeout: '5 minutes',
@@ -79,7 +84,7 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       cik: input.cik,
     });
 
-    await activities.scoreV4_1(input.cik, anchor, {
+    const scoreResult = await activities.scoreV4_1(input.cik, anchor, {
       dumpZ: anchor.dumpZ,
       uSame: uptake.uSame,
       uNext: uptake.uNext,
@@ -98,6 +103,25 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       penaltyResult.penalty,
       penaltyResult.matchedWindows
     );
+
+    // NEW: AI-powered analysis of rotation event (THE 10x CHANGE)
+    // This transforms algorithmic scores into actionable trading intelligence
+    const analysis = await activities.analyzeRotationEvent({
+      clusterId: anchor.clusterId,
+      issuerCik: input.cik,
+      signals: {
+        dumpZ: anchor.dumpZ,
+        uSame: uptake.uSame,
+        uNext: uptake.uNext,
+        uhfSame: uhf.uhfSame,
+        uhfNext: uhf.uhfNext,
+        optSame: options.optSame,
+        optNext: options.optNext,
+        shortReliefV2: shortRelief,
+        indexPenalty: penaltyResult.penalty,
+        rScore: scoreResult?.rScore ?? 0, // Get R-score from scoreV4_1 result
+      },
+    });
 
     await activities.buildEdges(
       [
