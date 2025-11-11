@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase.ts';
-import { createGPT5Client, runResponses } from '@libs/openai-client';
+import { createClient } from '@libs/openai-client';
 
 export interface BundleForSynthesisInput {
   edgeIds: string[];
@@ -103,41 +103,49 @@ export async function synthesizeWithOpenAI(input: SynthesizeInput): Promise<Synt
   if (input.bundle.edges.length === 0) {
     return { explanationId: randomUUID(), content: 'No edges supplied for explanation.', accessions: [] };
   }
-  const client = createGPT5Client();
+
   const accessions = input.bundle.filings.map((f) => f.accession);
-  const prompt = `You explain investor rotation edges using provided data.
+
+  // Build prompt with filing excerpts
+  const systemPrompt = 'Use only supplied facts. Provide accession citations like [ACC].';
+
+  const userPrompt = `You explain investor rotation edges using provided data.
+
 Edges: ${input.bundle.edges
     .map((edge) => `${edge.edgeId} ${edge.relation} weight=${edge.weight}`)
     .join('; ')}
+
 Accessions: ${accessions.join(', ')}
+
 Question: ${input.bundle.question ?? 'Summarise notable flow relationships.'}
+
+Filing excerpts:
+${input.bundle.filings
+  .flatMap((filing) =>
+    filing.excerpts
+      .slice(0, 5)
+      .map((excerpt) => `[${filing.accession}] ${excerpt.slice(0, 500)}`)
+  )
+  .join('\n\n')}
+
 In 3 paragraphs max, answer and cite accession IDs inline.`;
 
-  const content = await runResponses({
-    client,
-    input: {
-      model: 'gpt-4.1',
-      input: [
-        {
-          role: 'system',
-          content: 'Use only supplied facts. Provide accession citations like [ACC].',
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            ...input.bundle.filings.flatMap((filing) =>
-              filing.excerpts.slice(0, 5).map((excerpt) => ({
-                type: 'text' as const,
-                text: `[${filing.accession}] ${excerpt.slice(0, 500)}`,
-              }))
-            ),
-          ],
-        },
-      ],
-    },
+  // Use modern API with explicit configuration
+  const client = createClient({ model: 'gpt-5' });
+
+  const response = await client.createResponse({
+    input: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    reasoning: { effort: 'medium' }, // Long context synthesis needs more reasoning
+    text: { verbosity: 'medium' },
+    max_output_tokens: 2000,
   });
 
+  const content = response.output_text;
+
+  // Store explanation in database
   const supabase = createSupabaseClient();
   const { error, data } = await supabase
     .from('graph_explanations')
@@ -150,7 +158,9 @@ In 3 paragraphs max, answer and cite accession IDs inline.`;
     })
     .select('explanation_id')
     .maybeSingle();
+
   if (error) throw error;
   if (!data?.explanation_id) throw new Error('Failed to store explanation');
+
   return { explanationId: data.explanation_id, content, accessions };
 }
