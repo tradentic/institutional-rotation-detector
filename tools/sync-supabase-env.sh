@@ -25,36 +25,37 @@ if ! supabase status >/dev/null 2>&1; then
   exit 1
 fi
 
-# Extract Supabase credentials from status
-log "Extracting Supabase credentials from 'supabase status'..."
-SUPABASE_STATUS=$(supabase status 2>&1)
+# Extract Supabase credentials from status using env format
+log "Extracting Supabase credentials from 'supabase status -o env'..."
+SUPABASE_ENV=$(supabase status -o env 2>&1)
 
 if [[ "${DEBUG:-false}" == "true" ]]; then
   log "Raw supabase status output:"
-  echo "$SUPABASE_STATUS"
+  echo "$SUPABASE_ENV"
   log "---"
 fi
 
-# Try to extract values with flexible pattern matching
-SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep -i "api url" | awk '{print $NF}')
-SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep -i "anon key" | awk '{print $NF}')
-SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep -i "service_role key" | awk '{print $NF}')
-DATABASE_URL=$(echo "$SUPABASE_STATUS" | grep -i "db url" | awk '{print $NF}')
+# Extract values from env format (KEY="value")
+# Using sed to extract the value between quotes
+SUPABASE_URL=$(echo "$SUPABASE_ENV" | grep "^API_URL=" | sed 's/^API_URL="\(.*\)"$/\1/')
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_ENV" | grep "^ANON_KEY=" | sed 's/^ANON_KEY="\(.*\)"$/\1/')
+SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_ENV" | grep "^SERVICE_ROLE_KEY=" | sed 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/')
+DATABASE_URL=$(echo "$SUPABASE_ENV" | grep "^DB_URL=" | sed 's/^DB_URL="\(.*\)"$/\1/')
 
 # Validate extracted values
 if [[ -z "$SUPABASE_URL" ]] || [[ -z "$SUPABASE_ANON_KEY" ]] || [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
-  error "Failed to extract Supabase credentials from 'supabase status'"
+  error "Failed to extract Supabase credentials from 'supabase status -o env'"
   error ""
   error "Expected output format:"
-  error "  API URL: http://..."
-  error "  anon key: eyJ..."
-  error "  service_role key: eyJ..."
-  error "  DB URL: postgresql://..."
+  error '  API_URL="http://..."'
+  error '  ANON_KEY="eyJ..."'
+  error '  SERVICE_ROLE_KEY="eyJ..."'
+  error '  DB_URL="postgresql://..."'
   error ""
   error "Actual output:"
-  echo "$SUPABASE_STATUS" | head -20
+  echo "$SUPABASE_ENV" | head -20
   error ""
-  error "Tip: Run 'supabase status' manually to see the full output"
+  error "Tip: Run 'supabase status -o env' manually to see the full output"
   error "     Run with DEBUG=true for verbose output"
   exit 1
 fi
