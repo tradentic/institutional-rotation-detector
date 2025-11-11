@@ -118,6 +118,10 @@ update_env_file() {
   update_var "SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_SERVICE_ROLE_KEY" "$env_file"
   update_var "DATABASE_URL" "$DATABASE_URL" "$env_file"
 
+  # Update Next.js public environment variables (if they exist or need to be created)
+  update_var "NEXT_PUBLIC_SUPABASE_URL" "$SUPABASE_URL" "$env_file"
+  update_var "NEXT_PUBLIC_SUPABASE_ANON_KEY" "$SUPABASE_ANON_KEY" "$env_file"
+
   log "  ✓ Updated Supabase credentials in $env_file"
 }
 
