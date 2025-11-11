@@ -1,0 +1,21 @@
+{
+  "name": "institutional-rotation-detector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Institutional rotation detection system using 13F filings",
+  "scripts": {
+    "install:all": "pnpm install",
+    "build": "pnpm -r --filter './apps/**' run build",
+    "build:worker": "pnpm --filter rotation-detector-temporal-worker run build",
+    "build:api": "pnpm --filter rotation-detector-api run build",
+    "build:admin": "pnpm --filter rotation-detector-admin run build",
+    "lint": "pnpm -r run lint",
+    "test": "pnpm -r run test",
+    "clean": "pnpm -r exec rm -rf dist node_modules .next .turbo"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.20.0"
+}

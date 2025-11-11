@@ -11,7 +11,16 @@ This guide will get you up and running in under 10 minutes.
 
 ## Local Development Setup
 
-### 1. Install CLIs
+### 1. Install Dependencies
+
+**Install workspace dependencies (from repo root):**
+```bash
+pnpm install
+```
+
+This installs all dependencies for all apps and libraries in the monorepo.
+
+### 2. Install CLIs
 
 **Supabase CLI:**
 ```bash
@@ -31,7 +40,7 @@ brew install temporal
 curl -sSf https://temporal.download/cli.sh | sh
 ```
 
-### 2. Start Services
+### 3. Start Services
 
 **Terminal 1 - Supabase:**
 ```bash
@@ -62,20 +71,16 @@ nano .env.local
 # - SEC_USER_AGENT=YourName your.email@domain.com
 # (Supabase and Temporal config already synced automatically)
 
-# Install dependencies (required for both temporal-worker and openai-client lib)
-cd ../../libs/openai-client
-pnpm install
-cd ../../apps/temporal-worker
-pnpm install
-
-# Build
-pnpm run build
+# Build temporal worker (from repo root)
+cd ../..
+pnpm run build:worker
 
 # Start worker
+cd apps/temporal-worker
 node dist/worker.js
 ```
 
-### 3. Verify Everything Works
+### 4. Verify Everything Works
 
 ```bash
 # In Terminal 4 - Test workflow
@@ -89,32 +94,45 @@ temporal workflow start \
 - Temporal UI: http://localhost:8233
 - Supabase Studio: http://localhost:54323
 
+---
+
+**💡 Pro Tip:** You can build all apps at once from the repo root:
+```bash
+pnpm run build        # Build all apps and libraries
+pnpm run build:worker # Build just temporal-worker
+pnpm run build:api    # Build just API
+pnpm run build:admin  # Build just admin UI
+```
+
 ## GitHub Codespaces Setup
 
 ### 1. Open in Codespaces
 
 Click "Code" → "Codespaces" → "Create codespace on main"
 
-Wait for devcontainer to build (3-5 minutes). The following starts automatically:
-- ✅ Supabase
-- ✅ Temporal server
-- ✅ Redis
-- ✅ Temporal search attributes setup
+Wait for devcontainer to build (3-5 minutes). **Everything is automated!** The setup:
 
-### 2. Configure Environment
+**✅ Services Started:**
+- Supabase (with migrations applied)
+- Temporal server
+- Redis
+- Temporal search attributes configured
 
-**Environment variables are automatically synced!** The devcontainer setup runs:
-- `sync-supabase-env.sh` - Extracts Supabase credentials to all apps
-- `sync-temporal-env.sh` - Configures Temporal settings for all apps
+**✅ Dependencies & Build:**
+- All workspace dependencies installed (`pnpm install`)
+- Temporal worker built and ready (`pnpm run build:worker`)
+- Environment variables synced to all apps
 
-You only need to add your API keys:
+### 2. Add Your API Keys
+
+The **only** manual step - add your API keys to `.env.local`:
 
 ```bash
 cd apps/temporal-worker
 nano .env.local
 ```
 
-Add these two values to `.env.local`:
+Add these two values:
 ```bash
 OPENAI_API_KEY=sk-your-key-here
 SEC_USER_AGENT=YourName your.email@domain.com
@@ -127,14 +145,8 @@ All other values (Supabase, Temporal) are already configured automatically!
 ### 3. Start Worker
 
 ```bash
-# Install dependencies (required for both temporal-worker and openai-client lib)
-cd libs/openai-client
-pnpm install
-cd ../../apps/temporal-worker
-pnpm install
-
-# Build and start
-pnpm run build
+# Worker is already built, just start it!
+cd apps/temporal-worker
 node dist/worker.js
 ```
 
@@ -213,10 +225,15 @@ temporal operator search-attribute list
 ### Worker
 
 ```bash
-# Rebuild
+# Rebuild from repo root
+pnpm run build:worker
+
+# Or rebuild from worker directory
+cd apps/temporal-worker
 pnpm run build
 
 # Run
+cd apps/temporal-worker  # if not already there
 node dist/worker.js
 
 # Run with environment variables
@@ -243,9 +260,12 @@ temporal server start-dev
 
 ### Worker errors - "missing activity"
 ```bash
-# Rebuild
+# Rebuild from root
+pnpm run build:worker
+
+# Or from worker directory
 cd apps/temporal-worker
-npm run build
+pnpm run build
 ```
 
 ### Database connection failed

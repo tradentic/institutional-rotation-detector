@@ -111,38 +111,40 @@ For the impatient, here's the fastest path to a working local environment:
 git clone https://github.com/yourusername/institutional-rotation-detector.git
 cd institutional-rotation-detector
 
-# 2. Start Supabase first (in Terminal 1)
+# 2. Install dependencies (all apps and libraries)
+pnpm install
+
+# 3. Start Supabase first (in Terminal 1)
 supabase start
 
-# 3. Sync environment variables automatically
+# 4. Sync environment variables automatically
 ./tools/sync-supabase-env.sh    # Extracts Supabase credentials to all apps
 ./tools/sync-temporal-env.sh    # Sets Temporal defaults for all apps
 
-# 4. Add your API keys
+# 5. Add your API keys
 cd apps/temporal-worker
 nano .env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
-
-# 5. Apply migrations
 cd ../..
+
+# 6. Apply migrations
 supabase db reset
 
-# 6. Start Temporal (in Terminal 2)
+# 7. Start Temporal (in Terminal 2)
 temporal server start-dev
 
-# 7. Create search attributes (in Terminal 3)
+# 8. Create search attributes (in Terminal 3)
 ./tools/setup-temporal-attributes.sh
 
-# 8. Install dependencies and build
-cd apps/temporal-worker
-pnpm install
-pnpm run build
+# 9. Build worker
+pnpm run build:worker
 
-# 9. Start worker (same Terminal 3)
+# 10. Start worker (same Terminal 3)
+cd apps/temporal-worker
 node dist/worker.js
 
-# 10. Test (in Terminal 4)
+# 11. Test (in Terminal 4)
 curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
 ```
 
@@ -340,6 +342,15 @@ Access at http://localhost:8233
 
 ### Install Dependencies
 
+**From repo root (recommended):**
+```bash
+# Installs dependencies for all apps and libraries
+pnpm install
+```
+
+This uses the pnpm workspace configuration to install and link all dependencies across the monorepo.
+
+**Individual app (alternative):**
 ```bash
 cd apps/temporal-worker
 pnpm install
@@ -423,7 +434,18 @@ TEMPORAL_ADDRESS=localhost:7233
 
 ### Build TypeScript
 
+**From repo root (recommended):**
 ```bash
+# Build just the worker
+pnpm run build:worker
+
+# Or build all apps
+pnpm run build
+```
+
+**From app directory (alternative):**
+```bash
+cd apps/temporal-worker
 pnpm run build
 ```
 
@@ -869,6 +891,20 @@ After your local environment is running:
 
 ---
 
+## GitHub Codespaces
+
+For Codespaces setup, see the [QUICK_START.md](../QUICK_START.md#github-codespaces-setup) guide.
+
+Codespaces automatically:
+- Installs all dependencies (`pnpm install`)
+- Builds the temporal worker (`pnpm run build:worker`)
+- Starts Supabase, Temporal, and Redis
+- Syncs environment variables
+
+You only need to add your `OPENAI_API_KEY` and `SEC_USER_AGENT` to `apps/temporal-worker/.env.local` and start the worker.
+
+---
+
 ## Related Documentation
 
 - [Setup Guide](SETUP.md) - Production setup
@@ -877,5 +913,7 @@ After your local environment is running:
 - [Troubleshooting](TROUBLESHOOTING.md) - Common issues
 
 ---
+
+**Last Updated**: 2025-11-11
 
 For questions or issues, see [main README](../README.md#support).

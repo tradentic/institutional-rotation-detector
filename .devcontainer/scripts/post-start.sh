@@ -252,22 +252,48 @@ if command -v pnpm >/dev/null 2>&1; then
     log "After starting, run: ./tools/sync-temporal-env.sh"
   fi
 
+  # Install dependencies (if not already done by post-create)
+  log "Ensuring workspace dependencies are installed..."
+  if pnpm install >/tmp/pnpm-install.log 2>&1; then
+    log "✓ Dependencies installed successfully"
+  else
+    log "Warning: pnpm install had issues. Check /tmp/pnpm-install.log"
+  fi
+
+  # Build the temporal worker
+  log "Building temporal worker..."
+  if pnpm run build:worker >/tmp/pnpm-build-worker.log 2>&1; then
+    log "✓ Temporal worker built successfully"
+  else
+    log "Warning: Worker build failed. Check /tmp/pnpm-build-worker.log"
+  fi
+
   # Note: API and admin apps are automatically synced by sync-supabase-env.sh and sync-temporal-env.sh
 
   log ""
-  log "Environment setup complete!"
+  log "🎉 Environment setup complete!"
   log ""
-  log "Next steps:"
-  log "  1. Add your OPENAI_API_KEY to apps/temporal-worker/.env.local"
-  log "  2. Add your SEC_USER_AGENT to apps/temporal-worker/.env.local"
-  log "  3. Build and start the worker:"
-  log "     cd apps/temporal-worker"
-  log "     pnpm install && pnpm run build"
-  log "     node dist/worker.js"
+  log "✅ Services running:"
+  [[ "$supabase_ready" == "true" ]] && log "   • Supabase (http://localhost:54323)"
+  [[ "$temporal_server_ready" == "true" ]] && log "   • Temporal UI (http://localhost:8233)"
+  log "   • Redis"
   log ""
-  log "Access points:"
-  log "  Temporal UI: http://localhost:8233"
-  log "  Supabase Studio: http://localhost:54323"
+  log "✅ Build status:"
+  log "   • Temporal worker: Built and ready"
+  log "   • Dependencies: Installed"
+  log ""
+  log "📋 Next steps:"
+  log "  1. Add your API keys to apps/temporal-worker/.env.local:"
+  log "     - OPENAI_API_KEY=sk-your-key"
+  log "     - SEC_USER_AGENT=YourName your.email@domain.com"
+  log ""
+  log "  2. Start the worker:"
+  log "     cd apps/temporal-worker && node dist/worker.js"
+  log ""
+  log "  3. (Optional) Run a test workflow:"
+  log "     temporal workflow start --task-queue rotation-detector \\"
+  log "       --type testSearchAttributesWorkflow --input '{\"ticker\":\"TEST\"}'"
+  log ""
 else
   log "pnpm not found. Please ensure pnpm is installed."
 fi

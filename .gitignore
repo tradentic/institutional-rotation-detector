@@ -10,6 +10,10 @@ node_modules/
 dist/
 build/
 apps/api/**/*.js
+# Ignore any compiled JS in library source directories
+libs/**/src/**/*.js
+libs/**/src/**/*.js.map
+libs/**/src/**/*.d.ts
 
 # Logs
 *.log
