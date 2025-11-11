@@ -1,8 +1,7 @@
-// @ts-nocheck
 'use client';
 
 import { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, FieldErrors } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,7 +21,7 @@ import type { WorkflowInput } from '@/lib/workflow-schemas';
 
 interface WorkflowFormProps {
   workflow: WorkflowMetadata;
-  defaultValues?: Partial<WorkflowInput>;
+  defaultValues?: Record<string, any>;
   onSubmit: (data: WorkflowInput) => Promise<{ workflowId: string }>;
   onCancel: () => void;
 }
@@ -37,7 +36,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
     formState: { errors },
     setValue,
     watch,
-  } = useForm({
+  } = useForm<Record<string, any>>({
     resolver: zodResolver(workflow.schema),
     defaultValues: defaultValues || {},
   });
@@ -62,6 +61,17 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
     }
   };
 
+  // Helper to safely get error message
+  const getError = (fieldName: string): string | undefined => {
+    const error = (errors as Record<string, any>)[fieldName];
+    return error?.message as string | undefined;
+  };
+
+  // Helper to safely get default value
+  const getDefaultValue = (fieldName: string): any => {
+    return defaultValues?.[fieldName];
+  };
+
   // Get form field definitions based on workflow ID
   const getFormFields = () => {
     switch (workflow.id) {
@@ -70,7 +80,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
           <>
             <FormField
               label="Ticker"
-              error={errors.ticker?.message as string}
+              error={getError('ticker')}
             >
               <Input
                 {...register('ticker')}
@@ -82,7 +92,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="From"
-                error={errors.from?.message as string}
+                error={getError('from')}
               >
                 <Input
                   {...register('from')}
@@ -93,7 +103,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
               <FormField
                 label="To"
-                error={errors.to?.message as string}
+                error={getError('to')}
               >
                 <Input
                   {...register('to')}
@@ -106,11 +116,11 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="Run Kind"
-                error={errors.runKind?.message as string}
+                error={getError('runKind')}
               >
                 <Select
                   onValueChange={(value) => setValue('runKind', value)}
-                  defaultValue={defaultValues?.runKind || 'daily'}
+                  defaultValue={getDefaultValue('runKind') || 'daily'}
                   disabled={isSubmitting}
                 >
                   <SelectTrigger>
@@ -125,7 +135,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
               <FormField
                 label="Min %"
-                error={errors.minPct?.message as string}
+                error={getError('minPct')}
               >
                 <Input
                   {...register('minPct')}
@@ -144,7 +154,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
           <>
             <FormField
               label="CIK"
-              error={errors.cik?.message as string}
+              error={getError('cik')}
             >
               <Input
                 {...register('cik')}
@@ -155,7 +165,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
             <FormField
               label="Quarter"
-              error={errors.quarter?.message as string}
+              error={getError('quarter')}
             >
               <Input
                 {...register('quarter')}
@@ -166,7 +176,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
             <FormField
               label="Ticker (optional)"
-              error={errors.ticker?.message as string}
+              error={getError('ticker')}
             >
               <Input
                 {...register('ticker')}
@@ -177,11 +187,11 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
             <FormField
               label="Run Kind"
-              error={errors.runKind?.message as string}
+              error={getError('runKind')}
             >
               <Select
                 onValueChange={(value) => setValue('runKind', value)}
-                defaultValue={defaultValues?.runKind || 'daily'}
+                defaultValue={getDefaultValue('runKind') || 'daily'}
                 disabled={isSubmitting}
               >
                 <SelectTrigger>
@@ -201,7 +211,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
           <>
             <FormField
               label="Ticker (optional)"
-              error={errors.ticker?.message as string}
+              error={getError('ticker')}
             >
               <Input
                 {...register('ticker')}
@@ -213,7 +223,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="Period Start"
-                error={errors.periodStart?.message as string}
+                error={getError('periodStart')}
               >
                 <Input
                   {...register('periodStart')}
@@ -224,7 +234,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
               <FormField
                 label="Period End"
-                error={errors.periodEnd?.message as string}
+                error={getError('periodEnd')}
               >
                 <Input
                   {...register('periodEnd')}
@@ -236,7 +246,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
             <FormField
               label="Hops"
-              error={errors.hops?.message as string}
+              error={getError('hops')}
             >
               <Input
                 {...register('hops')}
@@ -259,10 +269,10 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
                   const questions = e.target.value.split('\n').filter(q => q.trim());
                   setValue('questions', questions);
                 }}
-                defaultValue={(defaultValues as any)?.questions?.join('\n')}
+                defaultValue={getDefaultValue('questions')?.join('\n') || ''}
               />
-              {errors.questions && (
-                <p className="text-sm text-destructive">{errors.questions.message as string}</p>
+              {getError('questions') && (
+                <p className="text-sm text-destructive">{getError('questions')}</p>
               )}
             </div>
           </>
@@ -273,11 +283,11 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
           <>
             <FormField
               label="Analysis Type"
-              error={errors.analysisType?.message as string}
+              error={getError('analysisType')}
             >
               <Select
                 onValueChange={(value) => setValue('analysisType', value)}
-                defaultValue={(defaultValues as any)?.analysisType}
+                defaultValue={getDefaultValue('analysisType')}
                 disabled={isSubmitting}
               >
                 <SelectTrigger>
@@ -295,7 +305,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="Period Start"
-                error={errors.periodStart?.message as string}
+                error={getError('periodStart')}
               >
                 <Input
                   {...register('periodStart')}
@@ -306,7 +316,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
               <FormField
                 label="Period End"
-                error={errors.periodEnd?.message as string}
+                error={getError('periodEnd')}
               >
                 <Input
                   {...register('periodEnd')}
@@ -316,10 +326,10 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
               </FormField>
             </div>
 
-            {watch('analysisType') === 'correlation' && (
+            {(watch as any)('analysisType') === 'correlation' && (
               <FormField
                 label="Variables (comma-separated)"
-                error={errors.variables?.message as string}
+                error={getError('variables')}
               >
                 <Input
                   {...register('variables')}
@@ -341,7 +351,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 label="Period Start"
-                error={errors.periodStart?.message as string}
+                error={getError('periodStart')}
               >
                 <Input
                   {...register('periodStart')}
@@ -352,7 +362,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
               <FormField
                 label="Period End"
-                error={errors.periodEnd?.message as string}
+                error={getError('periodEnd')}
               >
                 <Input
                   {...register('periodEnd')}
@@ -364,7 +374,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
 
             <FormField
               label="Min Communities (optional)"
-              error={errors.minCommunities?.message as string}
+              error={getError('minCommunities')}
             >
               <Input
                 {...register('minCommunities')}
