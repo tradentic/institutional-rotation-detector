@@ -1,4 +1,4 @@
-# @libs/openai-gpt5
+# @libs/openai-client
 
 Shared OpenAI GPT-5 client library for all apps in the monorepo.
 
@@ -11,9 +11,11 @@ Shared OpenAI GPT-5 client library for all apps in the monorepo.
 - ✅ **TypeScript** - Full type safety
 - ✅ **Zero Dependencies** - Only depends on `openai` package
 
-## Installation
+## Installation & Build
 
-This library is already available in the monorepo. No installation needed.
+This library is consumed as **TypeScript source files** by workspace apps.
+
+**No build required!** Apps import and compile the source directly via TypeScript path mappings. The library doesn't need to be built separately - consuming apps compile it as part of their own build process.
 
 ## Usage
 
@@ -21,13 +23,13 @@ This library is already available in the monorepo. No installation needed.
 
 ```typescript
 // Simple imports
-import { runResponse, createResponse } from '@libs/openai-gpt5';
+import { runResponse, createResponse } from '@libs/openai-client';
 
 // CoT session imports
-import { CoTSession, createAnalysisSession, createCodeSession } from '@libs/openai-gpt5';
+import { CoTSession, createAnalysisSession, createCodeSession } from '@libs/openai-client';
 
 // E2B imports
-import { executeCode, isE2BAvailable } from '@libs/openai-gpt5';
+import { executeCode, isE2BAvailable } from '@libs/openai-client';
 ```
 
 ### TypeScript Path Configuration
@@ -38,16 +40,21 @@ Add to your app's `tsconfig.json`:
 {
   "compilerOptions": {
     "paths": {
-      "@libs/openai-gpt5": ["../../libs/openai-gpt5/src/index.ts"]
+      "@libs/openai-client": ["../../libs/openai-client/src/index.ts"],
+      "@libs/openai-client/*": ["../../libs/openai-client/src/*"]
     }
   }
 }
 ```
 
-**Or** import via relative path:
+And add to your app's `package.json`:
 
-```typescript
-import { runResponse } from '../../libs/openai-gpt5/src/index.js';
+```json
+{
+  "dependencies": {
+    "@libs/openai-client": "workspace:*"
+  }
+}
 ```
 
 ## Quick Start
@@ -55,7 +62,7 @@ import { runResponse } from '../../libs/openai-gpt5/src/index.js';
 ### Single-Turn Request
 
 ```typescript
-import { runResponse } from '@libs/openai-gpt5';
+import { runResponse } from '@libs/openai-client';
 
 const summary = await runResponse({
   model: 'gpt-5-mini',
@@ -68,7 +75,7 @@ const summary = await runResponse({
 ### Multi-Turn Conversation (CoT)
 
 ```typescript
-import { createAnalysisSession } from '@libs/openai-gpt5';
+import { createAnalysisSession } from '@libs/openai-client';
 
 const session = createAnalysisSession({ enableE2B: true });
 
@@ -85,7 +92,7 @@ console.log(summary.totalTokens); // { input: 12K, reasoning: 4K }
 ### Code Execution with E2B
 
 ```typescript
-import { createCodeSession } from '@libs/openai-gpt5';
+import { createCodeSession } from '@libs/openai-client';
 
 const session = createCodeSession({ enableE2B: true });
 
@@ -145,7 +152,7 @@ const { code, executionResult, analysis } = await session.executeAndAnalyze(
 
 ```typescript
 // apps/temporal-worker/src/activities/my-activity.ts
-import { createAnalysisSession } from '@libs/openai-gpt5';
+import { createAnalysisSession } from '@libs/openai-client';
 
 export async function analyzeData(input: DataInput): Promise<AnalysisResult> {
   const session = createAnalysisSession({ enableE2B: true });
@@ -162,7 +169,7 @@ export async function analyzeData(input: DataInput): Promise<AnalysisResult> {
 
 ```typescript
 // apps/api/src/handlers/analyze.ts
-import { runResponse } from '@libs/openai-gpt5';
+import { runResponse } from '@libs/openai-client';
 
 export async function POST(request: Request): Promise<Response> {
   const { data } = await request.json();
@@ -182,7 +189,7 @@ export async function POST(request: Request): Promise<Response> {
 
 ```typescript
 // supabase/functions/my-function/index.ts
-import { createFastSession } from 'https://deno.land/x/openai-gpt5/mod.ts'; // Or via relative import
+import { createFastSession } from 'https://deno.land/x/openai-client/mod.ts'; // Or via relative import
 
 Deno.serve(async (req) => {
   const session = createFastSession({
@@ -253,7 +260,7 @@ await createResponse({
 
 ```typescript
 import { describe, it, expect } from 'vitest';
-import { CoTSession, runResponse } from '@libs/openai-gpt5';
+import { CoTSession, runResponse } from '@libs/openai-client';
 
 describe('OpenAI Integration', () => {
   it('should preserve CoT across turns', async () => {
@@ -292,7 +299,7 @@ const result = await runResponses({
 ### After (from shared lib)
 
 ```typescript
-import { createAnalysisSession } from '@libs/openai-gpt5';
+import { createAnalysisSession } from '@libs/openai-client';
 
 const session = createAnalysisSession({ enableE2B: true });
 const result = await session.respond('...');
