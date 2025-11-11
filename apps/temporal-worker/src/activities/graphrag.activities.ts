@@ -219,3 +219,133 @@ export async function kHopNeighborhood(input: KHopInput): Promise<NeighborhoodRe
     paths: paths.sort((a, b) => b.score - a.score).slice(0, 25),
   };
 }
+
+// ============================================================================
+// Cross-Community Pattern Analysis (LOW PRIORITY #2)
+// ============================================================================
+
+export interface AnalyzeCrossCommunitiesInput {
+  periodStart: string;
+  periodEnd: string;
+  minCommunities?: number;
+}
+
+export interface AnalyzeCrossCommunitiesResult {
+  systemicPatterns: string;
+  communityComparison: string;
+  keyInsights: string[];
+  communitiesAnalyzed: number;
+}
+
+/**
+ * Analyze patterns across multiple communities to identify systemic trends.
+ *
+ * This function identifies higher-level patterns that span multiple communities,
+ * such as:
+ * - Sector-wide rotations
+ * - Coordinated institutional behavior
+ * - Systemic market trends
+ * - Cross-sector correlations
+ *
+ * Uses GPT-5 to synthesize findings across all communities in a period.
+ */
+export async function analyzeCrossCommunityPatterns(
+  input: AnalyzeCrossCommunitiesInput
+): Promise<AnalyzeCrossCommunitiesResult> {
+  const supabase = createSupabaseClient();
+
+  // Fetch all communities in the period
+  const { data: communities, error } = await supabase
+    .from('graph_communities')
+    .select('community_id, summary, meta, period_start, period_end')
+    .gte('period_start', input.periodStart)
+    .lte('period_end', input.periodEnd);
+
+  if (error) throw error;
+
+  const minCommunities = input.minCommunities ?? 3;
+  if (!communities || communities.length < minCommunities) {
+    return {
+      systemicPatterns: 'Insufficient communities for cross-community analysis.',
+      communityComparison: 'N/A',
+      keyInsights: [],
+      communitiesAnalyzed: communities?.length ?? 0,
+    };
+  }
+
+  // Extract community data for analysis
+  const communityData = communities.map((c, idx) => ({
+    index: idx + 1,
+    id: c.community_id,
+    summary: c.summary,
+    nodeCount: (c.meta?.nodes as string[] | undefined)?.length ?? 0,
+    edgeCount: (c.meta?.edge_count as number | undefined) ?? 0,
+    score: (c.meta?.score as number | undefined) ?? 0,
+  }));
+
+  // Use modern API with explicit configuration
+  const client = createClient({ model: 'gpt-5' });
+
+  const prompt = `You are analyzing institutional investor flow communities across ${input.periodStart} to ${input.periodEnd}.
+
+**Communities (${communities.length} total):**
+${communityData
+  .map(
+    (c) =>
+      `${c.index}. Community ${c.id.slice(0, 8)}... (${c.nodeCount} nodes, ${c.edgeCount} edges, score: ${c.score.toFixed(2)})
+   Summary: ${c.summary}`
+  )
+  .join('\n\n')}
+
+**Your Task:**
+Identify systemic patterns across these communities:
+
+1. **Systemic Patterns:** What high-level trends span multiple communities?
+   - Are there sector-wide rotations?
+   - Coordinated institutional behavior?
+   - Market regime shifts?
+
+2. **Community Comparison:** How do communities differ or relate?
+   - Which communities show similar patterns?
+   - Which are outliers?
+   - Any correlations between communities?
+
+3. **Key Insights:** What are the 3-5 most important insights for understanding
+   institutional flows during this period?
+
+Provide structured analysis with specific evidence from the community data.`;
+
+  const response = await client.createResponse({
+    input: prompt,
+    reasoning: { effort: 'high' }, // Cross-community synthesis needs deep reasoning
+    text: { verbosity: 'high' }, // Detailed analysis needed
+    max_output_tokens: 3000,
+  });
+
+  const fullAnalysis = response.output_text;
+
+  // Parse structured sections (basic parsing - could be enhanced)
+  const systemicPatternsMatch = fullAnalysis.match(
+    /(?:systemic patterns?|high-level trends?)[:\s]*([\s\S]*?)(?=community comparison|key insights|$)/i
+  );
+  const comparisonMatch = fullAnalysis.match(/community comparison[:\s]*([\s\S]*?)(?=key insights|$)/i);
+  const insightsMatch = fullAnalysis.match(/key insights?[:\s]*([\s\S]*?)$/i);
+
+  const systemicPatterns = systemicPatternsMatch?.[1]?.trim() ?? fullAnalysis;
+  const communityComparison = comparisonMatch?.[1]?.trim() ?? '';
+  const insightsText = insightsMatch?.[1]?.trim() ?? '';
+
+  // Extract bullet points from insights
+  const keyInsights =
+    insightsText
+      .split('\n')
+      .filter((line) => line.trim().match(/^[•\-\d.]/))
+      .map((line) => line.trim().replace(/^[•\-\d.]\s*/, '')) ?? [];
+
+  return {
+    systemicPatterns,
+    communityComparison,
+    keyInsights: keyInsights.slice(0, 5), // Top 5 insights
+    communitiesAnalyzed: communities.length,
+  };
+}

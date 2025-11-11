@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../lib/supabase.ts';
 import { createSecClient } from '../lib/secClient.ts';
-import { runResponse } from '@libs/openai-client';
+import { createClient } from '@libs/openai-client';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.
@@ -180,14 +180,17 @@ ${filingContext ? `Key Filing Excerpts:\n${filingContext}\n` : ''}
 
 Write 2-3 sentences explaining what happened and why it might be a rotation signal. Cite accessions when referencing filing data.`;
 
-  // Use Responses API (gpt-5-mini for simple summarization)
-  const summary = await runResponse({
-    model: 'gpt-5-mini',
-    prompt,
-    effort: 'minimal',
-    verbosity: 'low',
-    maxTokens: 400, // Increased to accommodate filing citations
+  // Use modern API with explicit configuration (gpt-5-mini for simple summarization)
+  const client = createClient({ model: 'gpt-5-mini' });
+
+  const response = await client.createResponse({
+    input: prompt,
+    reasoning: { effort: 'minimal' }, // Simple summarization needs minimal effort
+    text: { verbosity: 'low' }, // Concise output for summaries
+    max_output_tokens: 400, // Increased to accommodate filing citations
   });
+
+  const summary = response.output_text;
 
   // Store as a graph node
   const nodeId = `cluster:${input.clusterId}`;
