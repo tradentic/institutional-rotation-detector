@@ -42,9 +42,9 @@ This project identifies when institutional investors (hedge funds, mutual funds,
 ┌────────▼────────────────────────────────────────┐
 │         Activities (Business Logic)             │
 │  - SEC EDGAR Client    - Graph Algorithms       │
-│  - FINRA Integration   - OpenAI Analysis        │
+│  - FINRA Integration   - GPT-5 Analysis (CoT)   │
 │  - Position Tracking   - Scoring Engine         │
-│  - Rate Limiting       - Vector Embeddings      │
+│  - Rate Limiting       - E2B Code Execution     │
 └────────┬────────────────────────────────────────┘
          │
 ┌────────▼────────────────────────────────────────┐
@@ -217,7 +217,7 @@ The system identifies institutional rotation through a multi-step process:
 - **Orchestration**: Temporal.io (durable workflow engine)
 - **Database**: PostgreSQL with pgvector extension
 - **Data Platform**: Supabase
-- **AI/ML**: OpenAI GPT-4 for summarization and analysis
+- **AI/ML**: OpenAI GPT-5 (Responses API) with Chain of Thought and E2B code execution
 - **Graph Algorithms**: Custom PageRank and Louvain implementation
 - **Data Sources**: SEC EDGAR API, UnusualWhales API, FINRA OTC, IEX Exchange
 

@@ -391,12 +391,12 @@ interface GraphSummarizeInput {
 1. **Compute Communities** - Run **Louvain algorithm** on graph (pure algorithm, no LLM)
 2. **For each community:**
    - Extract top nodes by **PageRank** (pure algorithm)
-   - Generate AI summary using OpenAI (**short prompt**, not long context)
+   - Generate AI summary using GPT-5 (**short prompt**, not long context)
    - Store in `graph_communities` table
 
 **Uses:**
 - **Graph algorithms**: Louvain community detection, PageRank
-- **Short AI summaries**: GPT-4 with ~1K token prompts (not long context)
+- **Short AI summaries**: GPT-5-mini with ~1K token prompts (minimal reasoning effort)
 
 **Example:**
 ```bash
@@ -413,7 +413,7 @@ temporal workflow start \
 
 **Activities Called:**
 - `computeCommunities` - Louvain algorithm
-- `summarizeCommunity` - OpenAI summary generation
+- `summarizeCommunity` - GPT-5 summary generation (gpt-5-mini, minimal effort)
 
 **Output:**
 ```typescript
@@ -423,7 +423,7 @@ interface GraphSummarizeResult {
 }
 ```
 
-**Duration:** 5-10 minutes (depends on graph size and OpenAI latency)
+**Duration:** 5-10 minutes (depends on graph size and GPT-5 API latency)
 
 ---
 
@@ -456,11 +456,11 @@ interface GraphQueryInput {
 
 **Part 2: Long Context Synthesis** (activities from `longcontext.activities.ts`)
 4. **Bundle for Synthesis** - Combine graph edges + filing chunks (12K token budget)
-5. **Generate Explanation** - OpenAI with **128K context window** (if question provided)
+5. **Generate Explanation** - GPT-5 with **200K context window** (if question provided)
 
 **Uses:**
 - **Graph algorithms**: K-hop traversal, path finding (fast, no API calls)
-- **Long context synthesis**: GPT-4 Turbo with bundled edges + filing text (slow, API cost)
+- **Long context synthesis**: GPT-5 with bundled edges + filing text (high reasoning effort)
 
 **This is the only workflow that uses BOTH approaches together.**
 
@@ -482,7 +482,7 @@ temporal workflow start \
 - `resolveIssuerNode` - Ticker/CIK → node ID
 - `kHopNeighborhood` - Graph traversal
 - `bundleForSynthesis` - Prepare data
-- `synthesizeWithOpenAI` - Generate explanation
+- `synthesizeWithOpenAI` - Generate explanation (GPT-5 with high reasoning effort)
 
 **Output:**
 ```typescript
