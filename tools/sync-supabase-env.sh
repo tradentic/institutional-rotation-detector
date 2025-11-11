@@ -8,7 +8,7 @@ set -euo pipefail
 #        If not provided, syncs all known apps (temporal-worker, api)
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || cd "$HERE/.." && pwd)"
+ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || (cd "$HERE/.." && pwd))"
 
 log() { echo "[sync-supabase-env] $*"; }
 error() { echo "[sync-supabase-env] ERROR: $*" >&2; }
@@ -25,19 +25,38 @@ if ! supabase status >/dev/null 2>&1; then
   exit 1
 fi
 
-# Extract Supabase credentials from status
-log "Extracting Supabase credentials from 'supabase status'..."
-SUPABASE_STATUS=$(supabase status)
+# Extract Supabase credentials from status using env format
+log "Extracting Supabase credentials from 'supabase status -o env'..."
+SUPABASE_ENV=$(supabase status -o env 2>&1)
 
-SUPABASE_URL=$(echo "$SUPABASE_STATUS" | grep "API URL:" | awk '{print $3}')
-SUPABASE_ANON_KEY=$(echo "$SUPABASE_STATUS" | grep "anon key:" | awk '{print $3}')
-SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_STATUS" | grep "service_role key:" | awk '{print $3}')
-DATABASE_URL=$(echo "$SUPABASE_STATUS" | grep "DB URL:" | awk '{print $3}')
+if [[ "${DEBUG:-false}" == "true" ]]; then
+  log "Raw supabase status output:"
+  echo "$SUPABASE_ENV"
+  log "---"
+fi
+
+# Extract values from env format (KEY="value")
+# Using sed to extract the value between quotes
+SUPABASE_URL=$(echo "$SUPABASE_ENV" | grep "^API_URL=" | sed 's/^API_URL="\(.*\)"$/\1/')
+SUPABASE_ANON_KEY=$(echo "$SUPABASE_ENV" | grep "^ANON_KEY=" | sed 's/^ANON_KEY="\(.*\)"$/\1/')
+SUPABASE_SERVICE_ROLE_KEY=$(echo "$SUPABASE_ENV" | grep "^SERVICE_ROLE_KEY=" | sed 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/')
+DATABASE_URL=$(echo "$SUPABASE_ENV" | grep "^DB_URL=" | sed 's/^DB_URL="\(.*\)"$/\1/')
 
 # Validate extracted values
 if [[ -z "$SUPABASE_URL" ]] || [[ -z "$SUPABASE_ANON_KEY" ]] || [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
-  error "Failed to extract Supabase credentials from 'supabase status'"
-  error "Please ensure Supabase is running properly"
+  error "Failed to extract Supabase credentials from 'supabase status -o env'"
+  error ""
+  error "Expected output format:"
+  error '  API_URL="http://..."'
+  error '  ANON_KEY="eyJ..."'
+  error '  SERVICE_ROLE_KEY="eyJ..."'
+  error '  DB_URL="postgresql://..."'
+  error ""
+  error "Actual output:"
+  echo "$SUPABASE_ENV" | head -20
+  error ""
+  error "Tip: Run 'supabase status -o env' manually to see the full output"
+  error "     Run with DEBUG=true for verbose output"
   exit 1
 fi
 
@@ -104,9 +123,11 @@ if [[ $# -gt 0 ]]; then
   update_env_file "$TARGET_DIR"
 else
   # Update all known app directories
+  log "Root directory: $ROOT"
   APPS=(
     "$ROOT/apps/temporal-worker"
     "$ROOT/apps/api"
+    "$ROOT/apps/admin"
   )
 
   for app_dir in "${APPS[@]}"; do
