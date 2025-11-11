@@ -25,6 +25,10 @@ interface GraphVisualizationProps {
   onNodeClick?: (node: GraphNode) => void;
   onNodeHover?: (node: GraphNode | null) => void;
   backgroundColor?: string;
+  // Animation support
+  newNodeIds?: Set<string>;
+  newEdgeIds?: Set<string>;
+  animatingNodeIds?: Set<string>;
 }
 
 export function GraphVisualization({
@@ -34,11 +38,16 @@ export function GraphVisualization({
   onNodeClick,
   onNodeHover,
   backgroundColor = '#ffffff',
+  newNodeIds = new Set(),
+  newEdgeIds = new Set(),
+  animatingNodeIds = new Set(),
 }: GraphVisualizationProps) {
   const fgRef = useRef<any>();
   const [highlightNodes, setHighlightNodes] = useState(new Set<string>());
   const [highlightLinks, setHighlightLinks] = useState(new Set<string>());
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
+  const [nodeOpacities, setNodeOpacities] = useState<Map<string, number>>(new Map());
+  const [edgeOpacities, setEdgeOpacities] = useState<Map<string, number>>(new Map());
 
   // Prepare graph data in the format react-force-graph expects
   const graphData = {
@@ -80,6 +89,82 @@ export function GraphVisualization({
     }
   }, [graphState.layout]);
 
+  // Animate fade-in for new nodes
+  useEffect(() => {
+    if (newNodeIds.size === 0) return;
+
+    // Start new nodes at 0 opacity
+    const newOpacities = new Map(nodeOpacities);
+    newNodeIds.forEach((id) => {
+      if (!newOpacities.has(id)) {
+        newOpacities.set(id, 0);
+      }
+    });
+    setNodeOpacities(newOpacities);
+
+    // Fade in over 300ms
+    const steps = 20;
+    const stepDelay = 15; // 300ms total
+    let currentStep = 0;
+
+    const interval = setInterval(() => {
+      currentStep++;
+      const opacity = currentStep / steps;
+
+      setNodeOpacities((prev) => {
+        const updated = new Map(prev);
+        newNodeIds.forEach((id) => {
+          updated.set(id, opacity);
+        });
+        return updated;
+      });
+
+      if (currentStep >= steps) {
+        clearInterval(interval);
+      }
+    }, stepDelay);
+
+    return () => clearInterval(interval);
+  }, [newNodeIds]);
+
+  // Animate fade-in for new edges
+  useEffect(() => {
+    if (newEdgeIds.size === 0) return;
+
+    // Start new edges at 0 opacity
+    const newOpacities = new Map(edgeOpacities);
+    newEdgeIds.forEach((id) => {
+      if (!newOpacities.has(id)) {
+        newOpacities.set(id, 0);
+      }
+    });
+    setEdgeOpacities(newOpacities);
+
+    // Fade in over 300ms
+    const steps = 20;
+    const stepDelay = 15;
+    let currentStep = 0;
+
+    const interval = setInterval(() => {
+      currentStep++;
+      const opacity = currentStep / steps;
+
+      setEdgeOpacities((prev) => {
+        const updated = new Map(prev);
+        newEdgeIds.forEach((id) => {
+          updated.set(id, opacity);
+        });
+        return updated;
+      });
+
+      if (currentStep >= steps) {
+        clearInterval(interval);
+      }
+    }, stepDelay);
+
+    return () => clearInterval(interval);
+  }, [newEdgeIds]);
+
   // Handle node click - highlight neighbors
   const handleNodeClick = useCallback(
     (node: any) => {
@@ -120,10 +205,19 @@ export function GraphVisualization({
     (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const isHighlighted = highlightNodes.has(node.id);
       const isHovered = hoverNode?.id === node.id;
+      const isNew = newNodeIds.has(node.id);
+      const isAnimating = animatingNodeIds.has(node.id);
 
       // Calculate node size
       const nodeSize = node.val || 5;
       const radius = Math.sqrt(nodeSize) * 2;
+
+      // Get opacity for fade-in animation
+      const opacity = nodeOpacities.get(node.id) ?? 1;
+
+      // Save context for opacity
+      ctx.save();
+      ctx.globalAlpha = opacity;
 
       // Draw node
       ctx.beginPath();
@@ -131,39 +225,72 @@ export function GraphVisualization({
       ctx.fillStyle = node.color;
       ctx.fill();
 
-      // Add border for highlighted or hovered nodes
-      if (isHighlighted || isHovered) {
-        ctx.strokeStyle = isHovered ? '#fbbf24' : '#3b82f6'; // yellow for hover, blue for highlight
+      // Add border for highlighted, hovered, or new nodes
+      if (isHighlighted || isHovered || isNew || isAnimating) {
+        let borderColor = '#3b82f6'; // blue for highlight
+        if (isHovered) borderColor = '#fbbf24'; // yellow for hover
+        if (isNew || isAnimating) borderColor = '#10b981'; // green for new
+
+        ctx.strokeStyle = borderColor;
         ctx.lineWidth = 2 / globalScale;
         ctx.stroke();
+
+        // Add pulsing glow for animating nodes
+        if (isAnimating) {
+          const pulseRadius = radius + 4 + Math.sin(Date.now() / 200) * 2;
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, pulseRadius, 0, 2 * Math.PI);
+          ctx.strokeStyle = borderColor;
+          ctx.lineWidth = 1 / globalScale;
+          ctx.globalAlpha = 0.3 * opacity;
+          ctx.stroke();
+        }
       }
 
+      // Restore alpha for label
+      ctx.globalAlpha = opacity;
+
       // Draw label if zoomed in enough or highlighted
-      if (globalScale > 1.5 || isHighlighted || isHovered) {
+      if (globalScale > 1.5 || isHighlighted || isHovered || isNew) {
         ctx.font = `${12 / globalScale}px Sans-Serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = '#1f2937'; // gray-800
         ctx.fillText(node.label, node.x, node.y + radius + 8 / globalScale);
       }
+
+      ctx.restore();
     },
-    [highlightNodes, hoverNode]
+    [highlightNodes, hoverNode, newNodeIds, animatingNodeIds, nodeOpacities]
   );
 
   // Link canvas rendering with custom styling
   const linkCanvasObject = useCallback(
     (link: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const isHighlighted = highlightLinks.has(link.id);
+      const isNew = newEdgeIds.has(link.id);
+
+      // Get opacity for fade-in animation
+      const opacity = edgeOpacities.get(link.id) ?? 1;
+
+      // Save context for opacity
+      ctx.save();
+      ctx.globalAlpha = opacity;
 
       // Calculate link width
       const linkWidth = link.width || 1;
-      const actualWidth = isHighlighted ? linkWidth * 2 : linkWidth;
+      const actualWidth = isHighlighted || isNew ? linkWidth * 2 : linkWidth;
 
       // Draw link
       ctx.beginPath();
       ctx.moveTo(link.source.x, link.source.y);
       ctx.lineTo(link.target.x, link.target.y);
-      ctx.strokeStyle = isHighlighted ? '#3b82f6' : link.color;
+
+      let strokeColor = link.color;
+      if (isHighlighted) strokeColor = '#3b82f6';
+      if (isNew) strokeColor = '#10b981'; // green for new edges
+
+      ctx.strokeStyle = strokeColor;
       ctx.lineWidth = actualWidth / globalScale;
       ctx.stroke();
 
@@ -185,6 +312,7 @@ export function GraphVisualization({
 
         // Draw arrow
         ctx.save();
+        ctx.globalAlpha = opacity;
         ctx.translate(arrowX, arrowY);
         ctx.rotate(angle);
         ctx.beginPath();
@@ -192,12 +320,14 @@ export function GraphVisualization({
         ctx.lineTo(-arrowLength, -arrowWidth);
         ctx.lineTo(-arrowLength, arrowWidth);
         ctx.closePath();
-        ctx.fillStyle = link.color;
+        ctx.fillStyle = strokeColor;
         ctx.fill();
         ctx.restore();
       }
+
+      ctx.restore();
     },
-    [highlightLinks]
+    [highlightLinks, newEdgeIds, edgeOpacities]
   );
 
   // Node tooltip

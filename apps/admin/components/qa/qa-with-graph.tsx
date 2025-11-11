@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { QAResults, QAResultData } from '@/components/qa/qa-results';
 import { GraphVisualization } from '@/components/graph/graph-visualization';
 import { GraphControls } from '@/components/graph/graph-controls';
@@ -8,6 +8,7 @@ import { GraphLegend } from '@/components/graph/graph-legend';
 import { GraphStats } from '@/components/graph/graph-stats';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import {
   GraphState,
   GraphNode,
@@ -23,7 +24,16 @@ import {
   EDGE_COLORS,
   getCommunityColor,
 } from '@/lib/graph-utils';
-import { Network, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  GraphEvent,
+  IncrementalGraphState,
+  createInitialGraphState,
+  applyGraphEvent,
+  connectToGraphStream,
+  calculateGraphProgress,
+  getProgressMessage,
+} from '@/lib/graph-streaming';
+import { Network, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 interface QAWithGraphProps {
   result: QAResultData;
@@ -36,20 +46,125 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
   const [showGraph, setShowGraph] = useState(false);
   const [graphState, setGraphState] = useState<GraphState | null>(null);
   const [isGraphReady, setIsGraphReady] = useState(false);
+  const [isStreamingGraph, setIsStreamingGraph] = useState(false);
+  const [incrementalState, setIncrementalState] = useState<IncrementalGraphState>(
+    createInitialGraphState()
+  );
+  const [newNodeIds, setNewNodeIds] = useState<Set<string>>(new Set());
+  const [newEdgeIds, setNewEdgeIds] = useState<Set<string>>(new Set());
+  const disconnectRef = useRef<(() => void) | null>(null);
 
   // Determine if graph should be offered
   const shouldOfferGraph = shouldShowGraphVisualization(questions, category);
   const graphType = determineGraphType(questions);
 
-  // Initialize graph state when results complete
+  // Connect to graph stream when workflow is running
   useEffect(() => {
-    if (result.status === 'completed' && shouldOfferGraph && !graphState) {
-      // Generate mock graph data based on the question type
-      const mockGraphData = generateMockGraphData(questions, graphType);
-      setGraphState(mockGraphData);
-      setIsGraphReady(true);
+    if (!shouldOfferGraph || result.status !== 'running' || !result.workflowId) {
+      return;
     }
-  }, [result.status, shouldOfferGraph, questions, graphType, graphState]);
+
+    setIsStreamingGraph(true);
+    setIncrementalState(createInitialGraphState());
+
+    // Connect to SSE stream
+    const disconnect = connectToGraphStream({
+      workflowId: result.workflowId,
+      onEvent: handleGraphEvent,
+      onError: (error) => {
+        console.error('Graph stream error:', error);
+        setIsStreamingGraph(false);
+      },
+      onComplete: () => {
+        setIsStreamingGraph(false);
+        // Finalize graph state
+        finalizeGraph();
+      },
+    });
+
+    disconnectRef.current = disconnect;
+
+    return () => {
+      disconnect();
+    };
+  }, [result.workflowId, result.status, shouldOfferGraph]);
+
+  // Handle individual graph events
+  const handleGraphEvent = useCallback((event: GraphEvent) => {
+    console.log('Graph event:', event.type, event.data);
+
+    // Apply event to incremental state
+    setIncrementalState((prev) => applyGraphEvent(prev, event));
+
+    // Track new nodes/edges for animation
+    if (event.type === 'nodeAdded') {
+      const nodeId = event.data.node.id;
+      setNewNodeIds((prev) => new Set(prev).add(nodeId));
+      // Clear after animation completes (300ms fade + 500ms display)
+      setTimeout(() => {
+        setNewNodeIds((prev) => {
+          const updated = new Set(prev);
+          updated.delete(nodeId);
+          return updated;
+        });
+      }, 800);
+    }
+
+    if (event.type === 'edgeAdded') {
+      const edgeId = event.data.edge.id;
+      setNewEdgeIds((prev) => new Set(prev).add(edgeId));
+      // Clear after animation completes
+      setTimeout(() => {
+        setNewEdgeIds((prev) => {
+          const updated = new Set(prev);
+          updated.delete(edgeId);
+          return updated;
+        });
+      }, 800);
+    }
+
+    // Auto-show graph when first nodes appear
+    if (event.type === 'nodeAdded' && !showGraph) {
+      setShowGraph(true);
+    }
+  }, [showGraph]);
+
+  // Finalize graph after streaming completes
+  const finalizeGraph = useCallback(() => {
+    setIncrementalState((prev) => {
+      if (prev.nodes.length === 0) return prev;
+
+      // Convert incremental state to final graph state
+      const statistics = calculateGraphStatistics(prev.nodes, prev.edges);
+      const finalGraph: GraphState = {
+        nodes: prev.nodes,
+        edges: prev.edges,
+        layout: getRecommendedLayout(prev.metadata.graphType || graphType),
+        graphType: (prev.metadata.graphType || graphType) as any,
+        highlightedNodes: new Set(),
+        filteredNodeTypes: new Set(['institution', 'issuer', 'community', 'concept']),
+        isAnimating: false,
+        timestamp: new Date(),
+        statistics,
+      };
+
+      setGraphState(finalGraph);
+      setIsGraphReady(true);
+      return prev;
+    });
+  }, [graphType]);
+
+  // Fallback: Generate static mock graph when workflow completes (for testing)
+  useEffect(() => {
+    if (result.status === 'completed' && shouldOfferGraph && !graphState && !isStreamingGraph) {
+      // Only use static mock if no streaming occurred
+      if (incrementalState.nodes.length === 0) {
+        const mockGraphData = generateMockGraphData(questions, graphType);
+        setGraphState(mockGraphData);
+        setIsGraphReady(true);
+      }
+    }
+  }, [result.status, shouldOfferGraph, questions, graphType, graphState, isStreamingGraph, incrementalState.nodes.length]);
 
   const handleLayoutChange = (layout: LayoutType) => {
     if (!graphState) return;
@@ -102,16 +217,40 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
     return <QAResults result={result} onClear={onClear} />;
   }
 
+  // Convert incremental state to display-ready graph state for live streaming
+  const liveGraphState: GraphState | null = isStreamingGraph && incrementalState.nodes.length > 0
+    ? {
+        nodes: incrementalState.nodes,
+        edges: incrementalState.edges,
+        layout: getRecommendedLayout(incrementalState.metadata.graphType || graphType),
+        graphType: (incrementalState.metadata.graphType || graphType) as any,
+        highlightedNodes: new Set(),
+        filteredNodeTypes: new Set(['institution', 'issuer', 'community', 'concept']),
+        isAnimating: incrementalState.metadata.isBuilding,
+        timestamp: new Date(),
+        statistics: calculateGraphStatistics(incrementalState.nodes, incrementalState.edges),
+      }
+    : null;
+
+  const displayGraphState = liveGraphState || graphState;
+
   // Side-by-side layout when graph is shown
-  if (showGraph && graphState) {
+  if (showGraph && (displayGraphState || isStreamingGraph)) {
     return (
       <div className="space-y-4">
         {/* Toggle Graph Button */}
         <div className="flex items-center justify-between">
-          <Badge className="bg-green-100 text-green-800 border-green-200 flex items-center gap-1">
-            <Network className="h-3 w-3" />
-            Graph Visualization Active
-          </Badge>
+          {isStreamingGraph ? (
+            <Badge className="bg-blue-100 text-blue-800 border-blue-200 flex items-center gap-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Building Graph: {incrementalState.nodes.length} nodes, {incrementalState.edges.length} edges
+            </Badge>
+          ) : (
+            <Badge className="bg-green-100 text-green-800 border-green-200 flex items-center gap-1">
+              <Network className="h-3 w-3" />
+              Graph Visualization Active
+            </Badge>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -123,6 +262,23 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
           </Button>
         </div>
 
+        {/* Progress indicator during streaming */}
+        {isStreamingGraph && incrementalState.metadata.progress && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-blue-900">
+                  {getProgressMessage(incrementalState)}
+                </span>
+                <span className="text-blue-700">
+                  {Math.round(calculateGraphProgress(incrementalState) * 100)}%
+                </span>
+              </div>
+              <Progress value={calculateGraphProgress(incrementalState) * 100} className="h-2" />
+            </div>
+          </div>
+        )}
+
         {/* Side-by-side layout */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Text Results */}
@@ -133,33 +289,44 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
           {/* Right: Graph Visualization */}
           <div className="space-y-4">
             {/* Graph Canvas */}
-            <div className="border rounded-lg overflow-hidden bg-white">
-              <GraphVisualization
-                graphState={graphState}
-                width={600}
-                height={600}
-                backgroundColor="#ffffff"
-              />
-            </div>
+            {displayGraphState ? (
+              <>
+                <div className="border rounded-lg overflow-hidden bg-white">
+                  <GraphVisualization
+                    graphState={displayGraphState}
+                    width={600}
+                    height={600}
+                    backgroundColor="#ffffff"
+                    newNodeIds={newNodeIds}
+                    newEdgeIds={newEdgeIds}
+                  />
+                </div>
 
-            {/* Graph Controls */}
-            <div className="grid grid-cols-1 gap-4">
-              <GraphControls
-                graphState={graphState}
-                onLayoutChange={handleLayoutChange}
-                onNodeTypeFilter={handleNodeTypeFilter}
-                onSearchChange={handleSearchChange}
-                onExport={handleExport}
-                onReset={handleReset}
-              />
+                {/* Graph Controls */}
+                <div className="grid grid-cols-1 gap-4">
+                  <GraphControls
+                    graphState={displayGraphState}
+                    onLayoutChange={handleLayoutChange}
+                    onNodeTypeFilter={handleNodeTypeFilter}
+                    onSearchChange={handleSearchChange}
+                    onExport={handleExport}
+                    onReset={handleReset}
+                  />
 
-              <GraphStats
-                statistics={graphState.statistics}
-                isAnimating={graphState.isAnimating}
-              />
+                  <GraphStats
+                    statistics={displayGraphState.statistics}
+                    isAnimating={displayGraphState.isAnimating}
+                  />
 
-              <GraphLegend graphType={graphState.graphType} />
-            </div>
+                  <GraphLegend graphType={displayGraphState.graphType} />
+                </div>
+              </>
+            ) : (
+              <div className="border rounded-lg bg-gray-50 p-12 text-center">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
+                <p className="text-gray-600">Initializing graph visualization...</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -170,16 +337,23 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
   return (
     <div className="space-y-4">
       {/* Graph Available Notification */}
-      {isGraphReady && (
+      {(isGraphReady || isStreamingGraph) && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Network className="h-5 w-5 text-blue-600" />
+              {isStreamingGraph ? (
+                <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+              ) : (
+                <Network className="h-5 w-5 text-blue-600" />
+              )}
               <div>
-                <h4 className="font-semibold text-blue-900">Graph Visualization Available</h4>
+                <h4 className="font-semibold text-blue-900">
+                  {isStreamingGraph ? 'Building Graph Visualization' : 'Graph Visualization Available'}
+                </h4>
                 <p className="text-sm text-blue-700">
-                  This Q&A explores network relationships. View the interactive graph to see
-                  connections visually.
+                  {isStreamingGraph
+                    ? `Discovering network relationships in real-time (${incrementalState.nodes.length} nodes)`
+                    : 'This Q&A explores network relationships. View the interactive graph to see connections visually.'}
                 </p>
               </div>
             </div>
@@ -197,7 +371,7 @@ export function QAWithGraph({ result, questions, category, onClear }: QAWithGrap
   );
 }
 
-// Generate mock graph data based on question type
+// Generate mock graph data based on question type (fallback for testing)
 function generateMockGraphData(questions: string[], graphType: string): GraphState {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
