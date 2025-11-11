@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CustomQuestionForm } from '@/components/qa/custom-question-form';
-import { QAResults, QAResultData, QAAnswer } from '@/components/qa/qa-results';
+import { QAResultData } from '@/components/qa/qa-results';
+import { QAWithGraph } from '@/components/qa/qa-with-graph';
 import { QA_PRESETS, getCategoryInfo, QA_CATEGORIES } from '@/lib/qa-presets';
 import { Play, Clock, ChevronRight } from 'lucide-react';
 
@@ -13,15 +14,21 @@ export default function QAPage() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [currentResult, setCurrentResult] = useState<QAResultData | null>(null);
+  const [currentQuestions, setCurrentQuestions] = useState<string[]>([]);
+  const [currentPresetCategory, setCurrentPresetCategory] = useState<string | undefined>();
 
   const handleRunPreset = async (presetId: string) => {
     const preset = QA_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
 
+    setCurrentQuestions(preset.questions);
+    setCurrentPresetCategory(preset.category);
     await runQuestions(preset.questions, preset.ticker);
   };
 
   const handleRunCustom = async (questions: string[], ticker?: string) => {
+    setCurrentQuestions(questions);
+    setCurrentPresetCategory(undefined);
     await runQuestions(questions, ticker);
   };
 
@@ -131,7 +138,12 @@ export default function QAPage() {
 
       {/* Results (if any) */}
       {currentResult && (
-        <QAResults result={currentResult} onClear={handleClearResults} />
+        <QAWithGraph
+          result={currentResult}
+          questions={currentQuestions}
+          category={currentPresetCategory}
+          onClear={handleClearResults}
+        />
       )}
 
       {/* Custom Question Form */}
