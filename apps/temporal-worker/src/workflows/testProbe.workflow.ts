@@ -1,4 +1,4 @@
-import { upsertWorkflowSearchAttributes, type WorkflowSearchAttributes } from './utils.ts';
+import { upsertWorkflowSearchAttributes, type WorkflowSearchAttributes } from './utils.js';
 
 export type TestProbeInput = WorkflowSearchAttributes & {
   ticker?: string;

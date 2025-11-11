@@ -88,7 +88,12 @@ nano .env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
 
-pnpm install && pnpm run build
+# Install dependencies (required for both temporal-worker and openai-client lib)
+cd ../../libs/openai-client && pnpm install
+cd ../../apps/temporal-worker && pnpm install
+
+# Build and start
+pnpm run build
 node dist/worker.js
 ```
 

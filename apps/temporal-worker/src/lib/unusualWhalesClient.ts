@@ -1,4 +1,4 @@
-import { RateLimiter } from './rateLimit.ts';
+import { RateLimiter } from './rateLimit.js';
 
 export interface UnusualWhalesConfig {
   apiKey: string;

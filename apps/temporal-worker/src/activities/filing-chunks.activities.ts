@@ -1,5 +1,5 @@
-import { createSupabaseClient } from '../lib/supabase.ts';
-import { createSecClient } from '../lib/secClient.ts';
+import { createSupabaseClient } from '../lib/supabase.js';
+import { createSecClient } from '../lib/secClient.js';
 import { createClient } from '@libs/openai-client';
 
 /**

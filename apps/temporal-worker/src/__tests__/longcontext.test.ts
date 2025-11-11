@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { bundleForSynthesis } from '../activities/longcontext.activities.ts';
+import { bundleForSynthesis } from '../activities/longcontext.activities.js';
 
 const edgeRows = [
   {

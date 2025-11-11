@@ -334,7 +334,11 @@ export class CoTSession {
     sessionId: string;
     model: string;
     turns: number;
-    totalTokens: typeof this.state.totalTokens;
+    totalTokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+    };
     duration: number; // milliseconds
   } {
     return {

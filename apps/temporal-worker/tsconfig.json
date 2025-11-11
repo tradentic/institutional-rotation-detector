@@ -4,7 +4,6 @@
     "module": "ESNext",
     "moduleResolution": "Node",
     "outDir": "dist",
-    "rootDir": "src",
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "strict": true,
@@ -15,6 +14,6 @@
       "@libs/openai-client/*": ["../../libs/openai-client/src/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../../libs/openai-client/src/**/*"],
   "exclude": ["node_modules", "dist", "src/__tests__"]
 }

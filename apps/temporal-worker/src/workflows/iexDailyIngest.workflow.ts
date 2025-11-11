@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.ts';
+import { upsertWorkflowSearchAttributes } from './utils.js';
 import type {
   IexDailyIngestInput as ActivityInput,
   IexDailyIngestResult,
-} from '../activities/iex.activities.ts';
+} from '../activities/iex.activities.js';
 
 const activities = proxyActivities<{
   downloadIexDaily: (input: ActivityInput) => Promise<IexDailyIngestResult>;

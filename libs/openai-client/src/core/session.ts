@@ -300,11 +300,11 @@ export class CoTSession {
 
     // Extract code from response
     let code = '';
-    const toolCall = codeResponse.items.find(item => item.type === 'tool_call');
-    if (toolCall?.tool_call) {
-      code = typeof toolCall.tool_call.input === 'string'
-        ? toolCall.tool_call.input
-        : JSON.stringify(toolCall.tool_call.input);
+    const toolCall = codeResponse.items.find(item => item.type === 'custom_tool_call');
+    if (toolCall?.custom_tool_call) {
+      code = typeof toolCall.custom_tool_call.input === 'string'
+        ? toolCall.custom_tool_call.input
+        : JSON.stringify(toolCall.custom_tool_call.input);
     } else {
       code = codeResponse.output_text;
     }
@@ -340,7 +340,11 @@ export class CoTSession {
     sessionId: string;
     model: string;
     turns: number;
-    totalTokens: typeof this.state.totalTokens;
+    totalTokens: {
+      input: number;
+      output: number;
+      reasoning: number;
+    };
     duration: number; // milliseconds
   } {
     return {
@@ -375,11 +379,10 @@ export class CoTSession {
    */
   fork(): CoTSession {
     return new CoTSession({
-      model: this.state.model,
+      client: this.client,
       effort: this.state.effort,
       verbosity: this.state.verbosity,
       systemPrompt: this.state.systemPrompt,
-      client: this.client,
       tools: [...this.tools],
       e2b: this.e2bConfig,
     });

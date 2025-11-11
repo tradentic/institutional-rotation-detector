@@ -25,7 +25,7 @@ export interface WorkflowSearchAttributes {
   periodEnd?: string | Date;
   windowKey?: string;
   batchId?: string;
-  runKind?: 'backfill' | 'daily' | 'query' | 'detect' | 'analysis' | 'compute' | 'scheduled';
+  runKind?: 'backfill' | 'daily' | 'query' | 'detect' | 'analysis' | 'compute' | 'scheduled' | 'research';
   // Microstructure data attributes
   symbol?: string;
   dataset?: string;

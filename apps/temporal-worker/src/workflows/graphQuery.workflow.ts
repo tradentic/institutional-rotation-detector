@@ -1,16 +1,16 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.ts';
+import { upsertWorkflowSearchAttributes } from './utils.js';
 import type {
   ResolveIssuerNodeInput,
   ResolveIssuerNodeResult,
-} from '../activities/graph.activities.ts';
-import type { KHopInput, NeighborhoodResult } from '../activities/graphrag.activities.ts';
+} from '../activities/graph.activities.js';
+import type { KHopInput, NeighborhoodResult } from '../activities/graphrag.activities.js';
 import type {
   BundleForSynthesisInput,
   SynthesisBundle,
   SynthesizeInput,
   SynthesizeResult,
-} from '../activities/longcontext.activities.ts';
+} from '../activities/longcontext.activities.js';
 
 const {
   resolveIssuerNode,

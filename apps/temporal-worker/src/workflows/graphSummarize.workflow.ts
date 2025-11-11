@@ -1,6 +1,6 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.ts';
-import type { ComputeCommunitiesInput, SummarizeCommunityInput } from '../activities/graphrag.activities.ts';
+import { quarterBounds, upsertWorkflowSearchAttributes } from './utils.js';
+import type { ComputeCommunitiesInput, SummarizeCommunityInput } from '../activities/graphrag.activities.js';
 
 const {
   computeCommunities,

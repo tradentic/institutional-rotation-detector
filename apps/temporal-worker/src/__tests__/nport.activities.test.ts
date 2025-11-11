@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseNportDocument } from '../activities/nport.activities.ts';
+import { parseNportDocument } from '../activities/nport.activities.js';
 
 const sampleJson = JSON.stringify({
   edgarSubmission: {

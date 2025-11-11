@@ -1,4 +1,4 @@
-import { createSupabaseClient } from '../lib/supabase.ts';
+import { createSupabaseClient } from '../lib/supabase.js';
 import type {
   MicroBrokerInstitutionMapRecord,
   MicroInstitutionalFlowRecord,
@@ -7,7 +7,7 @@ import type {
   MicroOffExVenueWeeklyRecord,
   FlowDirection,
   MicroQualityFlag,
-} from '../lib/schema.ts';
+} from '../lib/schema.js';
 
 // ============================================================================
 // Broker-Dealer Mapping

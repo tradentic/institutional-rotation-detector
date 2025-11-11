@@ -1,6 +1,6 @@
 import { continueAsNew, proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils.ts';
-import type { IngestQuarterInput } from './ingestQuarter.workflow.ts';
+import { quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils.js';
+import type { IngestQuarterInput } from './ingestQuarter.workflow.js';
 
 const { resolveCIK } = proxyActivities<{ resolveCIK: (ticker: string) => Promise<{ cik: string; cusips: string[] }> }>(
   {

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { UnusualWhalesClient } from '../lib/unusualWhalesClient.ts';
+import type { UnusualWhalesClient } from '../lib/unusualWhalesClient.js';
 
 // ============================================================================
 // GENERIC API HELPERS

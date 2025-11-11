@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import * as supabaseModule from '../lib/supabase.ts';
-import { buildEdges } from '../activities/sankey.activities.ts';
+import * as supabaseModule from '../lib/supabase.js';
+import { buildEdges } from '../activities/sankey.activities.js';
 
 describe('Sankey builder', () => {
   test('balances flows with remainder node', async () => {
