@@ -56,7 +56,11 @@ export type {
   CustomTool,
   FunctionTool,
   Tool,
+  ToolChoice,
   AllowedToolsChoice,
+  ForcedFunctionChoice,
+  ForcedCustomChoice,
+  ToolGrammar,
   E2BCodeExecutionConfig,
 } from './core/types.js';
 

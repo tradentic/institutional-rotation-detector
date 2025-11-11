@@ -18,7 +18,7 @@ import {
   createAnalysisSession,
   createCodeSession,
   createClient,
-} from '../../../../libs/openai-client/src/index.js';
+} from '@libs/openai-client';
 
 // ============================================================================
 // Example 1: Multi-Step Rotation Analysis

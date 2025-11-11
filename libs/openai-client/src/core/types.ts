@@ -16,13 +16,47 @@ export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
 export type Verbosity = 'low' | 'medium' | 'high';
 
 /**
+ * Context-free grammar for constraining custom tool outputs
+ */
+export interface ToolGrammar {
+  type: 'grammar';
+  syntax: 'lark' | 'regex';
+  definition: string;
+}
+
+/**
  * Custom tool definition for freeform text inputs
+ *
+ * Custom tools accept any raw text as input (code, SQL, shell commands, prose)
+ * without JSON structure constraints. Optionally constrain outputs with CFGs.
+ *
+ * @example
+ * ```typescript
+ * // Freeform code execution (no constraints)
+ * {
+ *   type: 'custom',
+ *   name: 'code_exec',
+ *   description: 'Executes arbitrary Python code',
+ * }
+ *
+ * // With Lark CFG to constrain SQL syntax
+ * {
+ *   type: 'custom',
+ *   name: 'sql_query',
+ *   description: 'Generates SQL queries',
+ *   format: {
+ *     type: 'grammar',
+ *     syntax: 'lark',
+ *     definition: 'start: select_stmt\nselect_stmt: ...'
+ *   }
+ * }
+ * ```
  */
 export interface CustomTool {
   type: 'custom';
   name: string;
   description: string;
-  grammar?: string; // Optional context-free grammar (Lark format)
+  format?: ToolGrammar; // Optional CFG to constrain outputs
 }
 
 /**
@@ -40,13 +74,35 @@ export interface FunctionTool {
 export type Tool = CustomTool | FunctionTool;
 
 /**
- * Allowed tools choice for restricting tool usage
+ * Tool choice options
  */
+
+/** Restrict model to subset of available tools */
 export interface AllowedToolsChoice {
   type: 'allowed_tools';
   mode: 'auto' | 'required';
   tools: Array<{ type: 'function'; name: string } | { type: 'custom'; name: string }>;
 }
+
+/** Force calling a specific function tool */
+export interface ForcedFunctionChoice {
+  type: 'function';
+  name: string;
+}
+
+/** Force calling a specific custom tool */
+export interface ForcedCustomChoice {
+  type: 'custom';
+  name: string;
+}
+
+export type ToolChoice =
+  | 'auto' // Model decides (0, 1, or multiple tools)
+  | 'required' // Model must call 1+ tools
+  | 'none' // Don't call any tools
+  | AllowedToolsChoice // Restrict to subset
+  | ForcedFunctionChoice // Force specific function
+  | ForcedCustomChoice; // Force specific custom tool
 
 /**
  * E2B code execution configuration
@@ -116,7 +172,7 @@ export interface RequestParams {
   };
   max_output_tokens?: number;
   tools?: Tool[];
-  tool_choice?: 'auto' | 'required' | AllowedToolsChoice;
+  tool_choice?: ToolChoice;
   previous_response_id?: string; // For CoT
   e2b_execution?: E2BCodeExecutionConfig;
 }
