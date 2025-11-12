@@ -42,6 +42,11 @@ supabase start
 # Apply all database migrations via Supabase CLI
 supabase db reset
 
+# (Optional) Seed fund managers for faster first run
+pnpm run seed:managers  # Pre-seeds 20+ common institutional fund managers
+pnpm run seed:index     # Seeds index calendar data
+# Note: Seeding is optional - workflows auto-create missing fund manager entities
+
 # Sync environment variables to all apps
 ./tools/sync-supabase-env.sh
 ./tools/sync-temporal-env.sh

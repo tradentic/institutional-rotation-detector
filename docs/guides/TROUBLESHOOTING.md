@@ -616,6 +616,62 @@ await pMap(items, processItem, { concurrency: 10 });
 
 ## Data Issues
 
+### Entity Not Found Errors
+
+**Problem:** Workflow fails with "Entity not found for CIK xxxx"
+
+**Symptoms:**
+```
+Error: Entity not found for CIK 0001067983
+Activity failed: parse13FInfoTables
+```
+
+**Explanation:**
+
+The workflow fetches 13F filings **related to the issuer** (e.g., Apple) from the SEC. These 13F filings are submitted by fund managers, and the database needs an entry for each fund manager to store position data.
+
+**Solution:**
+
+**As of the latest update, this error should not occur** - the system auto-creates missing fund manager entities when parsing 13F filings.
+
+If you still encounter this error:
+
+**1. Rebuild and restart the worker:**
+```bash
+# From repo root
+pnpm run build:worker
+pnpm run start:worker
+```
+
+**2. (Optional) Pre-seed common fund managers:**
+```bash
+# Speeds up first run
+pnpm run seed:managers
+```
+
+**3. Verify auto-creation is working:**
+
+Check the code in `apps/temporal-worker/src/activities/edgar.activities.ts` around line 293-344 for the `getEntityId` function. It should have logic to auto-create missing entities.
+
+**4. Manual entity creation (if needed):**
+```sql
+-- Insert fund manager manually
+INSERT INTO entities (cik, name, kind) VALUES
+  ('0001067983', 'Berkshire Hathaway Inc.', 'manager')
+ON CONFLICT (cik, kind) DO NOTHING;
+```
+
+**How Auto-Creation Works:**
+
+When the workflow encounters a fund manager that doesn't exist:
+1. It fetches the entity name from SEC's `/submissions/CIK{cik}.json` API
+2. Creates a new `entities` record with `kind='manager'`
+3. Continues processing the 13F filing
+
+This means you can start with an **empty database** and workflows will populate fund managers automatically.
+
+---
+
 ### Duplicate Filings
 
 **Problem:** Same filing ingested multiple times

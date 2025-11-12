@@ -79,23 +79,28 @@ supabase start
 # 5. Apply database migrations
 supabase db reset
 
-# 6. Sync environment variables automatically
+# 6. (Optional) Seed fund managers for faster first run
+pnpm run seed:managers  # Pre-seeds common institutional fund managers
+pnpm run seed:index     # Seeds index calendar data
+# Note: Seeding is optional - workflows auto-create missing fund manager entities
+
+# 7. Sync environment variables automatically
 ./tools/sync-supabase-env.sh   # Extracts Supabase credentials to all apps
 ./tools/sync-temporal-env.sh   # Configures Temporal settings for all apps
 
-# 7. Add your API keys to apps/temporal-worker/.env.local
+# 8. Add your API keys to apps/temporal-worker/.env.local
 nano apps/temporal-worker/.env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
 
-# 8. Start Temporal with persistent storage (Terminal 2)
+# 9. Start Temporal with persistent storage (Terminal 2)
 ./tools/start-temporal.sh
 # OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 
-# 9. Setup Temporal search attributes (Terminal 3)
+# 10. Setup Temporal search attributes (Terminal 3)
 ./tools/setup-temporal-attributes.sh
 
-# 10. Build and start worker (from repo root)
+# 11. Build and start worker (from repo root)
 pnpm run build:worker
 pnpm run start:worker
 ```

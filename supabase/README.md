@@ -107,10 +107,41 @@ SELECT * FROM pg_extension WHERE extname = 'vector';
 
 ## Seed Data
 
+The database requires minimal seed data to function. Most entities are created automatically by workflows.
+
+### Auto-Created Entities
+
+**Fund Manager Entities** are automatically created when parsing 13F filings. When the `ingestIssuerWorkflow` encounters a fund manager that doesn't exist in the database:
+1. It fetches the entity name from SEC's `/submissions/CIK{cik}.json` API
+2. Creates a new `entities` record with `kind='manager'`
+3. Continues processing the 13F filing
+
+This means you can start with an **empty database** and workflows will populate fund managers automatically.
+
+### Manual Seed Data (Optional)
+
 Seed data can be managed in two ways:
 
 1. **Integrated into migrations:** Reference data that should always be present is included directly in numbered migration files (e.g., `005_seed_etf_entities.sql`, `006_seed_index_windows.sql`)
 2. **Optional seed files:** Test data or environment-specific data can be placed in `supabase/seed/`
+
+### Pre-Seeding Fund Managers (Recommended)
+
+While auto-creation works, pre-seeding common fund managers speeds up the first ingestion run:
+
+```bash
+# From repo root
+pnpm run seed:managers  # Seeds 20+ common institutional fund managers
+pnpm run seed:index     # Seeds index calendar data
+```
+
+**Benefits of pre-seeding:**
+- ✅ Faster first run (no SEC API calls for common managers)
+- ✅ Known entity names instead of placeholders
+- ✅ Reduces risk of SEC rate limiting during ingestion
+- ✅ Better for batch ingestion of multiple issuers
+
+See [tools/README.md](../tools/README.md#seed-fund-managersts) for detailed documentation on seed scripts.
 
 ### Creating Seed Files
 
