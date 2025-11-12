@@ -95,11 +95,11 @@ apps/admin/
 ## Tech Stack
 
 - **Framework**: Next.js 15 with App Router
-- **UI**: Tailwind CSS + shadcn/ui
+- **UI**: Tailwind CSS v4 + shadcn/ui
 - **TypeScript**: Full type safety
 - **Temporal**: Workflow orchestration
 - **Supabase**: Database client
-- **Validation**: Zod schemas
+- **Validation**: Zod v4 schemas
 
 ## Documentation
 
