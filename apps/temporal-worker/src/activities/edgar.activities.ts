@@ -160,23 +160,30 @@ export async function resolveCIK(ticker: string) {
   }
 
   const cik = normalizeCik(match.cik_str.toString());
-  const submissionsResponse = await client.get(`/submissions/CIK${cik}.json`);
-  const submissionsJson = await submissionsResponse.json();
-  const parsed = companySubmissionsSchema.parse(submissionsJson);
-  const securities = parsed.securities ?? [];
-  const cusipValues = securities.map((sec) => sec.cusip);
-  const normalizedCusips = normalizeCusips(cusipValues);
-  if (normalizedCusips.length > 0) {
-    return { cik, cusips: normalizedCusips };
+
+  // Get CUSIPs from database (populated by parsing 13G/13D filings)
+  // The securities field in the SEC API only exists for 13F filers (institutional investors),
+  // not for issuers (companies like AAPL, TSLA). This workflow is designed to track
+  // institutional rotation IN issuers, so we need to get CUSIPs from the database
+  // where they're extracted from 13G/13D filings ABOUT the issuer.
+  const supabase = createSupabaseClient();
+  const { data: cusipRows, error: cusipError } = await supabase
+    .from('cusip_issuer_map')
+    .select('cusip')
+    .eq('issuer_cik', cik);
+
+  if (cusipError) {
+    console.error(`Error fetching CUSIPs for ${ticker} (${cik}):`, cusipError);
+    throw cusipError;
   }
-  const fallbackTickers = Array.from(
-    new Set(
-      securities
-        .map((sec) => sec.ticker?.toUpperCase())
-        .filter((value): value is string => Boolean(value))
-    )
-  );
-  return { cik, cusips: fallbackTickers };
+
+  const cusips = (cusipRows ?? [])
+    .map((row: any) => row.cusip)
+    .filter(Boolean);
+
+  // Note: CUSIPs may be empty on first run - they get populated by parse13G13D
+  // activity when 13G/13D filings are processed in fetchFilings
+  return { cik, cusips };
 }
 
 const filingSchema = z.object({

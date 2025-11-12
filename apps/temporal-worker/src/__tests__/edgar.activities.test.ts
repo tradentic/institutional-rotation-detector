@@ -17,64 +17,54 @@ describe('resolveCIK activity', () => {
     vi.restoreAllMocks();
   });
 
-  test('resolves ticker via search API and returns cusips', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
+  test('resolves ticker via search API and returns cusips from database', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            cik: '0001084869',
-            securities: [
-              { ticker: 'IRBT', cusip: '123456789' },
-              { ticker: 'IRBT', cusip: '123456789' },
-            ],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
-      );
+    );
     global.fetch = fetchMock as any;
+
+    const select = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockResolvedValue({
+      data: [{ cusip: '123456789' }, { cusip: '987654321' }],
+      error: null,
+    });
+    const from = vi.fn().mockReturnValue({ select, eq });
+    vi.spyOn(supabaseModule, 'createSupabaseClient').mockReturnValue({ from } as any);
 
     const result = await resolveCIK('IRBT');
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://www.sec.gov/files/company_tickers.json');
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://data.sec.gov/submissions/CIK0001084869.json');
-    expect(result).toEqual({ cik: '0001084869', cusips: ['123456789'] });
+    expect(from).toHaveBeenCalledWith('cusip_issuer_map');
+    expect(select).toHaveBeenCalledWith('cusip');
+    expect(eq).toHaveBeenCalledWith('issuer_cik', '0001084869');
+    expect(result).toEqual({ cik: '0001084869', cusips: ['123456789', '987654321'] });
   });
 
-  test('falls back to tickers when cusips missing', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
+  test('returns empty cusips when none found in database', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            cik: '0001084869',
-            securities: [
-              { ticker: 'IRBT' },
-              { ticker: 'IRBT.A' },
-            ],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
-      );
+    );
     global.fetch = fetchMock as any;
+
+    const select = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockResolvedValue({
+      data: [],
+      error: null,
+    });
+    const from = vi.fn().mockReturnValue({ select, eq });
+    vi.spyOn(supabaseModule, 'createSupabaseClient').mockReturnValue({ from } as any);
 
     const result = await resolveCIK('IRBT');
 
     expect(result.cik).toBe('0001084869');
-    expect(result.cusips).toEqual(['IRBT', 'IRBT.A']);
+    expect(result.cusips).toEqual([]);
   });
 
   test('throws when ticker missing', async () => {
