@@ -1,4 +1,4 @@
-import { RateLimiter } from './rateLimit';
+import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
 
 export interface UnusualWhalesConfig {
   apiKey: string;
@@ -7,10 +7,11 @@ export interface UnusualWhalesConfig {
 }
 
 export class UnusualWhalesClient {
-  private limiter: RateLimiter;
+  private limiter: DistributedRateLimiter;
 
   constructor(private readonly config: UnusualWhalesConfig) {
-    this.limiter = new RateLimiter(config.maxRps);
+    // Use distributed rate limiter so all worker instances share the same limit
+    this.limiter = createDistributedRateLimiter('unusualwhales-api', config.maxRps);
   }
 
   async get<T = any>(path: string, params?: Record<string, string>): Promise<T> {

@@ -1,4 +1,4 @@
-import { RateLimiter } from './rateLimit';
+import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
 import { getRedisCache, generateSecCacheKey } from './redisClient';
 
 export interface SecClientConfig {
@@ -28,11 +28,12 @@ function getCacheTTL(path: string): number {
 }
 
 export class SecClient {
-  private limiter: RateLimiter;
+  private limiter: DistributedRateLimiter;
   private cache = getRedisCache();
 
   constructor(private readonly config: SecClientConfig) {
-    this.limiter = new RateLimiter(config.maxRps);
+    // Use distributed rate limiter so all worker instances share the same limit
+    this.limiter = createDistributedRateLimiter('sec-api', config.maxRps);
   }
 
   async get(path: string, init?: RequestInit): Promise<Response> {
