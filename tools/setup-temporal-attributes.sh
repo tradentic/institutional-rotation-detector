@@ -60,28 +60,33 @@ create_search_attribute() {
 # Create search attributes
 echo "📋 Creating search attributes in namespace '${TEMPORAL_NAMESPACE}'..."
 echo ""
+echo "⚠️  Note: Temporal dev server limits: max 10 Keyword, max 3 Datetime"
+echo ""
 
-# Core rotation detection attributes
+# Core rotation detection attributes (9 Keyword total)
 create_search_attribute "Ticker" "Keyword"
 create_search_attribute "CIK" "Keyword"
-create_search_attribute "FilerCIK" "Keyword"
 create_search_attribute "Form" "Keyword"
-create_search_attribute "Accession" "Keyword"
-create_search_attribute "PeriodEnd" "Datetime"
 create_search_attribute "WindowKey" "Keyword"
 create_search_attribute "BatchId" "Keyword"
 create_search_attribute "RunKind" "Keyword"
 
-echo ""
-echo "🔬 Microstructure search attributes..."
-
+# Microstructure search attributes (3 more Keyword = 9 total)
 create_search_attribute "Symbol" "Keyword"
 create_search_attribute "Dataset" "Keyword"
 create_search_attribute "Granularity" "Keyword"
-create_search_attribute "WeekEnd" "Datetime"
+
+# Datetime attributes (3 total - at limit)
+create_search_attribute "PeriodEnd" "Datetime"
 create_search_attribute "TradeDate" "Datetime"
-create_search_attribute "SettlementDate" "Datetime"
-create_search_attribute "Provenance" "Keyword"
+create_search_attribute "WeekEnd" "Datetime"
+
+# Text attributes (no limit)
+echo ""
+echo "📝 Text search attributes (unlimited)..."
+create_search_attribute "Provenance" "Text"
+create_search_attribute "FilerCIK" "Text"
+create_search_attribute "Accession" "Text"
 
 echo ""
 echo "✅ All search attributes configured successfully!"

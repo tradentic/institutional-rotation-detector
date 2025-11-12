@@ -43,9 +43,9 @@ let lastAppliedAttributes: Record<string, string[]> = {};
 const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }> = {
   ticker: { name: 'Ticker', type: SearchAttributeType.KEYWORD },
   cik: { name: 'CIK', type: SearchAttributeType.KEYWORD },
-  filerCik: { name: 'FilerCIK', type: SearchAttributeType.KEYWORD },
+  filerCik: { name: 'FilerCIK', type: SearchAttributeType.TEXT },
   form: { name: 'Form', type: SearchAttributeType.KEYWORD },
-  accession: { name: 'Accession', type: SearchAttributeType.KEYWORD },
+  accession: { name: 'Accession', type: SearchAttributeType.TEXT },
   periodEnd: { name: 'PeriodEnd', type: SearchAttributeType.DATETIME },
   windowKey: { name: 'WindowKey', type: SearchAttributeType.KEYWORD },
   batchId: { name: 'BatchId', type: SearchAttributeType.KEYWORD },
