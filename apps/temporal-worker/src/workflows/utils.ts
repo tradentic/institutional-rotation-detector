@@ -43,6 +43,10 @@ let lastAppliedAttributes: Record<string, string[]> = {};
 // NOTE: Only attributes listed here are registered in Temporal.
 // weekEnd is intentionally omitted due to Temporal dev server's 3 Datetime limit.
 // If workflows try to set weekEnd, it will be silently ignored.
+//
+// ⚠️  SYNC REQUIRED: This config must match tools/setup-temporal-attributes.sh
+// When adding/removing/changing attributes, update BOTH files and run 'pnpm test'
+// to verify they're in sync (see search-attributes.test.ts).
 const attributeConfig: Partial<Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }>> = {
   ticker: { name: 'Ticker', type: SearchAttributeType.KEYWORD },
   cik: { name: 'CIK', type: SearchAttributeType.KEYWORD },
