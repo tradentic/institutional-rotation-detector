@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase';
 import { computeRotationScore, ScoreInputs } from '../lib/scoring';
 import type { RotationEventRecord } from '../lib/schema';
+import { ensureCusipMappings } from './entity-utils';
 
 type SupabaseFactory = typeof createSupabaseClient;
 
@@ -113,8 +114,12 @@ async function computeDumpContext(cik: string, quarter: QuarterBounds): Promise<
   if (cached) {
     return cached;
   }
+
+  // Ensure CUSIP mappings exist before querying
+  await ensureCusipMappings(cik);
+
   const supabase = getSupabaseClient();
-  const { data: cusipRows, error: cusipError } = await supabase
+  const { data: cusipRows, error: cusipError} = await supabase
     .from('cusip_issuer_map')
     .select('cusip')
     .eq('issuer_cik', cik);

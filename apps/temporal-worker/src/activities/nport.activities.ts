@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
+import { ensureEntity } from './entity-utils';
 
 export type Month = { month: string };
 
@@ -229,32 +230,8 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
     return 0;
   }
 
-  // Get or create entity for this fund
-  let holderId = await resolveHolderId(supabase, normalizedCik);
-  if (!holderId) {
-    // Auto-create fund entity
-    const entityName = submissionsJson?.name || `Fund ${normalizedCik}`;
-    console.log(`[fetchMonthly] Auto-creating fund entity for CIK ${normalizedCik} (${entityName})`);
-
-    const { data: newEntity, error: insertError } = await supabase
-      .from('entities')
-      .insert({
-        cik: normalizedCik,
-        name: entityName,
-        kind: 'fund',
-      })
-      .select('entity_id')
-      .single();
-
-    if (insertError) {
-      throw new Error(`Failed to create fund entity for CIK ${normalizedCik}: ${insertError.message}`);
-    }
-
-    holderId = newEntity?.entity_id;
-    if (!holderId) {
-      throw new Error(`Failed to get entity_id after creating entity for CIK ${normalizedCik}`);
-    }
-  }
+  // Ensure fund entity exists (auto-creates if needed)
+  const { entity_id: holderId } = await ensureEntity(normalizedCik, 'fund');
 
   const monthToFiling = new Map<string, FilingSummary>();
   for (const filing of filings) {

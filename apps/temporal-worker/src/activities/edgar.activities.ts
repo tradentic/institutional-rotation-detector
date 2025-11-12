@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
 import type { FilingCadence, FilingRecord } from '../lib/schema';
+import { ensureEntity } from './entity-utils';
 
 const tickerSearchSchema = z.record(
   z.string(),
@@ -629,6 +630,10 @@ export async function parse13G13D(accessions: FilingRecord[]) {
       matchGroup(plainText, /CUSIP (?:NUMBER|No\.)\s*([0-9A-Za-z]+)/i) ??
         matchGroup(plainText, /CUSIP\s+No\.\s*([0-9A-Za-z]+)/i)
     );
+
+    // Ensure entities exist for both issuer and holder
+    await ensureEntity(issuerCik, 'issuer');
+    await ensureEntity(normalizedHolderCik, 'manager');
 
     const { error: upsertError } = await supabase
       .from('bo_snapshots')

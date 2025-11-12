@@ -2,6 +2,7 @@ import { createSupabaseClient } from '../lib/supabase';
 import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient';
 import crypto from 'crypto';
 import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
+import { ensureCusipMappings } from './entity-utils';
 
 let cachedClient: FinraClient | null = null;
 
@@ -188,11 +189,14 @@ function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
 }
 
 export async function fetchShortInterest(cik: string, settleDates: string[]): Promise<number> {
+  // Ensure CUSIP mappings exist before attempting to fetch
+  await ensureCusipMappings(cik);
+
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
   const cusips = await loadCusips(supabase, cik);
 
-  // If no CUSIP mappings exist, skip (issuer may not have CUSIPs registered yet)
+  // If still no CUSIP mappings exist, skip
   if (cusips.size === 0) {
     console.log(`[fetchShortInterest] No CUSIP mappings found for CIK ${cik}, skipping`);
     return 0;
@@ -249,11 +253,14 @@ export async function fetchATSWeekly(
   cik: string,
   weeks: string[]
 ): Promise<number> {
+  // Ensure CUSIP mappings exist before attempting to fetch
+  await ensureCusipMappings(cik);
+
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
   const cusips = await loadCusips(supabase, cik);
 
-  // If no CUSIP mappings exist, skip (issuer may not have CUSIPs registered yet)
+  // If still no CUSIP mappings exist, skip
   if (cusips.size === 0) {
     console.log(`[fetchATSWeekly] No CUSIP mappings found for CIK ${cik}, skipping`);
     return 0;
