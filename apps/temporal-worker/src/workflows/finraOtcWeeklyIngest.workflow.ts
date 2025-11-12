@@ -32,9 +32,11 @@ export interface FinraOtcWeeklyIngestInput {
  * Search Attributes:
  * - Dataset: 'FINRA_OTC'
  * - Granularity: 'weekly'
- * - WeekEnd: week end date
  * - RunKind: 'backfill' | 'daily'
  * - Provenance: file IDs
+ *
+ * NOTE: WeekEnd is passed to activities but NOT set as a search attribute
+ * (at Temporal dev server Datetime limit). Use date range queries instead.
  */
 export async function finraOtcWeeklyIngestWorkflow(
   input: FinraOtcWeeklyIngestInput

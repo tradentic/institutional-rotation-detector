@@ -30,7 +30,7 @@ export interface WorkflowSearchAttributes {
   symbol?: string;
   dataset?: string;
   granularity?: string;
-  weekEnd?: string | Date;
+  weekEnd?: string | Date; // NOTE: Not registered in Temporal (at Datetime limit), will be ignored if set
   tradeDate?: string | Date;
   settlementDate?: string | Date;
   provenance?: string;
@@ -40,7 +40,10 @@ const searchAttributesQuery = defineQuery<Record<string, string[]>>('__workflow_
 let queryRegistered = false;
 let lastAppliedAttributes: Record<string, string[]> = {};
 
-const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }> = {
+// NOTE: Only attributes listed here are registered in Temporal.
+// weekEnd is intentionally omitted due to Temporal dev server's 3 Datetime limit.
+// If workflows try to set weekEnd, it will be silently ignored.
+const attributeConfig: Partial<Record<keyof Required<WorkflowSearchAttributes>, { name: string; type: SearchAttributeType }>> = {
   ticker: { name: 'Ticker', type: SearchAttributeType.KEYWORD },
   cik: { name: 'CIK', type: SearchAttributeType.KEYWORD },
   filerCik: { name: 'FilerCIK', type: SearchAttributeType.KEYWORD },
@@ -54,7 +57,7 @@ const attributeConfig: Record<keyof Required<WorkflowSearchAttributes>, { name: 
   symbol: { name: 'Symbol', type: SearchAttributeType.KEYWORD },
   dataset: { name: 'Dataset', type: SearchAttributeType.KEYWORD },
   granularity: { name: 'Granularity', type: SearchAttributeType.KEYWORD },
-  weekEnd: { name: 'WeekEnd', type: SearchAttributeType.DATETIME },
+  // weekEnd: NOT REGISTERED - at Temporal dev server Datetime limit (3/3 used)
   tradeDate: { name: 'TradeDate', type: SearchAttributeType.DATETIME },
   settlementDate: { name: 'SettlementDate', type: SearchAttributeType.DATETIME },
   provenance: { name: 'Provenance', type: SearchAttributeType.TEXT },
