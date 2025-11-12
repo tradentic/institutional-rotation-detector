@@ -1,6 +1,7 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
 import { quarterBounds, upsertWorkflowSearchAttributes } from './utils';
 import type { RotationDetectInput } from './rotationDetect.workflow';
+import { adjustToNextTradingDayString, adjustToPreviousTradingDayString } from '../lib/tradingCalendar';
 
 const activities = proxyActivities<{
   fetchFilings: (cik: string, quarter: { start: string; end: string }, forms: string[]) => Promise<any>;
@@ -77,8 +78,15 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
   await activities.fetchMonthly(input.cik, months);
   await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? ['IWB', 'IWM', 'IWN', 'IWC']);
-  await activities.fetchShortInterest(input.cik, [bounds.start]);
-  await activities.fetchATSWeekly(input.cik, [bounds.end]);
+
+  // Adjust quarter boundaries to trading days before fetching FINRA data
+  // Short interest: use next trading day from quarter start (e.g., if Jan 1 is holiday, use Jan 2)
+  // ATS weekly: use previous trading day from quarter end (e.g., if Mar 31 is Sunday, use Mar 29)
+  const shortInterestDate = adjustToNextTradingDayString(bounds.start);
+  const atsWeeklyDate = adjustToPreviousTradingDayString(bounds.end);
+
+  await activities.fetchShortInterest(input.cik, [shortInterestDate]);
+  await activities.fetchATSWeekly(input.cik, [atsWeeklyDate]);
 
   const child = await startChild('rotationDetectWorkflow', {
     args: [

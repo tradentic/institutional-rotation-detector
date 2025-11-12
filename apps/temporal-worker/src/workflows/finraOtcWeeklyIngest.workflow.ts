@@ -4,6 +4,7 @@ import type {
   FinraOtcWeeklyInput,
   FinraOtcWeeklyResult,
 } from '../activities/finra.activities';
+import { adjustToPreviousTradingDayString } from '../lib/tradingCalendar';
 
 const activities = proxyActivities<{
   fetchOtcWeeklyVenue: (input: FinraOtcWeeklyInput) => Promise<FinraOtcWeeklyResult>;
@@ -55,22 +56,26 @@ export async function finraOtcWeeklyIngestWorkflow(
   let totalSymbolRecords = 0;
 
   for (const weekEnd of weeks) {
+    // Adjust week end to previous trading day if it falls on a holiday
+    // Week ends are typically Fridays, but if Friday is a holiday, use Thursday
+    const adjustedWeekEnd = adjustToPreviousTradingDayString(weekEnd);
+
     // Fetch ATS data
     const atsResult = await activities.fetchOtcWeeklyVenue({
       symbols,
-      weekEnd,
+      weekEnd: adjustedWeekEnd,
       source: 'ATS',
     });
 
     // Fetch non-ATS data
     const nonAtsResult = await activities.fetchOtcWeeklyVenue({
       symbols,
-      weekEnd,
+      weekEnd: adjustedWeekEnd,
       source: 'NON_ATS',
     });
 
     // Aggregate to symbol level (idempotent operation)
-    const symbolCount = await activities.aggregateOtcSymbolWeek(weekEnd, symbols);
+    const symbolCount = await activities.aggregateOtcSymbolWeek(adjustedWeekEnd, symbols);
 
     totalVenueRecords += atsResult.venueUpsertCount + nonAtsResult.venueUpsertCount;
     totalSymbolRecords += symbolCount;
@@ -79,7 +84,7 @@ export async function finraOtcWeeklyIngestWorkflow(
     await upsertWorkflowSearchAttributes({
       dataset: 'FINRA_OTC',
       granularity: 'weekly',
-      weekEnd: weekEnd,
+      weekEnd: adjustedWeekEnd,
       runKind: runKind,
       provenance: `${atsResult.fileId},${nonAtsResult.fileId}`,
     });

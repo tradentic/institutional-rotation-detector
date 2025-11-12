@@ -2,6 +2,7 @@ import { createSupabaseClient } from '../lib/supabase';
 import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient';
 import crypto from 'crypto';
 import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
+import { adjustToPreviousTradingDay, adjustToNextTradingDay, isTradingDay, getHolidayName } from '../lib/tradingCalendar';
 
 let cachedClient: FinraClient | null = null;
 
@@ -200,6 +201,15 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
 
   let upserts = 0;
   for (const date of settleDates) {
+    // Check if this is a non-trading day
+    const parsedDate = new Date(`${date}T00:00:00Z`);
+    if (!isTradingDay(parsedDate)) {
+      const holidayName = getHolidayName(parsedDate);
+      const reason = holidayName ? `holiday: ${holidayName}` : 'weekend';
+      console.log(`[fetchShortInterest] Skipping ${date} for CIK ${cik} (${reason})`);
+      continue;
+    }
+
     const dataset = await finra.fetchShortInterest(date);
     const rows = normalizeRows(dataset);
     const relevant: number[] = [];
@@ -215,7 +225,7 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
 
     // If no matching data found, skip this date (issuer may not have reportable short interest)
     if (relevant.length === 0) {
-      console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} on ${date}`);
+      console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} on ${date} (trading day, but no data)`);
       continue;
     }
 
@@ -261,6 +271,15 @@ export async function fetchATSWeekly(
 
   let upserts = 0;
   for (const week of weeks) {
+    // Check if this week end is a non-trading day
+    const parsedWeek = new Date(`${week}T00:00:00Z`);
+    if (!isTradingDay(parsedWeek)) {
+      const holidayName = getHolidayName(parsedWeek);
+      const reason = holidayName ? `holiday: ${holidayName}` : 'weekend';
+      console.log(`[fetchATSWeekly] Skipping week ending ${week} for CIK ${cik} (${reason})`);
+      continue;
+    }
+
     const dataset = await finra.fetchATSWeekly(week);
     const rows = normalizeRows(dataset);
     const venueTotals = new Map<string, { shares: number; trades: number | null }>();
@@ -286,7 +305,7 @@ export async function fetchATSWeekly(
 
     // If no matching data found, skip this week (issuer may not have reportable ATS activity)
     if (venueTotals.size === 0) {
-      console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} on week ${week}`);
+      console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} on week ${week} (trading day, but no data)`);
       continue;
     }
 
@@ -332,27 +351,42 @@ function nextSettleAfter(date: Date): Date {
   const day = date.getUTCDate();
   const year = date.getUTCFullYear();
   const month = date.getUTCMonth();
+
+  let candidate: Date;
   if (day < 15) {
-    return new Date(Date.UTC(year, month, 15));
+    candidate = new Date(Date.UTC(year, month, 15));
+  } else {
+    const end = endOfMonth(date);
+    if (date.getTime() < end.getTime()) {
+      candidate = end;
+    } else {
+      candidate = new Date(Date.UTC(year, month + 1, 15));
+    }
   }
-  const end = endOfMonth(date);
-  if (date.getTime() < end.getTime()) {
-    return end;
-  }
-  return new Date(Date.UTC(year, month + 1, 15));
+
+  // Adjust to previous trading day if the settlement date falls on a non-trading day
+  // FINRA settlement dates are adjusted backwards if they fall on weekends/holidays
+  return adjustToPreviousTradingDay(candidate);
 }
 
 function previousSettleOnOrBefore(date: Date): Date {
   const end = endOfMonth(date);
-  if (date.getTime() >= end.getTime()) {
-    return end;
+  const adjustedEnd = adjustToPreviousTradingDay(end);
+
+  if (date.getTime() >= adjustedEnd.getTime()) {
+    return adjustedEnd;
   }
+
   const fifteenth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 15));
-  if (date.getTime() >= fifteenth.getTime()) {
-    return fifteenth;
+  const adjustedFifteenth = adjustToPreviousTradingDay(fifteenth);
+
+  if (date.getTime() >= adjustedFifteenth.getTime()) {
+    return adjustedFifteenth;
   }
-  const prevEnd = endOfMonth(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 0)));
-  return prevEnd;
+
+  const prevMonth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 0));
+  const prevEnd = endOfMonth(prevMonth);
+  return adjustToPreviousTradingDay(prevEnd);
 }
 
 export interface FinraShortPlanInput {
