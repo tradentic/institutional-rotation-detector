@@ -19,8 +19,8 @@ class EntitiesQuery {
   async maybeSingle() {
     entitiesQueryCount += 1;
     const kind = this.filters.get('kind');
-    const cik = this.filters.get('cik');
-    if (kind === 'etf' && cik === 'IWB') {
+    const ticker = this.filters.get('ticker');
+    if (kind === 'etf' && ticker === 'IWB') {
       return { data: { entity_id: 'etf-iwb' }, error: null };
     }
     return { data: null, error: { code: 'PGRST116', message: 'No rows' } };

@@ -6,7 +6,7 @@ const ISHARES_COMPONENT_ID = '1467271812596';
 interface IsharesFundConfig {
   productId: string;
   slug: string;
-  cik: string;
+  ticker: string;
 }
 
 interface IsharesHolding {
@@ -17,74 +17,51 @@ interface IsharesHolding {
 }
 
 const ISHARES_FUNDS: Record<string, IsharesFundConfig> = {
-  IWB: { productId: '239707', slug: 'ishares-russell-1000-etf', cik: 'IWB' },
-  IWM: { productId: '239710', slug: 'ishares-russell-2000-etf', cik: 'IWM' },
-  IWN: { productId: '239714', slug: 'ishares-russell-2000-value-etf', cik: 'IWN' },
-  IWC: { productId: '239716', slug: 'ishares-micro-cap-etf', cik: 'IWC' },
+  IWB: { productId: '239707', slug: 'ishares-russell-1000-etf', ticker: 'IWB' },
+  IWM: { productId: '239710', slug: 'ishares-russell-2000-etf', ticker: 'IWM' },
+  IWN: { productId: '239714', slug: 'ishares-russell-2000-value-etf', ticker: 'IWN' },
+  IWC: { productId: '239716', slug: 'ishares-micro-cap-etf', ticker: 'IWC' },
 };
 
 const etfEntityCache = new Map<string, string>();
-
-function normalizeCikCandidate(value: string): string {
-  const trimmed = value.trim();
-  const numeric = trimmed.replace(/\D/g, '');
-  if (numeric.length > 0) {
-    return numeric.padStart(10, '0');
-  }
-  return trimmed.toUpperCase();
-}
 
 async function resolveEtfEntityId(
   supabase: SupabaseClient,
   fund: string
 ): Promise<string> {
-  const identifier = fund.trim().toUpperCase();
-  if (!identifier) {
-    throw new Error('ETF identifier is required');
+  const ticker = fund.trim().toUpperCase();
+  if (!ticker) {
+    throw new Error('ETF ticker is required');
   }
 
-  const cached = etfEntityCache.get(identifier);
+  // Check cache first
+  const cached = etfEntityCache.get(ticker);
   if (cached) {
     return cached;
   }
 
-  const config = ISHARES_FUNDS[identifier];
-  const candidates = new Set<string>();
-  if (config?.cik) {
-    candidates.add(normalizeCikCandidate(config.cik));
-  }
-  if (/^\d{1,10}$/.test(identifier)) {
-    candidates.add(normalizeCikCandidate(identifier));
-  }
-  candidates.add(identifier);
+  // Look up by ticker in entities table
+  const { data, error } = await supabase
+    .from('entities')
+    .select('entity_id')
+    .eq('kind', 'etf')
+    .eq('ticker', ticker)
+    .maybeSingle();
 
-  for (const candidate of candidates) {
-    const cacheKey = candidate.toUpperCase();
-    const cachedCandidate = etfEntityCache.get(cacheKey);
-    if (cachedCandidate) {
-      etfEntityCache.set(identifier, cachedCandidate);
-      return cachedCandidate;
+  if (error) {
+    if (error.code && error.code !== 'PGRST116') {
+      throw error;
     }
-
-    const { data, error } = await supabase
-      .from('entities')
-      .select('entity_id')
-      .eq('kind', 'etf')
-      .eq('cik', candidate)
-      .maybeSingle();
-
-    if (error) {
-      if (error.code && error.code !== 'PGRST116') {
-        throw error;
-      }
-    } else if (data?.entity_id) {
-      etfEntityCache.set(identifier, data.entity_id);
-      etfEntityCache.set(cacheKey, data.entity_id);
-      return data.entity_id;
-    }
+    throw new Error(`Failed to query ETF entity for ticker ${ticker}: ${error.message}`);
   }
 
-  throw new Error(`ETF entity not found for ${fund}`);
+  if (!data?.entity_id) {
+    throw new Error(`ETF entity not found for ticker ${ticker}`);
+  }
+
+  // Cache and return
+  etfEntityCache.set(ticker, data.entity_id);
+  return data.entity_id;
 }
 
 function buildIsharesBaseUrl(fund: string): string {

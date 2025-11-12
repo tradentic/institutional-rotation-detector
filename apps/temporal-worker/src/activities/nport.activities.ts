@@ -8,7 +8,6 @@ export type Month = { month: string };
 
 const AVAILABILITY_LAG_DAYS = Number(process.env.NPORT_AVAILABILITY_LAG_DAYS ?? '60');
 const HOLDINGS_CHUNK_SIZE = 500;
-const KIND_PRIORITY: Record<string, number> = { fund: 0, etf: 1, manager: 2, issuer: 3 };
 
 export interface NportHolding {
   cusip: string;
@@ -20,11 +19,6 @@ interface FilingSummary {
   reportDate?: string | null;
   primaryDocument?: string | null;
   form?: string | null;
-}
-
-interface HolderEntityRow {
-  entity_id: string;
-  kind: string;
 }
 
 function normalizeCik(value: string): string {
@@ -165,23 +159,6 @@ function combineRecentFilings(recent: Record<string, unknown>): FilingSummary[] 
     });
   }
   return filings;
-}
-
-async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('entities')
-    .select('entity_id,kind')
-    .eq('cik', cik);
-  if (error) {
-    throw new Error(`Failed to load holder entity: ${error.message}`);
-  }
-  const rows = (data as HolderEntityRow[] | null) ?? [];
-  if (rows.length === 0) {
-    // Entity doesn't exist - likely an issuer company, not a fund
-    return null;
-  }
-  rows.sort((a, b) => (KIND_PRIORITY[a.kind] ?? 99) - (KIND_PRIORITY[b.kind] ?? 99));
-  return rows[0]!.entity_id;
 }
 
 function buildDocumentUrl(cik: string, accession: string, document: string): string {

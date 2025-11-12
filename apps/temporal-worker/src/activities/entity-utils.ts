@@ -115,6 +115,9 @@ export async function ensureEntity(
 
   console.log(`[ensureEntity] Creating ${kind} entity for CIK ${normalizedCik}: ${entityName}`);
 
+  // Extract ticker if available (typically for issuers)
+  const ticker = parsed.tickers && parsed.tickers.length > 0 ? parsed.tickers[0] : null;
+
   // Create entity
   const { data: newEntity, error: insertError } = await supabase
     .from('entities')
@@ -122,6 +125,7 @@ export async function ensureEntity(
       cik: normalizedCik,
       name: entityName,
       kind,
+      ticker,
     })
     .select('entity_id')
     .single();
