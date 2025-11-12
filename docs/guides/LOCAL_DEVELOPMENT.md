@@ -145,7 +145,7 @@ pnpm run build:worker
 pnpm run start:worker
 
 # 11. Test (in Terminal 4)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q1&runKind=daily"
 ```
 
 ---
@@ -654,14 +654,14 @@ SELECT * FROM entities;
 
 ```bash
 # Using API (if you have API server running)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q1&runKind=daily"
 
 # Or using Temporal CLI
 temporal workflow start \
   --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}' \
+  --input '{"ticker":"BLK","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}' \
   --workflow-id ingest-aapl-$(date +%s)
 ```
 

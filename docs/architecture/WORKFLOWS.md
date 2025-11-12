@@ -551,14 +551,14 @@ temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id my-custom-id \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q4","runKind":"daily","minPct":5}'
+  --input '{"ticker":"BLK","from":"2024Q1","to":"2024Q4","runKind":"daily","minPct":5}'
 
 # Execute and wait for result
 temporal workflow execute \
   --namespace ird \
   --task-queue rotation-detector \
   --type graphQueryWorkflow \
-  --input '{"ticker":"AAPL","from":"2024-01-01","to":"2024-03-31","hops":2}'
+  --input '{"ticker":"BLK","from":"2024-01-01","to":"2024-03-31","hops":2}'
 
 # Describe workflow
 temporal workflow describe --namespace ird --workflow-id my-custom-id
@@ -599,7 +599,7 @@ console.log('Result:', result);
 ### Via REST API
 
 ```bash
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q4&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q4&runKind=daily"
 ```
 
 ---

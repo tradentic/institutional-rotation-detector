@@ -58,13 +58,13 @@ REST API for querying rotation data and triggering workflows.
 **Usage Example:**
 ```bash
 # Trigger analysis for AAPL Q1 2024
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q1&runKind=daily"
 
 # Get rotation events
-curl "http://localhost:3000/api/events?ticker=AAPL"
+curl "http://localhost:3000/api/events?ticker=BLK"
 
 # Get graph for January 2024
-curl "http://localhost:3000/api/graph?ticker=AAPL&period=2024-01"
+curl "http://localhost:3000/api/graph?ticker=BLK&period=2024-01"
 ```
 
 See [API Documentation](../docs/API.md) for full endpoint reference (Phase 2).
@@ -273,7 +273,7 @@ Access workflow execution details:
 open http://localhost:8233
 
 # Search workflows
-temporal workflow list --namespace ird --query 'ticker="AAPL"'
+temporal workflow list --namespace ird --query 'ticker="BLK"'
 
 # Describe specific workflow
 temporal workflow describe --namespace ird --workflow-id <id>

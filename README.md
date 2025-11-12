@@ -138,22 +138,24 @@ pnpm build
 
 ### Run Your First Analysis
 
+**Note:** The `ingestIssuerWorkflow` is designed to track holdings of **institutional investors** (hedge funds, asset managers) that file 13F forms. Use tickers like BLK (BlackRock), GS (Goldman Sachs), MS (Morgan Stanley), etc.
+
 ```bash
 # Start a workflow via Temporal CLI
 temporal workflow start \
   --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily"}'
+  --input '{"ticker":"BLK","from":"2024Q1","to":"2024Q1","runKind":"daily"}'
 
 # Or via API (if API server is running)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q1&runKind=daily"
 
 # Query rotation events
-curl "http://localhost:3000/api/events?ticker=AAPL"
+curl "http://localhost:3000/api/events?ticker=BLK"
 
 # Get rotation graph
-curl "http://localhost:3000/api/graph?ticker=AAPL&period=2024-01"
+curl "http://localhost:3000/api/graph?ticker=BLK&period=2024-01"
 ```
 
 ## Project Structure

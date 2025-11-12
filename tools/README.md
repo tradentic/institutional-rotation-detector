@@ -278,7 +278,7 @@ ts-node ../../tools/backfill-2019-2025.ts AAPL
 ts-node tools/backfill-2019-2025.ts AAPL
 
 # Monitor progress
-temporal workflow list --namespace ird --query 'ticker="AAPL" AND runKind="backfill"'
+temporal workflow list --namespace ird --query 'ticker="BLK" AND runKind="backfill"'
 ```
 
 **Runtime:**

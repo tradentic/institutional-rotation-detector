@@ -161,7 +161,9 @@ Click the "Ports" tab to access them.
 
 ## Running Your First Analysis
 
-### Example: Ingest Apple (AAPL) 13F Filings
+### Example: Ingest BlackRock (BLK) 13F Filings
+
+**Note:** Use institutional investor tickers (BLK, GS, MS, etc.) that file 13F forms, not issuer tickers.
 
 ```bash
 temporal workflow start \
@@ -169,7 +171,7 @@ temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --input '{
-    "ticker": "AAPL",
+    "ticker": "BLK",
     "from": "2024Q1",
     "to": "2024Q1",
     "runKind": "daily",
@@ -187,7 +189,7 @@ psql postgresql://postgres:postgres@localhost:54322/postgres
 
 SELECT ticker, anchor_date, r_score, dump_magnitude, uptake_next
 FROM rotation_events
-WHERE ticker = 'AAPL'
+WHERE ticker = 'BLK'
 ORDER BY r_score DESC
 LIMIT 10;
 ```

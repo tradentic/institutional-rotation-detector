@@ -267,7 +267,7 @@ Using the API (if running API server):
 
 ```bash
 # Start a small test run (single quarter)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily&min_pct=5"
+curl -X POST "http://localhost:3000/api/run?ticker=BLK&from=2024Q1&to=2024Q1&runKind=daily&min_pct=5"
 ```
 
 Or trigger directly via Temporal CLI:
@@ -278,7 +278,7 @@ temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id test-run-$(date +%s) \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}'
+  --input '{"ticker":"BLK","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}'
 ```
 
 ### Monitor Workflow Execution
@@ -288,7 +288,7 @@ temporal workflow start \
 open http://localhost:8233  # For local Temporal server
 
 # Via Temporal CLI
-temporal workflow list --namespace ird --query 'ticker="AAPL"'
+temporal workflow list --namespace ird --query 'ticker="BLK"'
 temporal workflow describe --namespace ird --workflow-id <workflow-id>
 ```
 
@@ -314,10 +314,10 @@ SELECT COUNT(*) FROM graph_edges;
 
 ```bash
 # Get rotation events
-curl "http://localhost:3000/api/events?ticker=AAPL"
+curl "http://localhost:3000/api/events?ticker=BLK"
 
 # Get rotation graph
-curl "http://localhost:3000/api/graph?ticker=AAPL&period=2024-01"
+curl "http://localhost:3000/api/graph?ticker=BLK&period=2024-01"
 
 # Get graph communities
 curl "http://localhost:3000/api/graph/communities?cik=0000320193&period=2024-01"
