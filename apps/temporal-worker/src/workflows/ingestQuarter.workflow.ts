@@ -43,6 +43,7 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
 
   const filings = await activities.fetchFilings(input.cik, bounds, [
     '13F-HR',
+    '13F-HR/A',
     '13G',
     '13G-A',
     '13D',
@@ -52,8 +53,20 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
     '8-K',
   ]);
 
-  await activities.parse13FInfoTables(filings);
-  await activities.parse13G13D(filings);
+  // Filter filings by form type before parsing
+  const filings13F = filings.filter((f: any) => f.form === '13F-HR' || f.form === '13F-HR/A');
+  const filings13G13D = filings.filter((f: any) =>
+    f.form === '13G' || f.form === '13G-A' || f.form === '13G/A' ||
+    f.form === '13D' || f.form === '13D-A' || f.form === '13D/A'
+  );
+
+  if (filings13F.length > 0) {
+    await activities.parse13FInfoTables(filings13F);
+  }
+
+  if (filings13G13D.length > 0) {
+    await activities.parse13G13D(filings13G13D);
+  }
 
   const derivedBounds = quarterBounds(input.quarter);
   const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
