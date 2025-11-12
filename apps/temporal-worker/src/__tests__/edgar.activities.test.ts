@@ -150,7 +150,15 @@ describe('fetchFilings activity', () => {
 
   test('marks amendment filings and preserves cadence metadata', async () => {
     const upsert = vi.fn().mockResolvedValue({});
-    const from = vi.fn().mockReturnValue({ upsert });
+    // Create a chainable query builder mock
+    const queryBuilder = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+      upsert,
+    };
+    const from = vi.fn().mockReturnValue(queryBuilder);
     vi.spyOn(supabaseModule, 'createSupabaseClient').mockReturnValue({ from } as any);
 
     const fetchMock = vi.fn().mockResolvedValue(
