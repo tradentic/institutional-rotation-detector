@@ -27,13 +27,13 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
-    "openai": "^4.54.0"
+    "openai": "^6.8.1"
   },
   "devDependencies": {
     "@types/node": "^20.12.7",
     "typescript": "^5.4.5"
   },
   "peerDependencies": {
-    "openai": "^4.0.0"
+    "openai": "^6.0.0"
   }
 }

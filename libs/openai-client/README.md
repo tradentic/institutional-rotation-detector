@@ -2,6 +2,10 @@
 
 Shared OpenAI GPT-5 client library for all apps in the monorepo.
 
+## Version
+
+**OpenAI SDK**: v6.8.1 - Latest stable version with important fixes and improvements
+
 ## Features
 
 - ✅ **GPT-5 Responses API** - Modern API with reasoning effort and verbosity controls
@@ -9,7 +13,7 @@ Shared OpenAI GPT-5 client library for all apps in the monorepo.
 - ✅ **E2B Code Execution** - Optional sandboxed Python execution
 - ✅ **Safeguards** - Prevents deprecated API usage (chat.completions, temperature, etc.)
 - ✅ **TypeScript** - Full type safety
-- ✅ **Zero Dependencies** - Only depends on `openai` package
+- ✅ **Zero Dependencies** - Only depends on `openai` package (v6.8.1)
 
 ## Installation & Build
 
