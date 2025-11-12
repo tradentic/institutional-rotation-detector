@@ -18,6 +18,9 @@
     "test": "pnpm -r run test",
     "clean": "pnpm -r exec rm -rf dist node_modules .next .turbo"
   },
+  "devDependencies": {
+    "tsx": "^4.19.2"
+  },
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=10.0.0"
