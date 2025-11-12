@@ -13,16 +13,34 @@ Shared OpenAI GPT-5 client library for all apps in the monorepo.
 
 ## Installation & Build
 
-This library is consumed as **TypeScript source files** by workspace apps.
+This library is built to the `dist/` directory and consumed by workspace apps.
 
-**No build required!** Apps import and compile the source directly via TypeScript path mappings. The library doesn't need to be built separately - consuming apps compile it as part of their own build process.
+```bash
+# Build from monorepo root (builds all libs and apps)
+pnpm build
+
+# Or build libs only
+pnpm build:libs
+
+# Or build just this library
+cd libs/openai-client
+pnpm build
+```
+
+The library builds TypeScript source to ESM JavaScript in `dist/` with full type declarations, and is imported by consuming apps via the `@libs/openai-client` workspace alias.
+
+**Build Process:**
+- Source: `libs/openai-client/src/` (TypeScript)
+- Output: `libs/openai-client/dist/` (JavaScript + .d.ts files)
+- Module: ESM with `"type": "module"` in package.json
+- Resolution: Uses `bundler` moduleResolution for clean imports
 
 ## Usage
 
 ### Import in Any App
 
 ```typescript
-// Simple imports
+// Simple imports - no file extensions needed!
 import { runResponse, createResponse } from '@libs/openai-client';
 
 // CoT session imports
@@ -32,22 +50,9 @@ import { CoTSession, createAnalysisSession, createCodeSession } from '@libs/open
 import { executeCode, isE2BAvailable } from '@libs/openai-client';
 ```
 
-### TypeScript Path Configuration
+### Package Setup
 
-Add to your app's `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "paths": {
-      "@libs/openai-client": ["../../libs/openai-client/src/index.ts"],
-      "@libs/openai-client/*": ["../../libs/openai-client/src/*"]
-    }
-  }
-}
-```
-
-And add to your app's `package.json`:
+Add to your app's `package.json`:
 
 ```json
 {
