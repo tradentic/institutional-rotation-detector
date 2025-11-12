@@ -166,7 +166,7 @@ function combineRecentFilings(recent: Record<string, unknown>): FilingSummary[] 
   return filings;
 }
 
-async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string> {
+async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('entities')
     .select('entity_id,kind')
@@ -176,7 +176,8 @@ async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<s
   }
   const rows = (data as HolderEntityRow[] | null) ?? [];
   if (rows.length === 0) {
-    throw new Error(`Holder entity not found for CIK ${cik}`);
+    // Entity doesn't exist - likely an issuer company, not a fund
+    return null;
   }
   rows.sort((a, b) => (KIND_PRIORITY[a.kind] ?? 99) - (KIND_PRIORITY[b.kind] ?? 99));
   return rows[0]!.entity_id;
@@ -212,6 +213,13 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
   const secClient = createSecClient();
   const normalizedCik = normalizeCik(cik);
   const holderId = await resolveHolderId(supabase, normalizedCik);
+
+  // If no holder entity exists, this is likely an issuer company, not a fund
+  // N-PORT filings are only filed by funds, so skip
+  if (!holderId) {
+    console.log(`[fetchMonthly] No fund entity found for CIK ${normalizedCik}, skipping N-PORT fetch`);
+    return 0;
+  }
 
   const submissionsResponse = await secClient.get(`/submissions/CIK${normalizedCik}.json`);
   const submissionsJson = await submissionsResponse.json();
