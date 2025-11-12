@@ -147,7 +147,9 @@ function resolveExpectedPublishAt(
 export async function resolveCIK(ticker: string) {
   const tickerUpper = ticker.toUpperCase();
   const client = createSecClient();
-  const searchResponse = await client.get(`/files/company_tickers.json`);
+  // Allow configuring the ticker lookup endpoint (default: /files/company_tickers.json)
+  const tickerEndpoint = process.env.SEC_TICKER_ENDPOINT ?? '/files/company_tickers.json';
+  const searchResponse = await client.get(tickerEndpoint);
   const searchJson = await searchResponse.json();
   const tickerData = tickerSearchSchema.parse(searchJson);
 
