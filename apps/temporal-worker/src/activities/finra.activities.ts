@@ -149,7 +149,10 @@ async function loadCusips(supabase: ReturnType<typeof createSupabaseClient>, cik
  * Used to populate cusip_issuer_map for issuers that don't file 13F-HR
  */
 export async function seedCusipMappings(cik: string, cusips: string[]): Promise<number> {
+  console.log(`[seedCusipMappings] Called with CIK ${cik}, ${cusips.length} CUSIPs`);
+
   if (cusips.length === 0) {
+    console.log(`[seedCusipMappings] No CUSIPs provided for CIK ${cik}, skipping`);
     return 0;
   }
 
@@ -165,10 +168,13 @@ export async function seedCusipMappings(cik: string, cusips: string[]): Promise<
     .select('*', { count: 'exact', head: true });
 
   if (error) {
+    console.error(`[seedCusipMappings] Error upserting CUSIPs for CIK ${cik}:`, error);
     throw error;
   }
 
-  return count ?? records.length;
+  const upserted = count ?? records.length;
+  console.log(`[seedCusipMappings] Successfully upserted ${upserted} CUSIP mappings for CIK ${cik}`);
+  return upserted;
 }
 
 function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
