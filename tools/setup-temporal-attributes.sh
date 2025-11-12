@@ -62,6 +62,10 @@ echo "📋 Creating search attributes in namespace '${TEMPORAL_NAMESPACE}'..."
 echo ""
 echo "⚠️  Note: Temporal dev server limits: max 10 Keyword, max 3 Datetime"
 echo ""
+echo "🔗 IMPORTANT: When adding/removing/changing attributes here, you MUST also update:"
+echo "   apps/temporal-worker/src/workflows/utils.ts (attributeConfig)"
+echo "   Run 'pnpm test' to verify they're in sync"
+echo ""
 
 # Core rotation detection attributes (10 Keyword total - at limit)
 create_search_attribute "Ticker" "Keyword"
