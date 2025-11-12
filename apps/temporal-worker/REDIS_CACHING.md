@@ -58,8 +58,10 @@ The `DistributedRateLimiter` uses Redis to coordinate rate limits across all wor
 
 - Uses Redis sorted sets for sliding window rate limiting
 - Atomic operations via Lua scripts ensure consistency
-- Falls back to in-memory limiting if Redis is unavailable
+- **Fails open**: Falls back to in-memory limiting if Redis is unavailable
 - Shared state means 10 req/s limit applies across ALL instances
+- Circuit breaker temporarily disables Redis after repeated failures
+- Command timeouts prevent hanging on slow/unavailable Redis
 
 ### Supported Clients
 
@@ -74,6 +76,28 @@ The `DistributedRateLimiter` uses Redis to coordinate rate limits across all wor
 2. If under the limit, add request to the window and proceed
 3. If over the limit, calculate wait time based on oldest request in window
 4. Use Lua scripts for atomic operations to prevent race conditions
+
+### Fail-Open Design
+
+The rate limiter is designed to **always allow requests to proceed**, even if Redis fails:
+
+**Graceful Degradation:**
+- If Redis is unavailable at startup → Use in-memory rate limiting
+- If Redis operations timeout (1 second) → Fall back to in-memory
+- If Redis command fails → Fall back to in-memory
+
+**Circuit Breaker:**
+- After 3 consecutive Redis failures → Open circuit breaker
+- While circuit is open (10 seconds) → Skip Redis, use in-memory only
+- After backoff period → Reset circuit, try Redis again
+
+**Timeouts:**
+- Connection timeout: 5 seconds
+- Command timeout: 2 seconds
+- Rate limit operation timeout: 1 second
+- Offline queue: Disabled (fail fast)
+
+This ensures that **API requests never fail due to Redis issues**. The worst case is falling back to per-instance rate limiting, which is still better than blocking all requests.
 
 ### Monitoring Rate Limits
 

@@ -2,7 +2,7 @@ import { getRedisCache } from './redisClient';
 
 /**
  * Distributed rate limiter using Redis for coordination across multiple worker instances.
- * Falls back to in-memory rate limiting if Redis is unavailable.
+ * FAILS OPEN: If Redis is unavailable or fails, falls back to in-memory rate limiting.
  *
  * Uses a sliding window algorithm with Redis sorted sets for accurate rate limiting.
  */
@@ -15,6 +15,12 @@ export class DistributedRateLimiter {
   // Fallback to in-memory rate limiting if Redis is unavailable
   private lastTs = 0;
   private readonly cache = getRedisCache();
+
+  // Circuit breaker to avoid repeatedly trying Redis if it's down
+  private consecutiveRedisFailures = 0;
+  private redisFailureTimestamp = 0;
+  private readonly maxConsecutiveFailures = 3;
+  private readonly failureBackoffMs = 10000; // 10 seconds
 
   constructor(
     private readonly identifier: string,
@@ -32,7 +38,8 @@ export class DistributedRateLimiter {
 
   /**
    * Throttle requests using distributed rate limiting via Redis.
-   * Falls back to in-memory throttling if Redis is unavailable.
+   * FAILS OPEN: Falls back to in-memory throttling if Redis is unavailable.
+   * Will never throw an error - always allows requests to proceed.
    */
   async throttle(now = Date.now()): Promise<void> {
     const redis = (this.cache as any).client;
@@ -42,23 +49,86 @@ export class DistributedRateLimiter {
       return this.throttleInMemory(now);
     }
 
-    try {
-      // Use Redis sliding window rate limiting
-      const allowed = await this.slidingWindowRateLimit(redis, now);
-
-      if (!allowed) {
-        // Calculate wait time based on oldest request in window
-        const waitMs = await this.calculateWaitTime(redis, now);
-        if (waitMs > 0) {
-          await new Promise((resolve) => setTimeout(resolve, waitMs));
-          // Retry after waiting
-          return this.throttle();
-        }
-      }
-    } catch (err) {
-      // If Redis fails, fall back to in-memory rate limiting
-      console.warn('[DistributedRateLimiter] Redis error, falling back to in-memory:', err);
+    // Circuit breaker: if Redis has failed recently, skip it temporarily
+    if (this.isCircuitBreakerOpen(now)) {
       return this.throttleInMemory(now);
+    }
+
+    try {
+      // Use Redis sliding window rate limiting with timeout
+      const allowed = await this.slidingWindowRateLimitWithTimeout(redis, now);
+
+      if (allowed) {
+        // Success - reset failure counter
+        this.consecutiveRedisFailures = 0;
+        return;
+      }
+
+      // Rate limit exceeded - calculate wait time
+      const waitMs = await this.calculateWaitTime(redis, now);
+      if (waitMs > 0 && waitMs < 5000) {
+        // Only wait if it's reasonable (< 5 seconds)
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+
+      // Success - reset failure counter
+      this.consecutiveRedisFailures = 0;
+    } catch (err) {
+      // Redis failed - increment failure counter and fall back to in-memory
+      this.consecutiveRedisFailures++;
+      this.redisFailureTimestamp = now;
+
+      if (this.consecutiveRedisFailures >= this.maxConsecutiveFailures) {
+        console.warn(
+          `[DistributedRateLimiter] Redis circuit breaker opened after ${this.consecutiveRedisFailures} failures`
+        );
+      } else {
+        console.warn('[DistributedRateLimiter] Redis error, falling back to in-memory:', err);
+      }
+
+      return this.throttleInMemory(now);
+    }
+  }
+
+  /**
+   * Check if the circuit breaker is open (Redis should be skipped).
+   */
+  private isCircuitBreakerOpen(now: number): boolean {
+    if (this.consecutiveRedisFailures < this.maxConsecutiveFailures) {
+      return false;
+    }
+
+    const timeSinceFailure = now - this.redisFailureTimestamp;
+    if (timeSinceFailure >= this.failureBackoffMs) {
+      // Try Redis again after backoff period
+      console.log('[DistributedRateLimiter] Circuit breaker reset, retrying Redis');
+      this.consecutiveRedisFailures = 0;
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Sliding window rate limiting with timeout to prevent hanging.
+   */
+  private async slidingWindowRateLimitWithTimeout(redis: any, now: number): Promise<boolean> {
+    // Create a timeout promise
+    const timeoutMs = 1000; // 1 second timeout
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Redis operation timeout')), timeoutMs);
+    });
+
+    // Race between Redis operation and timeout
+    try {
+      const result = await Promise.race([
+        this.slidingWindowRateLimit(redis, now),
+        timeoutPromise,
+      ]);
+      return result;
+    } catch (err) {
+      // Timeout or other error
+      throw err;
     }
   }
 

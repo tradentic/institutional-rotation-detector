@@ -26,6 +26,9 @@ export class RedisCache {
           password: config.password,
           lazyConnect: true,
           maxRetriesPerRequest: 2,
+          enableOfflineQueue: false, // Fail fast if Redis is unavailable
+          connectTimeout: 5000, // 5 second connection timeout
+          commandTimeout: 2000, // 2 second command timeout
           retryStrategy: (times: number) => {
             // Retry with exponential backoff up to 3 times
             if (times > 3) {
