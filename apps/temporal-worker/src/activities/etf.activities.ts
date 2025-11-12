@@ -3,10 +3,16 @@ import { createSupabaseClient } from '../lib/supabase';
 
 const ISHARES_COMPONENT_ID = '1467271812596';
 
-interface IsharesFundConfig {
+interface IsharesConfig {
   productId: string;
   slug: string;
+}
+
+interface EtfEntity {
+  entity_id: string;
   ticker: string;
+  datasource_type: string;
+  datasource_config: IsharesConfig;
 }
 
 interface IsharesHolding {
@@ -16,58 +22,68 @@ interface IsharesHolding {
   weight: number;
 }
 
-const ISHARES_FUNDS: Record<string, IsharesFundConfig> = {
-  IWB: { productId: '239707', slug: 'ishares-russell-1000-etf', ticker: 'IWB' },
-  IWM: { productId: '239710', slug: 'ishares-russell-2000-etf', ticker: 'IWM' },
-  IWN: { productId: '239714', slug: 'ishares-russell-2000-value-etf', ticker: 'IWN' },
-  IWC: { productId: '239716', slug: 'ishares-micro-cap-etf', ticker: 'IWC' },
-};
+// Cache: ticker -> full ETF entity with config
+const etfEntityCache = new Map<string, EtfEntity>();
 
-const etfEntityCache = new Map<string, string>();
-
-async function resolveEtfEntityId(
+/**
+ * Resolve ETF entity by ticker, including datasource configuration
+ */
+async function resolveEtfEntity(
   supabase: SupabaseClient,
-  fund: string
-): Promise<string> {
-  const ticker = fund.trim().toUpperCase();
-  if (!ticker) {
+  ticker: string
+): Promise<EtfEntity> {
+  const normalizedTicker = ticker.trim().toUpperCase();
+  if (!normalizedTicker) {
     throw new Error('ETF ticker is required');
   }
 
   // Check cache first
-  const cached = etfEntityCache.get(ticker);
+  const cached = etfEntityCache.get(normalizedTicker);
   if (cached) {
     return cached;
   }
 
-  // Look up by ticker in entities table
+  // Look up by ticker in entities table, including datasource config
   const { data, error } = await supabase
     .from('entities')
-    .select('entity_id')
+    .select('entity_id,ticker,datasource_type,datasource_config')
     .eq('kind', 'etf')
-    .eq('ticker', ticker)
+    .eq('ticker', normalizedTicker)
     .maybeSingle();
 
   if (error) {
     if (error.code && error.code !== 'PGRST116') {
       throw error;
     }
-    throw new Error(`Failed to query ETF entity for ticker ${ticker}: ${error.message}`);
+    throw new Error(`Failed to query ETF entity for ticker ${normalizedTicker}: ${error.message}`);
   }
 
-  if (!data?.entity_id) {
-    throw new Error(`ETF entity not found for ticker ${ticker}`);
+  if (!data) {
+    throw new Error(`ETF entity not found for ticker ${normalizedTicker}`);
   }
+
+  if (!data.datasource_type || !data.datasource_config) {
+    throw new Error(`ETF ${normalizedTicker} missing datasource configuration`);
+  }
+
+  const entity: EtfEntity = {
+    entity_id: data.entity_id,
+    ticker: data.ticker,
+    datasource_type: data.datasource_type,
+    datasource_config: data.datasource_config as IsharesConfig,
+  };
 
   // Cache and return
-  etfEntityCache.set(ticker, data.entity_id);
-  return data.entity_id;
+  etfEntityCache.set(normalizedTicker, entity);
+  return entity;
 }
 
-function buildIsharesBaseUrl(fund: string): string {
-  const config = ISHARES_FUNDS[fund.toUpperCase()];
-  if (!config) {
-    throw new Error(`Unsupported iShares fund: ${fund}`);
+/**
+ * Build iShares API URL from datasource configuration
+ */
+function buildIsharesBaseUrl(config: IsharesConfig, ticker: string): string {
+  if (!config.productId || !config.slug) {
+    throw new Error(`Invalid iShares config for ${ticker}: missing productId or slug`);
   }
   return `https://www.ishares.com/us/products/${config.productId}/${config.slug}/${ISHARES_COMPONENT_ID}.ajax`;
 }
@@ -107,8 +123,15 @@ export function parseIsharesHoldings(rows: unknown[]): IsharesHolding[] {
   return holdings;
 }
 
-async function downloadIsharesHoldings(fund: string): Promise<{ asof: string; holdings: IsharesHolding[] }> {
-  const baseUrl = buildIsharesBaseUrl(fund);
+/**
+ * Download holdings from iShares using entity's datasource configuration
+ */
+async function downloadIsharesHoldings(entity: EtfEntity): Promise<{ asof: string; holdings: IsharesHolding[] }> {
+  if (entity.datasource_type !== 'ishares') {
+    throw new Error(`Unsupported datasource type: ${entity.datasource_type}`);
+  }
+
+  const baseUrl = buildIsharesBaseUrl(entity.datasource_config, entity.ticker);
   const headers: Record<string, string> = {
     'User-Agent': 'institutional-rotation-detector/1.0 (+https://github.com/institutional-rotation-detector)',
     'Accept-Language': 'en-US,en;q=0.9',
@@ -116,16 +139,16 @@ async function downloadIsharesHoldings(fund: string): Promise<{ asof: string; ho
 
   const [jsonResponse, csvResponse] = await Promise.all([
     fetch(`${baseUrl}?tab=all&fileType=json`, { headers }),
-    fetch(`${baseUrl}?fileType=csv&fileName=${encodeURIComponent(fund.toUpperCase())}_holdings&dataType=fund`, { headers }),
+    fetch(`${baseUrl}?fileType=csv&fileName=${encodeURIComponent(entity.ticker)}_holdings&dataType=fund`, { headers }),
   ]);
 
   if (!jsonResponse.ok) {
     const text = await jsonResponse.text();
-    throw new Error(`Failed to download holdings JSON for ${fund}: ${jsonResponse.status} ${text}`);
+    throw new Error(`Failed to download holdings JSON for ${entity.ticker}: ${jsonResponse.status} ${text}`);
   }
   if (!csvResponse.ok) {
     const text = await csvResponse.text();
-    throw new Error(`Failed to download holdings CSV for ${fund}: ${csvResponse.status} ${text}`);
+    throw new Error(`Failed to download holdings CSV for ${entity.ticker}: ${csvResponse.status} ${text}`);
   }
 
   const jsonText = await jsonResponse.text();
@@ -150,17 +173,19 @@ export async function fetchDailyHoldings(
   let totalUpserted = 0;
 
   for (const fund of funds) {
-    let holderId: string;
+    // Resolve ETF entity with datasource configuration
+    let etfEntity: EtfEntity;
     try {
-      holderId = await resolveEtfEntityId(supabase, fund);
+      etfEntity = await resolveEtfEntity(supabase, fund);
     } catch (error) {
       console.error(`Unable to resolve ETF entity for ${fund}:`, error);
       continue;
     }
 
+    // Download holdings using entity's datasource config
     let download;
     try {
-      download = await downloadIsharesHoldings(fund);
+      download = await downloadIsharesHoldings(etfEntity);
     } catch (error) {
       console.error(`Failed to fetch holdings for ${fund}:`, error);
       continue;
@@ -176,7 +201,7 @@ export async function fetchDailyHoldings(
     const existing = await supabase
       .from('uhf_positions')
       .select('holder_id')
-      .eq('holder_id', holderId)
+      .eq('holder_id', etfEntity.entity_id)
       .eq('source', 'ETF')
       .eq('asof', asof)
       .limit(1)
@@ -197,7 +222,7 @@ export async function fetchDailyHoldings(
         `ETF holding ${fund} ${asof}: ${holding.ticker} (${holding.cusip}) shares=${shares} weight=${holding.weight.toFixed(4)}`
       );
       return {
-        holder_id: holderId,
+        holder_id: etfEntity.entity_id,
         cusip: holding.cusip,
         asof,
         shares,

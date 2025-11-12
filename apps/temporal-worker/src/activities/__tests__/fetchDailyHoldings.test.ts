@@ -21,7 +21,15 @@ class EntitiesQuery {
     const kind = this.filters.get('kind');
     const ticker = this.filters.get('ticker');
     if (kind === 'etf' && ticker === 'IWB') {
-      return { data: { entity_id: 'etf-iwb' }, error: null };
+      return {
+        data: {
+          entity_id: 'etf-iwb',
+          ticker: 'IWB',
+          datasource_type: 'ishares',
+          datasource_config: { productId: '239707', slug: 'ishares-russell-1000-etf' },
+        },
+        error: null,
+      };
     }
     return { data: null, error: { code: 'PGRST116', message: 'No rows' } };
   }
