@@ -106,32 +106,43 @@ export class FinraClient {
       try {
         return await this.fetchDataset(group, name, { filter: `${field}:${value}` });
       } catch (err) {
-        if (err instanceof FinraRequestError && err.status === 400) {
+        if (err instanceof FinraRequestError && (err.status === 400 || err.status === 404)) {
           errors.push(err);
           continue;
         }
         throw err;
       }
     }
-    const rows = await this.fetchDataset(group, name, {});
-    const lowerValue = value.toLowerCase();
-    return rows.filter((row) => {
-      const normalized = normalizeRow(row);
-      return filterFields.some((field) => {
-        const fieldValue = normalized.get(field.toLowerCase());
-        if (!fieldValue) return false;
-        if (typeof fieldValue === 'string') {
-          return fieldValue.toLowerCase() === lowerValue;
-        }
-        if (fieldValue instanceof Date) {
-          return fieldValue.toISOString().slice(0, 10) === value;
-        }
-        if (typeof fieldValue === 'number') {
-          return String(fieldValue) === value;
-        }
-        return false;
+
+    // Try fetching entire dataset and filter client-side
+    try {
+      const rows = await this.fetchDataset(group, name, {});
+      const lowerValue = value.toLowerCase();
+      return rows.filter((row) => {
+        const normalized = normalizeRow(row);
+        return filterFields.some((field) => {
+          const fieldValue = normalized.get(field.toLowerCase());
+          if (!fieldValue) return false;
+          if (typeof fieldValue === 'string') {
+            return fieldValue.toLowerCase() === lowerValue;
+          }
+          if (fieldValue instanceof Date) {
+            return fieldValue.toISOString().slice(0, 10) === value;
+          }
+          if (typeof fieldValue === 'number') {
+            return String(fieldValue) === value;
+          }
+          return false;
+        });
       });
-    });
+    } catch (err) {
+      // If even the unfiltered dataset fetch returns 404, it means no data exists
+      // Return empty array instead of throwing
+      if (err instanceof FinraRequestError && err.status === 404) {
+        return [];
+      }
+      throw err;
+    }
   }
 
   private async fetchDataset(
