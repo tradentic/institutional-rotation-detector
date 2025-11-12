@@ -22,7 +22,7 @@ export class FinraRequestError extends Error {
 }
 
 const DEFAULT_BASE_URL = 'https://api.finra.org';
-const DEFAULT_TOKEN_URL = 'https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token';
+const DEFAULT_TOKEN_URL = 'https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token?grant_type=client_credentials';
 const DEFAULT_PAGE_SIZE = 5000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 500;
@@ -57,15 +57,14 @@ export class FinraClient {
     }
 
     // Request new token using OAuth2 client credentials flow
+    // Note: grant_type=client_credentials is in the URL query parameter
     const credentials = Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64');
 
     const response = await fetch(this.tokenUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${credentials}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: 'grant_type=client_credentials',
     });
 
     if (!response.ok) {
@@ -80,6 +79,7 @@ export class FinraClient {
     const tokenData: TokenResponse = await response.json();
     this.accessToken = tokenData.access_token;
     // Set expiry to 5 minutes before actual expiry to ensure we refresh before it expires
+    // FINRA tokens typically last ~12 hours (43170 seconds)
     this.tokenExpiry = Date.now() + (tokenData.expires_in - 300) * 1000;
 
     return this.accessToken;
