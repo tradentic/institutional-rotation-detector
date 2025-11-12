@@ -2,7 +2,6 @@
   "name": "rotation-detector-temporal-worker",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "tsc --noEmit",
@@ -30,6 +29,7 @@
   "devDependencies": {
     "@temporalio/testing": "^1.13.2",
     "@types/node": "^24.10.1",
+    "esbuild": "^0.27.0",
     "msw": "^2.12.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",

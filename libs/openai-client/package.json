@@ -2,13 +2,13 @@
   "name": "@libs/openai-client",
   "version": "1.0.0",
   "description": "Shared OpenAI GPT-5 client library with CoT session management and E2B integration",
-  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     }
   },
   "scripts": {

@@ -7,12 +7,8 @@
  */
 
 import { Worker, NativeConnection } from '@temporalio/worker';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { join } from 'path';
 import * as activities from './activities/all-activities';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 async function run() {
   // Read configuration from environment
