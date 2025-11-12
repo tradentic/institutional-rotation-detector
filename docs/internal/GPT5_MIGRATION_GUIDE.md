@@ -2,9 +2,20 @@
 
 This document describes the migration from GPT-4/o3/o4 models to GPT-5, and from the deprecated Chat Completions API to the new Responses API.
 
+## Version Information
+
+**OpenAI SDK Version**: v6.8.1 (Latest - Upgraded from v4.54.0)
+
+This version includes important fixes and improvements:
+- Enhanced stability and performance
+- Improved error handling
+- Bug fixes and security patches
+- Full compatibility with existing GPT-5 Responses API
+
 ## Summary
 
 All OpenAI API calls in this project have been upgraded to use:
+- **OpenAI SDK**: v6.8.1 (latest stable version)
 - **GPT-5 models**: `gpt-5`, `gpt-5-mini`, `gpt-5-nano`
 - **Responses API**: `client.responses.create()` instead of `client.chat.completions.create()`
 - **New parameters**: `reasoning.effort`, `text.verbosity`, custom tools
