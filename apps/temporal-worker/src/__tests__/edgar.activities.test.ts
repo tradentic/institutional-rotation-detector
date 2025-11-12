@@ -7,7 +7,8 @@ const originalFetch = global.fetch;
 describe('resolveCIK activity', () => {
   beforeEach(() => {
     process.env.SEC_USER_AGENT = 'TestApp test@example.com';
-    process.env.EDGAR_BASE = 'https://data.sec.gov';
+    process.env.EDGAR_BASE = 'https://www.sec.gov';
+    process.env.EDGAR_DATA_API_BASE = 'https://data.sec.gov';
     process.env.MAX_RPS_EDGAR = '8';
   });
 
@@ -42,7 +43,7 @@ describe('resolveCIK activity', () => {
     const result = await resolveCIK('IRBT');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://data.sec.gov/files/company_tickers.json');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://www.sec.gov/files/company_tickers.json');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://data.sec.gov/submissions/CIK0001084869.json');
     expect(result).toEqual({ cik: '0001084869', cusips: ['123456789'] });
   });
@@ -94,7 +95,8 @@ describe('resolveCIK activity', () => {
 describe('fetchFilings activity', () => {
   beforeEach(() => {
     process.env.SEC_USER_AGENT = 'TestApp test@example.com';
-    process.env.EDGAR_BASE = 'https://data.sec.gov';
+    process.env.EDGAR_BASE = 'https://www.sec.gov';
+    process.env.EDGAR_DATA_API_BASE = 'https://data.sec.gov';
     process.env.MAX_RPS_EDGAR = '8';
   });
 
