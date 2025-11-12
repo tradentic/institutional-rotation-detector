@@ -106,6 +106,45 @@ The `supabase db reset` command applies 19 migrations that create:
 
 All migrations include proper indexes, constraints, and the pgvector extension for embeddings.
 
+### Seeding Initial Data
+
+#### Fund Manager Entities (Optional but Recommended)
+
+The `ingestIssuerWorkflow` requires entities in the database for fund managers who file 13F reports. The system now **auto-creates missing fund manager entities** when parsing 13F filings, so manual seeding is optional.
+
+However, pre-seeding common fund managers can significantly speed up the first ingestion run:
+
+```bash
+# From repo root
+pnpm run seed:managers
+```
+
+This seeds 20+ common institutional fund managers (Berkshire Hathaway, Vanguard, BlackRock, etc.).
+
+**How Auto-Creation Works:**
+
+When the workflow encounters a fund manager that doesn't exist in the database:
+1. It fetches the entity name from SEC's submissions API
+2. Creates a new `entities` record with `kind='manager'`
+3. Continues processing the 13F filing
+
+This means you can start with an **empty database** and the workflow will populate fund managers automatically as it discovers them in 13F filings.
+
+**Why It Matters:**
+
+The workflow correctly fetches **only 13F filings related to the specified issuer** (e.g., Apple), not all 13Fs in the system. However, those 13F filings are submitted by fund managers, and the database needs an `entity_id` for each fund manager to store position data.
+
+#### Index Calendar (Optional)
+
+The index calendar tracks Russell index rebalance dates for rotation detection:
+
+```bash
+# From repo root
+pnpm run seed:index
+```
+
+This seeds Russell and S&P rebalance windows from 2019-2030.
+
 ## Temporal Setup
 
 ### Option 1: Temporal Cloud (Production)
@@ -253,12 +292,16 @@ Namespace: default
 Registered workflows: ingestIssuerWorkflow, rotationDetectWorkflow, ...
 ```
 
-### Seed Index Calendar (Optional)
+### Seed Initial Data (Optional)
 
-The index calendar tracks Russell index rebalance dates:
+While the system auto-creates missing entities, pre-seeding can speed up the first run:
 
 ```bash
-node dist/tools/seed-index-calendar.js
+# Seed common fund managers (recommended)
+pnpm run seed:managers
+
+# Seed index calendar for rotation detection (optional)
+pnpm run seed:index
 ```
 
 ### Run First Ingestion
@@ -381,6 +424,19 @@ tail -f ~/.temporal/server.log
 - Verify `OPENAI_API_KEY` is valid
 - Check API quota and billing
 - Consider switching to `gpt-4-turbo-preview` for better rate limits
+
+### Entity Not Found Errors
+
+**Issue**: `Entity not found for CIK 0001234567` when running workflow
+
+**Explanation**:
+The workflow fetches 13F filings **related to the issuer** (e.g., Apple) from the SEC. These 13F filings are submitted by fund managers, and the database needs an entry for each fund manager to store position data.
+
+**Solution**:
+This should no longer occur as of the latest update - the system now auto-creates missing fund manager entities. If you still encounter this error:
+- Rebuild the temporal worker: `pnpm run build:worker`
+- Restart the worker: `pnpm run start:worker`
+- Optionally pre-seed common fund managers: `pnpm run seed:managers`
 
 ### Workflow Failures
 

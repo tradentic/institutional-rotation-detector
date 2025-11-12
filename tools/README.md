@@ -351,6 +351,85 @@ GROUP BY index_name, phase;
 
 ---
 
+### `seed-fund-managers.ts`
+
+Populates the `entities` table with common institutional fund managers.
+
+**Purpose:**
+- Pre-seed fund manager entities for faster first ingestion
+- Avoid repeated SEC API calls during 13F parsing
+- Provide known entity names instead of placeholders
+
+**Important Note:**
+As of the latest update, the system **auto-creates missing fund manager entities** when parsing 13F filings. This seed script is **optional but recommended** to speed up the first ingestion run.
+
+**Usage:**
+```bash
+# From repo root (recommended)
+pnpm run seed:managers
+
+# Or directly with tsx
+tsx --env-file=apps/temporal-worker/.env.local tools/seed-fund-managers.ts
+```
+
+**What it does:**
+1. Connects to Supabase/PostgreSQL
+2. Seeds 20+ common institutional fund managers:
+   - Berkshire Hathaway Inc.
+   - Vanguard Group Inc.
+   - BlackRock Inc.
+   - Fidelity Investments
+   - State Street Global Advisors
+   - And 15+ more major fund managers
+3. Upserts records into `entities` table with `kind='manager'`
+4. Uses conflict resolution on `(cik, kind)` - safe to run multiple times
+
+**How Auto-Creation Works:**
+
+When the `ingestIssuerWorkflow` encounters a fund manager that doesn't exist in the database:
+1. It fetches the entity name from SEC's `/submissions/CIK{cik}.json` API
+2. Creates a new `entities` record with the fetched name (or a placeholder)
+3. Continues processing the 13F filing
+
+This means you can start with an **empty database** and the workflow will populate fund managers automatically.
+
+**Why Pre-Seed?**
+
+While auto-creation works, pre-seeding has benefits:
+- ✅ Faster first run (no SEC API calls for common managers)
+- ✅ Known entity names instead of placeholders
+- ✅ Reduces risk of SEC rate limiting during ingestion
+- ✅ Better for batch ingestion of multiple issuers
+
+**Configuration:**
+- `SUPABASE_URL` - Database URL
+- `SUPABASE_SERVICE_ROLE_KEY` - Database credentials
+
+**Example:**
+```bash
+pnpm run seed:managers
+# Output: ✓ Successfully seeded 20 fund managers
+```
+
+**Verification:**
+```sql
+SELECT name, cik, kind
+FROM entities
+WHERE kind = 'manager'
+ORDER BY name;
+```
+
+**When to run:**
+- After initial database setup (optional)
+- Before large backfills to speed up ingestion
+- If you want proper entity names instead of placeholders
+
+**Related:**
+- See [SETUP.md](../docs/guides/SETUP.md#seeding-initial-data) for full setup instructions
+- Fund manager auto-creation is in `apps/temporal-worker/src/activities/edgar.activities.ts:293-344`
+
+---
+
 ## Creating New Tools
 
 ### Best Practices

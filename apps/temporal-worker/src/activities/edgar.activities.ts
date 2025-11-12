@@ -293,6 +293,8 @@ export async function parse13FInfoTables(accessions: FilingRecord[]) {
   const getEntityId = async (cik: string): Promise<string> => {
     const cached = entityCache.get(cik);
     if (cached) return cached;
+
+    // Try to find existing entity
     const { data, error } = await supabase
       .from('entities')
       .select('entity_id,kind')
@@ -300,11 +302,45 @@ export async function parse13FInfoTables(accessions: FilingRecord[]) {
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    if (!data?.entity_id) {
-      throw new Error(`Entity not found for CIK ${cik}`);
+
+    if (data?.entity_id) {
+      entityCache.set(cik, data.entity_id);
+      return data.entity_id;
     }
-    entityCache.set(cik, data.entity_id);
-    return data.entity_id;
+
+    // Entity not found - auto-create fund manager entity
+    console.log(`Auto-creating manager entity for CIK ${cik}`);
+
+    // Fetch entity name from SEC
+    let entityName = `Fund Manager ${cik}`;
+    try {
+      const submissionsResponse = await sec.get(`/submissions/CIK${cik}.json`);
+      const submissionsJson = await submissionsResponse.json();
+      const parsed = companySubmissionsSchema.parse(submissionsJson);
+      if (parsed.securities?.[0]?.title) {
+        entityName = parsed.securities[0].title;
+      }
+    } catch (err) {
+      console.warn(`Failed to fetch entity name for CIK ${cik}, using placeholder:`, err);
+    }
+
+    // Insert new manager entity
+    const { data: newEntity, error: insertError } = await supabase
+      .from('entities')
+      .insert({
+        cik,
+        name: entityName,
+        kind: 'manager',
+      })
+      .select('entity_id')
+      .single();
+
+    if (insertError) {
+      throw new Error(`Failed to create entity for CIK ${cik}: ${insertError.message}`);
+    }
+
+    entityCache.set(cik, newEntity.entity_id);
+    return newEntity.entity_id;
   };
 
   const resolveIssuerCikByName = async (name: string): Promise<string | null> => {
