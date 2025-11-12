@@ -38,77 +38,50 @@ else
 fi
 echo ""
 
+# Helper function to create search attribute with clear output
+create_search_attribute() {
+  local name="$1"
+  local type="$2"
+
+  local output
+  if output=$(temporal operator search-attribute create \
+    --namespace "${TEMPORAL_NAMESPACE}" \
+    --name "$name" --type "$type" 2>&1); then
+    echo "  ✅ $name ($type) - created"
+  else
+    if echo "$output" | grep -q "already exists\|already registered"; then
+      echo "  ✓ $name ($type) - already exists"
+    else
+      echo "  ❌ $name ($type) - error: $output"
+    fi
+  fi
+}
+
 # Create search attributes
 echo "📋 Creating search attributes in namespace '${TEMPORAL_NAMESPACE}'..."
 echo ""
 
 # Core rotation detection attributes
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Ticker --type Keyword 2>/dev/null || echo "  ✓ Ticker (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name CIK --type Keyword 2>/dev/null || echo "  ✓ CIK (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name FilerCIK --type Keyword 2>/dev/null || echo "  ✓ FilerCIK (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Form --type Keyword 2>/dev/null || echo "  ✓ Form (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Accession --type Keyword 2>/dev/null || echo "  ✓ Accession (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name PeriodEnd --type Datetime 2>/dev/null || echo "  ✓ PeriodEnd (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name WindowKey --type Keyword 2>/dev/null || echo "  ✓ WindowKey (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name BatchId --type Keyword 2>/dev/null || echo "  ✓ BatchId (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name RunKind --type Keyword 2>/dev/null || echo "  ✓ RunKind (already exists)"
+create_search_attribute "Ticker" "Keyword"
+create_search_attribute "CIK" "Keyword"
+create_search_attribute "FilerCIK" "Keyword"
+create_search_attribute "Form" "Keyword"
+create_search_attribute "Accession" "Keyword"
+create_search_attribute "PeriodEnd" "Datetime"
+create_search_attribute "WindowKey" "Keyword"
+create_search_attribute "BatchId" "Keyword"
+create_search_attribute "RunKind" "Keyword"
 
 echo ""
 echo "🔬 Microstructure search attributes..."
 
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Symbol --type Keyword 2>/dev/null || echo "  ✓ Symbol (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Dataset --type Keyword 2>/dev/null || echo "  ✓ Dataset (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Granularity --type Keyword 2>/dev/null || echo "  ✓ Granularity (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name WeekEnd --type Datetime 2>/dev/null || echo "  ✓ WeekEnd (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name TradeDate --type Datetime 2>/dev/null || echo "  ✓ TradeDate (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name SettlementDate --type Datetime 2>/dev/null || echo "  ✓ SettlementDate (already exists)"
-
-temporal operator search-attribute create \
-  --namespace "${TEMPORAL_NAMESPACE}" \
-  --name Provenance --type Keyword 2>/dev/null || echo "  ✓ Provenance (already exists)"
+create_search_attribute "Symbol" "Keyword"
+create_search_attribute "Dataset" "Keyword"
+create_search_attribute "Granularity" "Keyword"
+create_search_attribute "WeekEnd" "Datetime"
+create_search_attribute "TradeDate" "Datetime"
+create_search_attribute "SettlementDate" "Datetime"
+create_search_attribute "Provenance" "Keyword"
 
 echo ""
 echo "✅ All search attributes configured successfully!"
