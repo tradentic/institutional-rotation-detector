@@ -133,13 +133,15 @@ interface IngestQuarterInput {
 
 **Workflow Logic:**
 1. **Fetch Filings** - Download 13F-HR, 13G/D, 10-K/Q, 8-K
-2. **Parse 13F** - Extract institutional positions
+2. **Parse 13F** - Extract institutional positions (auto-creates fund manager entities as needed)
 3. **Parse 13G/13D** - Extract beneficial ownership
 4. **Fetch N-PORT** - Monthly fund holdings
 5. **Fetch ETF Holdings** - Daily ETF positions
 6. **Fetch Short Interest** - FINRA short data
 7. **Fetch ATS Data** - Alternative trading system volumes
 8. **Launch Child** - `rotationDetectWorkflow`
+
+**Note:** The workflow automatically creates missing fund manager entities when parsing 13F filings. No manual seeding is required, though pre-seeding with `pnpm run seed:managers` is recommended for faster first runs.
 
 **Example:**
 ```bash

@@ -65,6 +65,11 @@ supabase start
 ./tools/sync-supabase-env.sh   # Syncs Supabase credentials to all apps
 ./tools/sync-temporal-env.sh   # Syncs Temporal config to all apps
 
+# (Optional) Seed fund managers for faster first run
+pnpm run seed:managers  # Pre-seeds 20+ common institutional fund managers
+pnpm run seed:index     # Seeds index calendar data
+# Note: Seeding is optional - workflows auto-create missing fund manager entities
+
 # Add your API keys (required)
 cd apps/temporal-worker
 nano .env.local
