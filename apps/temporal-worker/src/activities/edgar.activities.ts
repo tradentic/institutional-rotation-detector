@@ -188,6 +188,50 @@ const filingSchema = z.object({
   primaryDocument: z.string(),
 });
 
+/**
+ * Converts SEC EDGAR API columnar format to array of objects format.
+ * SEC returns filings.recent in two formats:
+ * 1. Array format: [{accessionNumber: "...", filingDate: "...", ...}, ...]
+ * 2. Columnar format: {accessionNumber: ["...", "..."], filingDate: ["...", "..."], ...}
+ */
+function normalizeFilingsData(data: any): any[] {
+  if (!data) return [];
+
+  // If it's already an array, return as-is
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  // If it's an object (columnar format), transform to array format
+  if (typeof data === 'object') {
+    const keys = Object.keys(data);
+    if (keys.length === 0) return [];
+
+    // Get the length from the first array field
+    const firstKey = keys[0];
+    const firstArray = data[firstKey];
+    if (!Array.isArray(firstArray)) return [];
+
+    const length = firstArray.length;
+    const result: any[] = [];
+
+    // Transform columnar to row format
+    for (let i = 0; i < length; i++) {
+      const row: any = {};
+      for (const key of keys) {
+        if (Array.isArray(data[key])) {
+          row[key] = data[key][i];
+        }
+      }
+      result.push(row);
+    }
+
+    return result;
+  }
+
+  return [];
+}
+
 export async function fetchFilings(
   cik: string,
   quarter: { start: string; end: string },
@@ -197,7 +241,8 @@ export async function fetchFilings(
   const normalizedCik = normalizeCik(cik);
   const response = await client.get(`/submissions/CIK${normalizedCik}.json`);
   const json = await response.json();
-  const filings = filingSchema.array().parse(json.filings?.recent ?? []);
+  const normalizedData = normalizeFilingsData(json.filings?.recent);
+  const filings = filingSchema.array().parse(normalizedData);
   const filtered = filings.filter((filing) => {
     const filed = new Date(filing.filingDate).getTime();
     const start = new Date(quarter.start).getTime();
