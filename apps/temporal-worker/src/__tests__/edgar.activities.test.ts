@@ -6,7 +6,7 @@ const originalFetch = global.fetch;
 
 describe('resolveCIK activity', () => {
   beforeEach(() => {
-    process.env.EDGAR_USER_AGENT = 'TestApp test@example.com';
+    process.env.SEC_USER_AGENT = 'TestApp test@example.com';
     process.env.EDGAR_BASE = 'https://data.sec.gov';
     process.env.MAX_RPS_EDGAR = '8';
   });
@@ -21,7 +21,7 @@ describe('resolveCIK activity', () => {
       .fn()
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ hits: [{ cik: '1084869', ticker: 'IRBT', entityName: 'iRobot Corp' }] }),
+          JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         )
       )
@@ -42,7 +42,7 @@ describe('resolveCIK activity', () => {
     const result = await resolveCIK('IRBT');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://data.sec.gov/search/ticker?tickers=IRBT');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://data.sec.gov/files/company_tickers.json');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://data.sec.gov/submissions/CIK0001084869.json');
     expect(result).toEqual({ cik: '0001084869', cusips: ['123456789'] });
   });
@@ -52,7 +52,7 @@ describe('resolveCIK activity', () => {
       .fn()
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({ hits: [{ cik: '1084869', ticker: 'IRBT' }] }),
+          JSON.stringify({ '0': { cik_str: 1084869, ticker: 'IRBT', title: 'iRobot Corp' } }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         )
       )
@@ -80,7 +80,7 @@ describe('resolveCIK activity', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ hits: [] }), {
+        new Response(JSON.stringify({}), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         })
@@ -93,7 +93,7 @@ describe('resolveCIK activity', () => {
 
 describe('fetchFilings activity', () => {
   beforeEach(() => {
-    process.env.EDGAR_USER_AGENT = 'TestApp test@example.com';
+    process.env.SEC_USER_AGENT = 'TestApp test@example.com';
     process.env.EDGAR_BASE = 'https://data.sec.gov';
     process.env.MAX_RPS_EDGAR = '8';
   });
