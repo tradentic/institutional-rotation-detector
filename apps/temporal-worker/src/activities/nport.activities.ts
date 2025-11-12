@@ -212,15 +212,8 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
   const supabase = createSupabaseClient();
   const secClient = createSecClient();
   const normalizedCik = normalizeCik(cik);
-  const holderId = await resolveHolderId(supabase, normalizedCik);
 
-  // If no holder entity exists, this is likely an issuer company, not a fund
-  // N-PORT filings are only filed by funds, so skip
-  if (!holderId) {
-    console.log(`[fetchMonthly] No fund entity found for CIK ${normalizedCik}, skipping N-PORT fetch`);
-    return 0;
-  }
-
+  // Fetch submissions to check for N-PORT filings
   const submissionsResponse = await secClient.get(`/submissions/CIK${normalizedCik}.json`);
   const submissionsJson = await submissionsResponse.json();
   const recentFilings = submissionsJson?.filings?.recent;
@@ -228,6 +221,41 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
     throw new Error('Unexpected SEC submissions payload');
   }
   const filings = combineRecentFilings(recentFilings as Record<string, unknown>);
+
+  // Check if there are any N-PORT filings - if not, skip (this is not a fund)
+  const hasNportFilings = filings.some((f) => f?.form?.startsWith('NPORT-P'));
+  if (!hasNportFilings) {
+    console.log(`[fetchMonthly] No N-PORT filings found for CIK ${normalizedCik}, skipping (not a fund)`);
+    return 0;
+  }
+
+  // Get or create entity for this fund
+  let holderId = await resolveHolderId(supabase, normalizedCik);
+  if (!holderId) {
+    // Auto-create fund entity
+    const entityName = submissionsJson?.name || `Fund ${normalizedCik}`;
+    console.log(`[fetchMonthly] Auto-creating fund entity for CIK ${normalizedCik} (${entityName})`);
+
+    const { data: newEntity, error: insertError } = await supabase
+      .from('entities')
+      .insert({
+        cik: normalizedCik,
+        name: entityName,
+        kind: 'fund',
+      })
+      .select('entity_id')
+      .single();
+
+    if (insertError) {
+      throw new Error(`Failed to create fund entity for CIK ${normalizedCik}: ${insertError.message}`);
+    }
+
+    holderId = newEntity?.entity_id;
+    if (!holderId) {
+      throw new Error(`Failed to get entity_id after creating entity for CIK ${normalizedCik}`);
+    }
+  }
+
   const monthToFiling = new Map<string, FilingSummary>();
   for (const filing of filings) {
     if (!filing || !filing.accessionNumber) continue;
