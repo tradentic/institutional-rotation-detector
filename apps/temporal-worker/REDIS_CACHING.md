@@ -36,6 +36,8 @@ The caching layer is designed to fail gracefully:
 
 ## Configuration
 
+### Environment Variables
+
 Add these environment variables to your `.env` file:
 
 ```bash
@@ -45,6 +47,35 @@ REDIS_PORT=6379
 # REDIS_PASSWORD=           # Optional, for secured Redis instances
 REDIS_ENABLE_CACHING=true   # Set to 'false' to disable caching
 ```
+
+### Starting Redis Locally
+
+For local development, use these pnpm scripts to manage Redis:
+
+```bash
+# Start Redis (detached)
+pnpm redis:start
+
+# Stop Redis
+pnpm redis:stop
+
+# Restart Redis
+pnpm redis:restart
+
+# View Redis logs
+pnpm redis:logs
+
+# Access Redis CLI
+pnpm redis:cli
+```
+
+These scripts use the Docker Compose configuration from `.devcontainer/docker-compose.yml`, which configures Redis with:
+- Port: 6379
+- Persistence: Saves to disk every 60 seconds
+- Log level: Warning
+- Volume: `redis-data` for persistent storage
+
+**Note:** In Codespaces, Redis starts automatically via the devcontainer. For local development, run `pnpm redis:start` before starting your worker.
 
 ## Distributed Rate Limiting
 
