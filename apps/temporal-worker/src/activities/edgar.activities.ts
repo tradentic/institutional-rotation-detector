@@ -164,11 +164,17 @@ export async function resolveCIK(ticker: string) {
   const submissionsJson = await submissionsResponse.json();
   const parsed = companySubmissionsSchema.parse(submissionsJson);
   const securities = parsed.securities ?? [];
+  console.log(`[resolveCIK] Found ${securities.length} securities for ${ticker} (CIK ${cik})`);
+
   const cusipValues = securities.map((sec) => sec.cusip);
   const normalizedCusips = normalizeCusips(cusipValues);
+  console.log(`[resolveCIK] Normalized ${normalizedCusips.length} CUSIPs from securities`);
+
   if (normalizedCusips.length > 0) {
+    console.log(`[resolveCIK] Returning CUSIPs for ${ticker}:`, normalizedCusips);
     return { cik, cusips: normalizedCusips };
   }
+
   const fallbackTickers = Array.from(
     new Set(
       securities
@@ -176,6 +182,7 @@ export async function resolveCIK(ticker: string) {
         .filter((value): value is string => Boolean(value))
     )
   );
+  console.log(`[resolveCIK] No CUSIPs found, falling back to ${fallbackTickers.length} ticker symbols for ${ticker}:`, fallbackTickers);
   return { cik, cusips: fallbackTickers };
 }
 
