@@ -141,10 +141,34 @@ async function loadCusips(supabase: ReturnType<typeof createSupabaseClient>, cik
       cusips.add(normalized);
     }
   }
-  if (cusips.size === 0) {
-    throw new Error(`No CUSIP mappings found for CIK ${cik}`);
-  }
   return cusips;
+}
+
+/**
+ * Seed CUSIP-to-issuer mappings for a CIK
+ * Used to populate cusip_issuer_map for issuers that don't file 13F-HR
+ */
+export async function seedCusipMappings(cik: string, cusips: string[]): Promise<number> {
+  if (cusips.length === 0) {
+    return 0;
+  }
+
+  const supabase = createSupabaseClient();
+  const records = cusips.map((cusip) => ({
+    cusip: normalizeIdentifier(cusip) ?? cusip,
+    issuer_cik: cik,
+  }));
+
+  const { error, count } = await (supabase
+    .from('cusip_issuer_map')
+    .upsert(records, { onConflict: 'cusip' }) as any)
+    .select('*', { count: 'exact', head: true });
+
+  if (error) {
+    throw error;
+  }
+
+  return count ?? records.length;
 }
 
 function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
@@ -161,6 +185,13 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
   const cusips = await loadCusips(supabase, cik);
+
+  // If no CUSIP mappings exist, skip (issuer may not have CUSIPs registered yet)
+  if (cusips.size === 0) {
+    console.log(`[fetchShortInterest] No CUSIP mappings found for CIK ${cik}, skipping`);
+    return 0;
+  }
+
   let upserts = 0;
   for (const date of settleDates) {
     const dataset = await finra.fetchShortInterest(date);
@@ -175,9 +206,13 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
       }
       relevant.push(shares);
     }
+
+    // If no matching data found, skip this date (issuer may not have reportable short interest)
     if (relevant.length === 0) {
-      throw new Error(`No FINRA short interest rows matched CIK ${cik} for ${date}`);
+      console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} on ${date}`);
+      continue;
     }
+
     const totalShares = relevant.reduce((acc, value) => acc + value, 0);
     if (!Number.isFinite(totalShares) || totalShares < 0) {
       throw new Error(`Invalid short interest total for ${cik} on ${date}`);
@@ -211,6 +246,13 @@ export async function fetchATSWeekly(
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
   const cusips = await loadCusips(supabase, cik);
+
+  // If no CUSIP mappings exist, skip (issuer may not have CUSIPs registered yet)
+  if (cusips.size === 0) {
+    console.log(`[fetchATSWeekly] No CUSIP mappings found for CIK ${cik}, skipping`);
+    return 0;
+  }
+
   let upserts = 0;
   for (const week of weeks) {
     const dataset = await finra.fetchATSWeekly(week);
@@ -235,9 +277,13 @@ export async function fetchATSWeekly(
         venueTotals.set(venue, { shares, trades });
       }
     }
+
+    // If no matching data found, skip this week (issuer may not have reportable ATS activity)
     if (venueTotals.size === 0) {
-      throw new Error(`No ATS weekly rows matched CIK ${cik} for week ending ${week}`);
+      console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} on week ${week}`);
+      continue;
     }
+
     const payload = Array.from(venueTotals.entries()).map(([venue, totals]) => ({
       week_end: week,
       cik,

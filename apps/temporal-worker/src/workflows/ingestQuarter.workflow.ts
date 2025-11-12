@@ -6,6 +6,7 @@ const activities = proxyActivities<{
   fetchFilings: (cik: string, quarter: { start: string; end: string }, forms: string[]) => Promise<any>;
   parse13FInfoTables: (accessions: any[]) => Promise<number>;
   parse13G13D: (accessions: any[]) => Promise<number>;
+  seedCusipMappings: (cik: string, cusips: string[]) => Promise<number>;
   fetchMonthly: (cik: string, months: { month: string }[]) => Promise<number>;
   fetchDailyHoldings: (cusips: string[], funds: string[]) => Promise<number>;
   fetchShortInterest: (cik: string, settleDates: string[]) => Promise<number>;
@@ -67,6 +68,10 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   if (filings13G13D.length > 0) {
     await activities.parse13G13D(filings13G13D);
   }
+
+  // Seed CUSIP mappings for issuer companies that don't file 13F-HR
+  // This ensures FINRA activities can map short interest/ATS data to the issuer
+  await activities.seedCusipMappings(input.cik, input.cusips);
 
   const derivedBounds = quarterBounds(input.quarter);
   const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
