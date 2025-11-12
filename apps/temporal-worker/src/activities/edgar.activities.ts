@@ -4,17 +4,14 @@ import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
 import type { FilingCadence, FilingRecord } from '../lib/schema';
 
-const tickerSearchSchema = z.object({
-  hits: z
-    .array(
-      z.object({
-        cik: z.string(),
-        ticker: z.string().optional(),
-        entityName: z.string().optional(),
-      })
-    )
-    .default([]),
-});
+const tickerSearchSchema = z.record(
+  z.string(),
+  z.object({
+    cik_str: z.number(),
+    ticker: z.string(),
+    title: z.string(),
+  })
+);
 
 const companySubmissionsSchema = z.object({
   cik: z.string(),
@@ -150,14 +147,17 @@ function resolveExpectedPublishAt(
 export async function resolveCIK(ticker: string) {
   const tickerUpper = ticker.toUpperCase();
   const client = createSecClient();
-  const searchResponse = await client.get(`/search/ticker?tickers=${encodeURIComponent(tickerUpper)}`);
+  const searchResponse = await client.get(`/files/company_tickers.json`);
   const searchJson = await searchResponse.json();
-  const searchHits = tickerSearchSchema.parse(searchJson);
-  const match = searchHits.hits.find((hit) => hit.ticker?.toUpperCase() === tickerUpper);
+  const tickerData = tickerSearchSchema.parse(searchJson);
+
+  // Find the matching ticker from the record
+  const match = Object.values(tickerData).find((entry) => entry.ticker.toUpperCase() === tickerUpper);
   if (!match) {
     throw new Error(`CIK not found for ${ticker}`);
   }
-  const cik = normalizeCik(match.cik);
+
+  const cik = normalizeCik(match.cik_str.toString());
   const submissionsResponse = await client.get(`/submissions/CIK${cik}.json`);
   const submissionsJson = await submissionsResponse.json();
   const parsed = companySubmissionsSchema.parse(submissionsJson);

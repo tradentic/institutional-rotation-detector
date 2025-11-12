@@ -33,10 +33,11 @@ export class SecClient {
 
 export function createSecClient(): SecClient {
   const baseUrl = process.env.EDGAR_BASE ?? 'https://data.sec.gov';
-  const userAgent = process.env.EDGAR_USER_AGENT;
+  // Support both SEC_USER_AGENT and EDGAR_USER_AGENT for backwards compatibility
+  const userAgent = process.env.SEC_USER_AGENT ?? process.env.EDGAR_USER_AGENT;
   const maxRps = Number(process.env.MAX_RPS_EDGAR ?? '8');
   if (!userAgent) {
-    throw new Error('EDGAR_USER_AGENT missing');
+    throw new Error('SEC_USER_AGENT or EDGAR_USER_AGENT environment variable is required');
   }
   return new SecClient({ baseUrl, userAgent, maxRps });
 }
