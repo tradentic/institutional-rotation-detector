@@ -2,6 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
+import { ensureEntity } from './entity-utils';
 
 export type Month = { month: string };
 
@@ -166,7 +167,7 @@ function combineRecentFilings(recent: Record<string, unknown>): FilingSummary[] 
   return filings;
 }
 
-async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string> {
+async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('entities')
     .select('entity_id,kind')
@@ -176,7 +177,8 @@ async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<s
   }
   const rows = (data as HolderEntityRow[] | null) ?? [];
   if (rows.length === 0) {
-    throw new Error(`Holder entity not found for CIK ${cik}`);
+    // Entity doesn't exist - likely an issuer company, not a fund
+    return null;
   }
   rows.sort((a, b) => (KIND_PRIORITY[a.kind] ?? 99) - (KIND_PRIORITY[b.kind] ?? 99));
   return rows[0]!.entity_id;
@@ -211,8 +213,8 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
   const supabase = createSupabaseClient();
   const secClient = createSecClient();
   const normalizedCik = normalizeCik(cik);
-  const holderId = await resolveHolderId(supabase, normalizedCik);
 
+  // Fetch submissions to check for N-PORT filings
   const submissionsResponse = await secClient.get(`/submissions/CIK${normalizedCik}.json`);
   const submissionsJson = await submissionsResponse.json();
   const recentFilings = submissionsJson?.filings?.recent;
@@ -220,6 +222,17 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
     throw new Error('Unexpected SEC submissions payload');
   }
   const filings = combineRecentFilings(recentFilings as Record<string, unknown>);
+
+  // Check if there are any N-PORT filings - if not, skip (this is not a fund)
+  const hasNportFilings = filings.some((f) => f?.form?.startsWith('NPORT-P'));
+  if (!hasNportFilings) {
+    console.log(`[fetchMonthly] No N-PORT filings found for CIK ${normalizedCik}, skipping (not a fund)`);
+    return 0;
+  }
+
+  // Ensure fund entity exists (auto-creates if needed)
+  const { entity_id: holderId } = await ensureEntity(normalizedCik, 'fund');
+
   const monthToFiling = new Map<string, FilingSummary>();
   for (const filing of filings) {
     if (!filing || !filing.accessionNumber) continue;
