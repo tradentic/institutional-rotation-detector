@@ -144,7 +144,7 @@ All migrations include proper indexes, constraints, and the pgvector extension f
 
 4. **Verify Search Attributes**
    ```bash
-   temporal operator search-attribute list --namespace default
+   temporal operator search-attribute list --namespace ird
    ```
 
 ## Application Configuration
@@ -274,6 +274,7 @@ Or trigger directly via Temporal CLI:
 
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id test-run-$(date +%s) \
@@ -287,8 +288,8 @@ temporal workflow start \
 open http://localhost:8233  # For local Temporal server
 
 # Via Temporal CLI
-temporal workflow list --query 'ticker="AAPL"'
-temporal workflow describe --workflow-id <workflow-id>
+temporal workflow list --namespace ird --query 'ticker="AAPL"'
+temporal workflow describe --namespace ird --workflow-id <workflow-id>
 ```
 
 ## Verification

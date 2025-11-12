@@ -79,6 +79,7 @@ interface IngestIssuerInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --input '{
@@ -143,6 +144,7 @@ interface IngestQuarterInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestQuarterWorkflow \
   --input '{
@@ -222,6 +224,7 @@ interface RotationDetectInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type rotationDetectWorkflow \
   --input '{
@@ -279,6 +282,7 @@ interface EventStudyInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type eventStudyWorkflow \
   --input '{
@@ -335,6 +339,7 @@ interface GraphBuildInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type graphBuildWorkflow \
   --input '{
@@ -401,6 +406,7 @@ interface GraphSummarizeInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type graphSummarizeWorkflow \
   --input '{
@@ -467,6 +473,7 @@ interface GraphQueryInput {
 **Example:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type graphQueryWorkflow \
   --input '{
@@ -540,6 +547,7 @@ temporal workflow list --namespace ird --query 'Ticker="AAPL" AND RunKind="daily
 ```bash
 # Start workflow
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id my-custom-id \
@@ -547,15 +555,16 @@ temporal workflow start \
 
 # Execute and wait for result
 temporal workflow execute \
+  --namespace ird \
   --task-queue rotation-detector \
   --type graphQueryWorkflow \
   --input '{"ticker":"AAPL","from":"2024-01-01","to":"2024-03-31","hops":2}'
 
 # Describe workflow
-temporal workflow describe --workflow-id my-custom-id
+temporal workflow describe --namespace ird --workflow-id my-custom-id
 
 # Show execution history
-temporal workflow show --workflow-id my-custom-id
+temporal workflow show --namespace ird --workflow-id my-custom-id
 ```
 
 ### Via API
@@ -640,8 +649,8 @@ Runtime.install({
 **Replay workflows locally:**
 ```bash
 temporal workflow replay \
-  --workflow-id my-workflow-id \
-  --namespace default
+  --namespace ird \
+  --workflow-id my-workflow-id
 ```
 
 **Test workflows:**

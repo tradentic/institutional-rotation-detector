@@ -311,7 +311,7 @@ Search attributes must be created before running workflows:
 
 **Verify:**
 ```bash
-temporal operator search-attribute list --namespace default
+temporal operator search-attribute list --namespace ird
 ```
 
 **Expected Output:**
@@ -606,7 +606,7 @@ psql postgresql://postgres:postgres@localhost:54322/postgres -c "SELECT COUNT(*)
 
 ```bash
 # List workflows (should be empty initially)
-temporal workflow list
+temporal workflow list --namespace ird
 
 # Check server health
 curl http://localhost:8233/api/v1/health
@@ -621,6 +621,7 @@ cd apps/temporal-worker
 
 # Using Temporal CLI
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type testProbeWorkflow \
   --input '{"ticker":"TEST"}' \
@@ -657,6 +658,7 @@ curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&ru
 
 # Or using Temporal CLI
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}' \
@@ -698,7 +700,7 @@ pnpm run build:worker && pnpm run start:worker
 **4. Test Changes**
 ```bash
 # Trigger workflow
-temporal workflow start --task-queue rotation-detector --type myWorkflow --input '{}'
+temporal workflow start --namespace ird --task-queue rotation-detector --type myWorkflow --input '{}'
 
 # View in UI
 open http://localhost:8233

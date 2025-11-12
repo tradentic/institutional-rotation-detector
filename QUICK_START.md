@@ -85,6 +85,7 @@ pnpm run start:worker
 ```bash
 # In Terminal 4 - Test workflow
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type testSearchAttributesWorkflow \
   --input '{"ticker":"TEST"}'
@@ -164,6 +165,7 @@ Click the "Ports" tab to access them.
 
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --input '{
@@ -212,13 +214,13 @@ supabase status
 
 ```bash
 # List workflows
-temporal workflow list
+temporal workflow list --namespace ird
 
 # Describe workflow
-temporal workflow describe --workflow-id <id>
+temporal workflow describe --namespace ird --workflow-id <id>
 
 # List search attributes
-temporal operator search-attribute list
+temporal operator search-attribute list --namespace ird
 ```
 
 ### Worker

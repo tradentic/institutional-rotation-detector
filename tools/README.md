@@ -278,7 +278,7 @@ ts-node ../../tools/backfill-2019-2025.ts AAPL
 ts-node tools/backfill-2019-2025.ts AAPL
 
 # Monitor progress
-temporal workflow list --query 'ticker="AAPL" AND runKind="backfill"'
+temporal workflow list --namespace ird --query 'ticker="AAPL" AND runKind="backfill"'
 ```
 
 **Runtime:**
@@ -481,13 +481,13 @@ ts-node tools/backfill-custom.ts AAPL 2023Q1 2024Q4
 
 ```bash
 # List backfill workflows
-temporal workflow list --query 'runKind="backfill"'
+temporal workflow list --namespace ird --query 'runKind="backfill"'
 
 # Describe specific workflow
-temporal workflow describe --workflow-id <id>
+temporal workflow describe --namespace ird --workflow-id <id>
 
 # Show workflow history
-temporal workflow show --workflow-id <id>
+temporal workflow show --namespace ird --workflow-id <id>
 ```
 
 ### Check Database

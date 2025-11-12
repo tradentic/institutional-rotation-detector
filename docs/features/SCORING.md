@@ -211,6 +211,7 @@ Flip50 events can trigger event-study workflows automatically (optional). The sy
 **Detect Flip50 Events:**
 ```bash
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type flip50DetectWorkflow \
   --input '{

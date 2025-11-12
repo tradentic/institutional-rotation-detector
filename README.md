@@ -141,6 +141,7 @@ pnpm build
 ```bash
 # Start a workflow via Temporal CLI
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily"}'

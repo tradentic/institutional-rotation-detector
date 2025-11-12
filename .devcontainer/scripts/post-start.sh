@@ -295,7 +295,7 @@ if command -v pnpm >/dev/null 2>&1; then
   log "     pnpm run start:worker"
   log ""
   log "  3. (Optional) Run a test workflow:"
-  log "     temporal workflow start --task-queue rotation-detector \\"
+  log "     temporal workflow start --namespace ird --task-queue rotation-detector \\"
   log "       --type testSearchAttributesWorkflow --input '{\"ticker\":\"TEST\"}'"
   log ""
 else

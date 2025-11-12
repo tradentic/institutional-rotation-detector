@@ -86,6 +86,7 @@ The system ingests data at multiple cadences to capture both long-term instituti
 ```bash
 # Backfill 4 weeks of FINRA OTC data for GME
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type finraOtcWeeklyIngestWorkflow \
   --workflow-id finra-otc-backfill-GME \
@@ -96,6 +97,7 @@ temporal workflow start \
 ```bash
 # Ingest most recent week for all symbols
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type finraOtcWeeklyIngestWorkflow \
   --workflow-id finra-otc-daily-$(date +%Y%m%d) \
@@ -123,6 +125,7 @@ IEX matched volume is used as an on-exchange proxy to compute daily approximatio
 ```bash
 # Backfill 30 days of IEX data for GME
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type iexDailyIngestWorkflow \
   --workflow-id iex-backfill-GME \
@@ -133,6 +136,7 @@ temporal workflow start \
 ```bash
 # Ingest yesterday's IEX data
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type iexDailyIngestWorkflow \
   --workflow-id iex-daily-$(date +%Y%m%d) \
@@ -161,6 +165,7 @@ temporal workflow start \
 ```bash
 # Backfill 6 months of short interest for GME
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type shortInterestIngestWorkflow \
   --workflow-id short-int-backfill-GME \
@@ -171,6 +176,7 @@ temporal workflow start \
 ```bash
 # Ingest most recent settlement
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type shortInterestIngestWorkflow \
   --workflow-id short-int-scheduled-$(date +%Y%m%d) \
@@ -199,6 +205,7 @@ temporal workflow start \
 ```bash
 # Run after both FINRA OTC and IEX ingestion for the week
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type offexRatioComputeWorkflow \
   --workflow-id offex-ratio-compute-$(date +%Y%m%d) \
@@ -221,6 +228,7 @@ temporal workflow start \
 ```bash
 # Detect Flip50 events for GME (last 90 days)
 temporal workflow start \
+  --namespace ird \
   --task-queue rotation-detector \
   --type flip50DetectWorkflow \
   --workflow-id flip50-detect-GME \
@@ -235,19 +243,19 @@ For a production deployment, consider this cron schedule:
 
 ```cron
 # FINRA OTC weekly (run Wednesdays to catch last week's data)
-0 10 * * 3 /usr/bin/temporal workflow start --type finraOtcWeeklyIngestWorkflow --input '{"runKind":"daily"}'
+0 10 * * 3 /usr/bin/temporal workflow start --namespace ird --type finraOtcWeeklyIngestWorkflow --input '{"runKind":"daily"}'
 
 # IEX HIST daily (run every business day morning for T+1 data)
-0 9 * * 1-5 /usr/bin/temporal workflow start --type iexDailyIngestWorkflow --input '{"runKind":"daily"}'
+0 9 * * 1-5 /usr/bin/temporal workflow start --namespace ird --type iexDailyIngestWorkflow --input '{"runKind":"daily"}'
 
 # Off-exchange ratio compute (run after IEX ingestion)
-0 12 * * 1-5 /usr/bin/temporal workflow start --type offexRatioComputeWorkflow --input '{"symbols":[],"from":"","to":""}'
+0 12 * * 1-5 /usr/bin/temporal workflow start --namespace ird --type offexRatioComputeWorkflow --input '{"symbols":[],"from":"","to":""}'
 
 # FINRA short interest (run on 3rd and 18th of each month, after publication)
-0 10 3,18 * * /usr/bin/temporal workflow start --type shortInterestIngestWorkflow --input '{"runKind":"scheduled"}'
+0 10 3,18 * * /usr/bin/temporal workflow start --namespace ird --type shortInterestIngestWorkflow --input '{"runKind":"scheduled"}'
 
 # Flip50 detection (run daily after ratio compute)
-0 14 * * 1-5 /usr/bin/temporal workflow start --type flip50DetectWorkflow --input '{"symbol":"GME"}'
+0 14 * * 1-5 /usr/bin/temporal workflow start --namespace ird --type flip50DetectWorkflow --input '{"symbol":"GME"}'
 ```
 
 ---
@@ -279,23 +287,23 @@ When adding new symbols or performing historical analysis:
 ```bash
 # 1. 13F quarterly data (existing workflows)
 # 2. FINRA OTC weekly (last 12 weeks)
-temporal workflow start --type finraOtcWeeklyIngestWorkflow \
+temporal workflow start --namespace ird --type finraOtcWeeklyIngestWorkflow \
   --input '{"symbols":["GME"],"fromWeek":"2024-08-01","toWeek":"2024-11-01","runKind":"backfill"}'
 
 # 3. IEX daily (last 90 days)
-temporal workflow start --type iexDailyIngestWorkflow \
+temporal workflow start --namespace ird --type iexDailyIngestWorkflow \
   --input '{"symbols":["GME"],"from":"2024-08-01","to":"2024-11-01","runKind":"backfill"}'
 
 # 4. Short interest (last 6 months)
-temporal workflow start --type shortInterestIngestWorkflow \
+temporal workflow start --namespace ird --type shortInterestIngestWorkflow \
   --input '{"symbols":["GME"],"fromSettlement":"2024-05-15","toSettlement":"2024-10-31","runKind":"backfill"}'
 
 # 5. Compute off-exchange ratios
-temporal workflow start --type offexRatioComputeWorkflow \
+temporal workflow start --namespace ird --type offexRatioComputeWorkflow \
   --input '{"symbols":["GME"],"from":"2024-08-01","to":"2024-11-01"}'
 
 # 6. Detect Flip50 events
-temporal workflow start --type flip50DetectWorkflow \
+temporal workflow start --namespace ird --type flip50DetectWorkflow \
   --input '{"symbol":"GME","lookbackDays":90}'
 ```
 

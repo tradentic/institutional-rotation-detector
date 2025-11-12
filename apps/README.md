@@ -273,10 +273,10 @@ Access workflow execution details:
 open http://localhost:8233
 
 # Search workflows
-temporal workflow list --query 'ticker="AAPL"'
+temporal workflow list --namespace ird --query 'ticker="AAPL"'
 
 # Describe specific workflow
-temporal workflow describe --workflow-id <id>
+temporal workflow describe --namespace ird --workflow-id <id>
 ```
 
 ### Logs
