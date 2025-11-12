@@ -37,7 +37,7 @@ export function WorkflowForm({ workflow, defaultValues, onSubmit, onCancel }: Wo
     setValue,
     watch,
   } = useForm<Record<string, any>>({
-    resolver: zodResolver(workflow.schema),
+    resolver: zodResolver(workflow.schema as any) as any,
     defaultValues: defaultValues || {},
   });
 
