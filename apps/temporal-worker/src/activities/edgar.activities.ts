@@ -191,8 +191,10 @@ const filingSchema = z.object({
 /**
  * Converts SEC EDGAR API columnar format to array of objects format.
  * SEC returns filings.recent in two formats:
- * 1. Array format: [{accessionNumber: "...", filingDate: "...", ...}, ...]
- * 2. Columnar format: {accessionNumber: ["...", "..."], filingDate: ["...", "..."], ...}
+ * 1. Array format: [{accessionNumber: "...", filingDate: "...", formType: "...", ...}, ...]
+ * 2. Columnar format: {accessionNumber: ["...", "..."], filingDate: ["...", "..."], form: ["...", "..."], ...}
+ *
+ * Note: The columnar format uses "form" instead of "formType", so we map it accordingly.
  */
 function normalizeFilingsData(data: any): any[] {
   if (!data) return [];
@@ -215,12 +217,19 @@ function normalizeFilingsData(data: any): any[] {
     const length = firstArray.length;
     const result: any[] = [];
 
+    // Field name mapping: columnar format -> schema format
+    const fieldMapping: Record<string, string> = {
+      form: 'formType', // SEC API uses "form" in columnar format, schema expects "formType"
+    };
+
     // Transform columnar to row format
     for (let i = 0; i < length; i++) {
       const row: any = {};
       for (const key of keys) {
         if (Array.isArray(data[key])) {
-          row[key] = data[key][i];
+          // Use mapped field name if available, otherwise use original key
+          const targetKey = fieldMapping[key] || key;
+          row[targetKey] = data[key][i];
         }
       }
       result.push(row);

@@ -202,6 +202,7 @@ describe('fetchFilings activity', () => {
     vi.spyOn(supabaseModule, 'createSupabaseClient').mockReturnValue({ from } as any);
 
     // SEC API returns columnar format for companies with many filings
+    // Note: columnar format uses "form" not "formType"
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -211,7 +212,7 @@ describe('fetchFilings activity', () => {
               filingDate: ['2024-05-15', '2024-02-14'],
               reportDate: ['2024-03-31', '2023-12-31'],
               acceptanceDateTime: ['2024-05-15T12:30:00Z', '2024-02-14T10:00:00Z'],
-              formType: ['13F-HR', '13F-HR'],
+              form: ['13F-HR', '13F-HR'], // columnar format uses "form"
               primaryDocument: ['form13fInfoTable.xml', 'form13fInfoTable.xml'],
             },
           },
