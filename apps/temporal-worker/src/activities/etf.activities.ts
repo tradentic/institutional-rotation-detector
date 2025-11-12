@@ -10,6 +10,8 @@ interface IsharesConfig {
 
 interface EtfEntity {
   entity_id: string;
+  cik: string;
+  series_id: string;
   ticker: string;
   datasource_type: string;
   datasource_config: IsharesConfig;
@@ -46,7 +48,7 @@ async function resolveEtfEntity(
   // Look up by ticker in entities table, including datasource config
   const { data, error } = await supabase
     .from('entities')
-    .select('entity_id,ticker,datasource_type,datasource_config')
+    .select('entity_id,cik,series_id,ticker,datasource_type,datasource_config')
     .eq('kind', 'etf')
     .eq('ticker', normalizedTicker)
     .maybeSingle();
@@ -66,8 +68,14 @@ async function resolveEtfEntity(
     throw new Error(`ETF ${normalizedTicker} missing datasource configuration`);
   }
 
+  if (!data.series_id) {
+    throw new Error(`ETF ${normalizedTicker} missing series_id`);
+  }
+
   const entity: EtfEntity = {
     entity_id: data.entity_id,
+    cik: data.cik,
+    series_id: data.series_id,
     ticker: data.ticker,
     datasource_type: data.datasource_type,
     datasource_config: data.datasource_config as IsharesConfig,

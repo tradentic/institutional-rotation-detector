@@ -24,6 +24,8 @@ class EntitiesQuery {
       return {
         data: {
           entity_id: 'etf-iwb',
+          cik: '0001100663',
+          series_id: 'S000004347',
           ticker: 'IWB',
           datasource_type: 'ishares',
           datasource_config: { productId: '239707', slug: 'ishares-russell-1000-etf' },
