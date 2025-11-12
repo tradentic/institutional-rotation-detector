@@ -1,10 +1,10 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
-import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
+import { upsertWorkflowSearchAttributes } from './utils';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper';
 import type {
   EtfDailyPlanInput,
   EtfDailyPlanResult,
-} from '../activities/etf.activities.js';
+} from '../activities/etf.activities';
 
 const DEFAULT_FUNDS = ['IWB', 'IWM', 'IWN', 'IWC'];
 const DEFAULT_CADENCE_MS = 24 * 60 * 60 * 1000; // daily

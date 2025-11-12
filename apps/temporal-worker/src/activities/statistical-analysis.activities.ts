@@ -12,7 +12,7 @@
  */
 
 import { createClient, createCodeSession } from '@libs/openai-client';
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 
 export interface StatisticalAnalysisInput {
   analysisType: 'correlation' | 'regression' | 'anomaly' | 'custom';

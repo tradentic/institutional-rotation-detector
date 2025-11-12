@@ -1,5 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 
 const activities = proxyActivities<{
   fetchShortInterestWithPublicationDate: (

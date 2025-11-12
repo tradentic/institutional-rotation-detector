@@ -1,12 +1,12 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
-import type { EventStudyInput } from './eventStudy.workflow.js';
-import type { IndexPenaltyResult } from '../activities/index.activities.js';
+import { upsertWorkflowSearchAttributes } from './utils';
+import type { EventStudyInput } from './eventStudy.workflow';
+import type { IndexPenaltyResult } from '../activities/index.activities';
 import type {
   AnalyzeRotationEventInput,
   AnalyzeRotationEventResult,
-} from '../activities/rotation-analysis.activities.js';
-import { isQuarterEndEOWString } from '../lib/tradingCalendar.js';
+} from '../activities/rotation-analysis.activities';
+import { isQuarterEndEOWString } from '../lib/tradingCalendar';
 
 const activities = proxyActivities<{
   detectDumpEvents: (cik: string, quarter: { start: string; end: string }) => Promise<any[]>;

@@ -1,7 +1,7 @@
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient';
 import crypto from 'crypto';
-import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema.js';
+import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
 
 let cachedClient: FinraClient | null = null;
 

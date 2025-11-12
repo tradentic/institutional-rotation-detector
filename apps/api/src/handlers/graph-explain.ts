@@ -6,7 +6,7 @@
  */
 
 import { Connection, WorkflowClient } from '@temporalio/client';
-import type { GraphQueryInput } from '../../../temporal-worker/src/workflows/graphQuery.workflow.ts';
+import type { GraphQueryInput } from '../../../temporal-worker/src/workflows/graphQuery.workflow';
 
 export interface GraphExplainParams {
   edgeIds: string[];
@@ -74,10 +74,10 @@ export async function handlePostGraphExplain(
  */
 export async function POST(request: Request): Promise<Response> {
   try {
-    const body = await request.json();
+    const body = await request.json() as { edgeIds?: string[]; question?: string };
 
     const params: GraphExplainParams = {
-      edgeIds: body.edgeIds,
+      edgeIds: body.edgeIds ?? [],
       question: body.question,
     };
 

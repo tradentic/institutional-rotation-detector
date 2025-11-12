@@ -15,8 +15,8 @@ import type {
   RequestParams,
   ResponseResult,
   ResponseItem,
-} from '../../core/types.js';
-import type { GPT5Model, GPT5Config } from './types.js';
+} from '../../core/types';
+import type { GPT5Model, GPT5Config } from './types';
 
 /**
  * GPT-5 Client

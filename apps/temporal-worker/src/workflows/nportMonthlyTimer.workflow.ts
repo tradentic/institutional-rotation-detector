@@ -1,10 +1,10 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
-import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
+import { upsertWorkflowSearchAttributes } from './utils';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper';
 import type {
   NportMonthlyPlanInput,
   NportMonthlyPlanResult,
-} from '../activities/nport.activities.js';
+} from '../activities/nport.activities';
 
 const DEFAULT_CADENCE_MS = 12 * 60 * 60 * 1000; // 12 hours
 

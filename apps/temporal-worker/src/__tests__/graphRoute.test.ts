@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { GET } from '../../../api/routes/graph.get.js';
-import * as supabaseModule from '../lib/supabase.js';
+import { GET } from '../../../api/routes/graph.get';
+import * as supabaseModule from '../lib/supabase';
 
 describe('GET /api/graph', () => {
   afterEach(() => {

@@ -1,6 +1,6 @@
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createIexClient, IexClient } from '../lib/iexClient.js';
-import type { MicroIexVolumeDailyRecord } from '../lib/schema.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { createIexClient, IexClient } from '../lib/iexClient';
+import type { MicroIexVolumeDailyRecord } from '../lib/schema';
 
 let cachedClient: IexClient | null = null;
 

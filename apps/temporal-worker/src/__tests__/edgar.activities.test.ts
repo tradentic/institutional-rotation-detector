@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { fetchFilings, resolveCIK } from '../activities/edgar.activities.js';
-import * as supabaseModule from '../lib/supabase.js';
+import { fetchFilings, resolveCIK } from '../activities/edgar.activities';
+import * as supabaseModule from '../lib/supabase';
 
 const originalFetch = global.fetch;
 

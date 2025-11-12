@@ -18,7 +18,7 @@
  *
  * @example
  * ```typescript
- * import { createClient } from '../factory.js';
+ * import { createClient } from '../factory';
  *
  * const client = createClient({ model: 'gpt-5' });
  * const session = new CoTSession({ client });
@@ -45,8 +45,8 @@ import type {
   ResponseResult,
   ResponseItem,
   E2BCodeExecutionConfig,
-} from './types.js';
-import { executeCode, handleCodeExecutionToolCall } from './e2b.js';
+} from './types';
+import { executeCode, handleCodeExecutionToolCall } from './e2b';
 
 // ============================================================================
 // Types
@@ -454,7 +454,7 @@ export class CoTSession {
  *
  * @example
  * ```typescript
- * import { createClient } from '../factory.js';
+ * import { createClient } from '../factory';
  *
  * const client = createClient({ model: 'gpt-5' });
  * const session = createAnalysisSession({ client, enableE2B: true });
@@ -479,7 +479,7 @@ export function createAnalysisSession(config: {
  *
  * @example
  * ```typescript
- * import { createClient } from '../factory.js';
+ * import { createClient } from '../factory';
  *
  * const client = createClient({ model: 'gpt-5-mini' });
  * const session = createFastSession({ client });
@@ -502,7 +502,7 @@ export function createFastSession(config: {
  *
  * @example
  * ```typescript
- * import { createClient } from '../factory.js';
+ * import { createClient } from '../factory';
  *
  * const client = createClient({ model: 'gpt-5' });
  * const session = createCodeSession({ client, enableE2B: true });
@@ -534,7 +534,7 @@ export function createCodeSession(config: {
  *
  * @example
  * ```typescript
- * import { createClient } from '../factory.js';
+ * import { createClient } from '../factory';
  *
  * const client = createClient({ model: 'gpt-5-mini' });
  * const savedState = await loadSessionState(sessionId);

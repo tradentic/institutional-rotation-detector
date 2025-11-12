@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { computeRotationScore } from '../lib/scoring.js';
+import { computeRotationScore } from '../lib/scoring';
 
 describe('Rotation score', () => {
   test('gates when dumpZ insufficient', () => {

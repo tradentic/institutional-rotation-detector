@@ -6,7 +6,7 @@
  */
 
 import { Connection, WorkflowClient } from '@temporalio/client';
-import type { IngestIssuerInput } from '../../../temporal-worker/src/workflows/ingestIssuer.workflow.ts';
+import type { IngestIssuerInput } from '../../../temporal-worker/src/workflows/ingestIssuer.workflow';
 
 export interface RunParams {
   ticker: string;

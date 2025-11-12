@@ -1,4 +1,4 @@
-import { RateLimiter } from './rateLimit.js';
+import { RateLimiter } from './rateLimit';
 
 export interface SecClientConfig {
   baseUrl: string;

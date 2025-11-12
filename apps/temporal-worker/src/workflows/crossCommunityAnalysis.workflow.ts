@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 import type {
   AnalyzeCrossCommunitiesInput,
   AnalyzeCrossCommunitiesResult,
-} from '../activities/graphrag.activities.js';
+} from '../activities/graphrag.activities';
 
 const { analyzeCrossCommunityPatterns } = proxyActivities<{
   analyzeCrossCommunityPatterns(input: AnalyzeCrossCommunitiesInput): Promise<AnalyzeCrossCommunitiesResult>;

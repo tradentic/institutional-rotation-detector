@@ -5,7 +5,7 @@
  * This handler can be used in any server framework.
  */
 
-import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase.ts';
+import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase';
 
 export interface GraphParams {
   ticker?: string;
