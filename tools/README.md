@@ -57,6 +57,48 @@ Stops all local development services.
 
 ---
 
+#### `start-temporal.sh`
+
+Starts Temporal development server with persistent SQLite storage.
+
+**Purpose:**
+- Persist namespaces, workflows, and history across restarts
+- Avoid data loss when stopping Temporal server
+- Simplify local development workflow
+
+**Usage:**
+```bash
+./tools/start-temporal.sh
+```
+
+**What it does:**
+1. Checks for Temporal CLI
+2. Creates `.temporal/data/` directory
+3. Starts Temporal with `--db-filename .temporal/data/temporal.db`
+4. Displays access URLs
+
+**Benefits:**
+- ✅ Namespaces persist across restarts
+- ✅ Workflow history retained
+- ✅ Search attributes remain configured
+- ✅ Works in local development and GitHub Codespaces
+
+**Database Location:**
+- `.temporal/data/temporal.db` (SQLite, gitignored)
+
+**Alternative:** Run manually with:
+```bash
+temporal server start-dev --db-filename .temporal/data/temporal.db
+```
+
+**To reset Temporal data:**
+```bash
+rm -rf .temporal/data/
+./tools/start-temporal.sh
+```
+
+---
+
 #### `setup-temporal-attributes.sh`
 
 Creates Temporal search attributes for the project.
@@ -176,7 +218,7 @@ Configures Temporal connection settings with defaults for local development.
 ```bash
 # 1. Start services
 supabase start                    # Terminal 1
-temporal server start-dev         # Terminal 2
+./tools/start-temporal.sh         # Terminal 2 (with persistence)
 
 # 2. Sync all environment variables (Terminal 3)
 ./tools/sync-supabase-env.sh     # Extract Supabase credentials to all apps
@@ -188,8 +230,9 @@ nano .env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 
 # 4. Build and start
-pnpm install && pnpm run build
-node dist/worker.js
+cd ../..
+pnpm install && pnpm run build:worker
+pnpm run start:worker
 ```
 
 **Note:** In GitHub Codespaces, environment sync happens automatically in the `post-start.sh` hook!

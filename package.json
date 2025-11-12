@@ -10,6 +10,7 @@
     "build:worker": "pnpm --filter rotation-detector-temporal-worker run build",
     "build:api": "pnpm --filter rotation-detector-api run build",
     "build:admin": "pnpm --filter rotation-detector-admin run build",
+    "start:worker": "node --env-file=apps/temporal-worker/.env.local apps/temporal-worker/dist/worker.js",
     "lint": "pnpm -r run lint",
     "test": "pnpm -r run test",
     "clean": "pnpm -r exec rm -rf dist node_modules .next .turbo"

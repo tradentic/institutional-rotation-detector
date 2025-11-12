@@ -48,10 +48,13 @@ cd institutional-rotation-detector
 supabase start
 ```
 
-**Terminal 2 - Temporal:**
+**Terminal 2 - Temporal (with persistent storage):**
 ```bash
-temporal server start-dev
+./tools/start-temporal.sh
+# OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 ```
+
+**Note:** Using `--db-filename` ensures namespaces and workflows persist across restarts.
 
 **Terminal 3 - Setup & Worker:**
 ```bash
@@ -71,13 +74,10 @@ nano .env.local
 # - SEC_USER_AGENT=YourName your.email@domain.com
 # (Supabase and Temporal config already synced automatically)
 
-# Build temporal worker (from repo root)
+# Build and start temporal worker (from repo root)
 cd ../..
 pnpm run build:worker
-
-# Start worker
-cd apps/temporal-worker
-node dist/worker.js
+pnpm run start:worker
 ```
 
 ### 4. Verify Everything Works
@@ -114,7 +114,7 @@ Wait for devcontainer to build (3-5 minutes). **Everything is automated!** The s
 
 **✅ Services Started:**
 - Supabase (with migrations applied)
-- Temporal server
+- Temporal server (with persistent storage)
 - Redis
 - Temporal search attributes configured
 
@@ -145,9 +145,8 @@ All other values (Supabase, Temporal) are already configured automatically!
 ### 3. Start Worker
 
 ```bash
-# Worker is already built, just start it!
-cd apps/temporal-worker
-node dist/worker.js
+# Worker is already built, just start it from repo root!
+pnpm run start:worker
 ```
 
 ### 4. Access Forwarded Ports
@@ -232,12 +231,12 @@ pnpm run build:worker
 cd apps/temporal-worker
 pnpm run build
 
-# Run
-cd apps/temporal-worker  # if not already there
-node dist/worker.js
+# Run from repo root
+cd ../..
+pnpm run start:worker
 
 # Run with environment variables
-TEMPORAL_ADDRESS=localhost:7233 node dist/worker.js
+TEMPORAL_ADDRESS=localhost:7233 pnpm run start:worker
 ```
 
 ## Troubleshooting
@@ -275,6 +274,14 @@ supabase status | grep "DB URL"
 
 # Test connection
 psql <connection-string> -c "SELECT 1"
+```
+
+### Reset Temporal data
+```bash
+# If you need to start fresh with Temporal
+rm -rf .temporal/data/
+./tools/start-temporal.sh
+./tools/setup-temporal-attributes.sh
 ```
 
 ## Next Steps

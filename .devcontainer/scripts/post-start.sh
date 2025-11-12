@@ -163,8 +163,12 @@ start_temporal_server() {
     return 0
   fi
 
-  log "Starting Temporal development server in the background..."
-  nohup temporal server start-dev >/tmp/temporal-server.log 2>&1 &
+  # Create .temporal/data directory for persistent storage
+  mkdir -p "${REPO_ROOT}/.temporal/data"
+
+  log "Starting Temporal development server with persistent storage..."
+  log "Database location: ${REPO_ROOT}/.temporal/data/temporal.db"
+  nohup temporal server start-dev --db-filename "${REPO_ROOT}/.temporal/data/temporal.db" >/tmp/temporal-server.log 2>&1 &
   local temporal_pid=$!
 
   log "Temporal server started with PID $temporal_pid. Logs available at /tmp/temporal-server.log"
@@ -288,7 +292,7 @@ if command -v pnpm >/dev/null 2>&1; then
   log "     - SEC_USER_AGENT=YourName your.email@domain.com"
   log ""
   log "  2. Start the worker:"
-  log "     cd apps/temporal-worker && node dist/worker.js"
+  log "     pnpm run start:worker"
   log ""
   log "  3. (Optional) Run a test workflow:"
   log "     temporal workflow start --task-queue rotation-detector \\"
