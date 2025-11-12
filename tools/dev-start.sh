@@ -14,14 +14,14 @@ echo "📦 Starting Supabase..."
 supabase start
 
 echo ""
-echo "⏰ Starting Temporal..."
+echo "⏰ Starting Temporal with persistent storage..."
 echo "   (This will run in the foreground. Press Ctrl+C to stop)"
+echo "   Data persisted to: .temporal/data/temporal.db"
 echo "   Open a new terminal to start the worker."
 echo ""
 echo "   Next steps in a new terminal:"
-echo "   1. cd apps/temporal-worker"
-echo "   2. pnpm install && pnpm run build"
-echo "   3. node dist/worker.js"
+echo "   1. pnpm run build:worker"
+echo "   2. pnpm run start:worker"
 echo ""
 echo "📊 Access points:"
 echo "  Supabase Studio: http://localhost:54323"
@@ -29,5 +29,8 @@ echo "  Temporal UI:     http://localhost:8233"
 echo "  PostgreSQL:      postgresql://postgres:postgres@localhost:54322/postgres"
 echo ""
 
-# Start Temporal (foreground)
-temporal server start-dev
+# Create .temporal/data directory if it doesn't exist
+mkdir -p .temporal/data
+
+# Start Temporal with persistent SQLite database
+temporal server start-dev --db-filename .temporal/data/temporal.db

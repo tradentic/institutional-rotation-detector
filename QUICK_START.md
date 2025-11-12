@@ -48,10 +48,13 @@ cd institutional-rotation-detector
 supabase start
 ```
 
-**Terminal 2 - Temporal:**
+**Terminal 2 - Temporal (with persistent storage):**
 ```bash
-temporal server start-dev
+./tools/start-temporal.sh
+# OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 ```
+
+**Note:** Using `--db-filename` ensures namespaces and workflows persist across restarts.
 
 **Terminal 3 - Setup & Worker:**
 ```bash
@@ -111,7 +114,7 @@ Wait for devcontainer to build (3-5 minutes). **Everything is automated!** The s
 
 **✅ Services Started:**
 - Supabase (with migrations applied)
-- Temporal server
+- Temporal server (with persistent storage)
 - Redis
 - Temporal search attributes configured
 
@@ -271,6 +274,14 @@ supabase status | grep "DB URL"
 
 # Test connection
 psql <connection-string> -c "SELECT 1"
+```
+
+### Reset Temporal data
+```bash
+# If you need to start fresh with Temporal
+rm -rf .temporal/data/
+./tools/start-temporal.sh
+./tools/setup-temporal-attributes.sh
 ```
 
 ## Next Steps

@@ -88,8 +88,9 @@ nano apps/temporal-worker/.env.local
 # Add: OPENAI_API_KEY and SEC_USER_AGENT
 # (Supabase and Temporal config already synced!)
 
-# 8. Start Temporal (Terminal 2)
-temporal server start-dev
+# 8. Start Temporal with persistent storage (Terminal 2)
+./tools/start-temporal.sh
+# OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 
 # 9. Setup Temporal search attributes (Terminal 3)
 ./tools/setup-temporal-attributes.sh

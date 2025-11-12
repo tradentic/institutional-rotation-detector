@@ -131,8 +131,9 @@ cd ../..
 # 6. Apply migrations
 supabase db reset
 
-# 7. Start Temporal (in Terminal 2)
-temporal server start-dev
+# 7. Start Temporal with persistent storage (in Terminal 2)
+./tools/start-temporal.sh
+# OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 
 # 8. Create search attributes (in Terminal 3)
 ./tools/setup-temporal-attributes.sh
@@ -342,6 +343,30 @@ Access at http://localhost:8233
 - View activity inputs/outputs
 - Debug failed workflows
 
+### Temporal Data Persistence
+
+By default, `temporal server start-dev` uses an **in-memory** database that loses all data when stopped. To persist your namespaces, workflows, and history across restarts, use the `--db-filename` flag:
+
+```bash
+# Using the helper script (recommended)
+./tools/start-temporal.sh
+
+# OR manually with the flag
+temporal server start-dev --db-filename .temporal/data/temporal.db
+```
+
+**Benefits:**
+- ✅ Namespaces persist across restarts
+- ✅ Workflow history is retained
+- ✅ Search attributes remain configured
+- ✅ Works in both local development and GitHub Codespaces
+
+**Database Location:**
+- Local: `.temporal/data/temporal.db` (gitignored)
+- Codespaces: Persisted in the workspace (survives rebuilds)
+
+**Note:** The `.temporal/` directory is already included in `.gitignore`, so your local Temporal data won't be committed.
+
 ---
 
 ## Application Setup
@@ -479,7 +504,8 @@ supabase start
 
 **Terminal 2: Temporal**
 ```bash
-temporal server start-dev
+./tools/start-temporal.sh
+# OR: temporal server start-dev --db-filename .temporal/data/temporal.db
 # Leave running
 ```
 
@@ -654,7 +680,7 @@ temporal workflow start \
 supabase start
 
 # Terminal 2
-temporal server start-dev
+./tools/start-temporal.sh
 ```
 
 **2. Make Code Changes**
