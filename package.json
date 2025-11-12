@@ -5,7 +5,8 @@
   "description": "Institutional rotation detection system using 13F filings",
   "scripts": {
     "install:all": "pnpm install",
-    "build": "pnpm -r --filter './apps/**' run build",
+    "build": "pnpm -r --filter './libs/**' run build && pnpm -r --filter './apps/**' run build",
+    "build:libs": "pnpm -r --filter './libs/**' run build",
     "build:worker": "pnpm --filter rotation-detector-temporal-worker run build",
     "build:api": "pnpm --filter rotation-detector-api run build",
     "build:admin": "pnpm --filter rotation-detector-admin run build",

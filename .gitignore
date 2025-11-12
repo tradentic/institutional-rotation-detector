@@ -14,6 +14,11 @@ apps/api/**/*.js
 libs/**/src/**/*.js
 libs/**/src/**/*.js.map
 libs/**/src/**/*.d.ts
+# Ignore compiled files in apps source directories (generated during build)
+apps/**/src/**/*.js
+apps/**/src/**/*.js.map
+apps/**/src/**/*.d.ts
+apps/**/src/**/*.d.ts.map
 
 # Logs
 *.log

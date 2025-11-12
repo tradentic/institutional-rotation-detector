@@ -5,7 +5,7 @@
  * This handler can be used in any server framework (Express, Hono, Supabase Edge Functions, etc.)
  */
 
-import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase.ts';
+import { createSupabaseClient } from '../../../temporal-worker/src/lib/supabase.js';
 
 export interface EventsParams {
   ticker?: string;

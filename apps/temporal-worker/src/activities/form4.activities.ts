@@ -188,7 +188,7 @@ export async function fetchForm4Filings(params: {
 
   const normalizedCik = normalizeCik(issuerCik);
   const response = await client.get(`/submissions/CIK${normalizedCik}.json`);
-  const json = await response.json();
+  const json = await response.json() as { filings?: { recent?: { accessionNumber: string[]; filingDate: string[]; form: string[] } } };
 
   const recent = json.filings?.recent;
   if (!recent) {
