@@ -2,9 +2,11 @@
   "name": "rotation-detector-temporal-worker",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm run build:workflows && pnpm run build:worker",
+    "build:worker": "esbuild src/worker.ts --bundle --platform=node --target=node20 --outfile=dist/worker.js --format=cjs --external:@temporalio/worker --external:@temporalio/client --external:@temporalio/activity --external:@temporalio/common --external:@temporalio/proto --external:@temporalio/workflow --external:@supabase/supabase-js --sourcemap",
+    "build:workflows": "tsc --project tsconfig.workflows.json",
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -30,6 +32,7 @@
   "devDependencies": {
     "@temporalio/testing": "^1.13.2",
     "@types/node": "^24.10.1",
+    "esbuild": "^0.27.0",
     "msw": "^2.12.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
