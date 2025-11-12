@@ -16,6 +16,7 @@ const tickerSearchSchema = z.record(
 const companySubmissionsSchema = z.object({
   cik: z.string(),
   entityType: z.string().optional(),
+  tickers: z.array(z.string()).optional(),
   securities: z
     .array(
       z.object({
@@ -164,7 +165,9 @@ export async function resolveCIK(ticker: string) {
   const submissionsJson = await submissionsResponse.json();
   const parsed = companySubmissionsSchema.parse(submissionsJson);
   const securities = parsed.securities ?? [];
+  const topLevelTickers = (parsed.tickers ?? []).map((t) => t.toUpperCase());
   console.log(`[resolveCIK] Found ${securities.length} securities for ${ticker} (CIK ${cik})`);
+  console.log(`[resolveCIK] Top-level tickers:`, topLevelTickers);
 
   const cusipValues = securities.map((sec) => sec.cusip);
   const normalizedCusips = normalizeCusips(cusipValues);
@@ -175,13 +178,17 @@ export async function resolveCIK(ticker: string) {
     return { cik, cusips: normalizedCusips };
   }
 
-  const fallbackTickers = Array.from(
+  // Fallback 1: Try tickers from securities array
+  const securitiesTickers = Array.from(
     new Set(
       securities
         .map((sec) => sec.ticker?.toUpperCase())
         .filter((value): value is string => Boolean(value))
     )
   );
+
+  // Fallback 2: Use top-level tickers if securities tickers are empty
+  const fallbackTickers = securitiesTickers.length > 0 ? securitiesTickers : topLevelTickers;
   console.log(`[resolveCIK] No CUSIPs found, falling back to ${fallbackTickers.length} ticker symbols for ${ticker}:`, fallbackTickers);
   return { cik, cusips: fallbackTickers };
 }
