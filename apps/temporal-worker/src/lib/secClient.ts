@@ -19,6 +19,16 @@ export class SecClient {
     // Use dataApiBaseUrl for /submissions/ endpoints, otherwise use main baseUrl
     const base = path.startsWith('/submissions/') ? this.config.dataApiBaseUrl : this.config.baseUrl;
     const url = new URL(path, base).toString();
+
+    // Debug logging
+    console.log('[SecClient] Fetching:', {
+      path,
+      base,
+      finalUrl: url,
+      baseUrl: this.config.baseUrl,
+      dataApiBaseUrl: this.config.dataApiBaseUrl,
+    });
+
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -28,6 +38,11 @@ export class SecClient {
       },
     });
     if (!response.ok) {
+      console.error('[SecClient] Request failed:', {
+        url,
+        status: response.status,
+        statusText: response.statusText,
+      });
       throw new Error(`SEC request failed ${response.status}`);
     }
     return response;
@@ -42,6 +57,21 @@ export function createSecClient(): SecClient {
   // Support both SEC_USER_AGENT and EDGAR_USER_AGENT for backwards compatibility
   const userAgent = process.env.SEC_USER_AGENT ?? process.env.EDGAR_USER_AGENT;
   const maxRps = Number(process.env.MAX_RPS_EDGAR ?? '8');
+
+  // Debug logging
+  console.log('[SecClient] Configuration:', {
+    baseUrl,
+    dataApiBaseUrl,
+    userAgent: userAgent ? '[SET]' : '[NOT SET]',
+    maxRps,
+    envVars: {
+      EDGAR_BASE: process.env.EDGAR_BASE || '[using default]',
+      EDGAR_DATA_API_BASE: process.env.EDGAR_DATA_API_BASE || '[using default]',
+      SEC_USER_AGENT: process.env.SEC_USER_AGENT ? '[SET]' : '[NOT SET]',
+      EDGAR_USER_AGENT: process.env.EDGAR_USER_AGENT ? '[SET]' : '[NOT SET]',
+    },
+  });
+
   if (!userAgent) {
     throw new Error('SEC_USER_AGENT or EDGAR_USER_AGENT environment variable is required');
   }
