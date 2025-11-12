@@ -1,11 +1,11 @@
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 import {
   GraphBuilder,
   type GraphBuilderResult,
   type GraphBuildSource,
   type GraphNodeInput,
   type GraphStore,
-} from '../lib/graph.js';
+} from '../lib/graph';
 
 export interface GraphBuildActivityInput {
   quarterStart: string;

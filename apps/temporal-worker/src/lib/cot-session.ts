@@ -43,8 +43,8 @@ import {
   E2BCodeExecutionConfig,
   createOpenAIClient,
   createResponse,
-} from './openai.js';
-import { executeCode, handleCodeExecutionToolCall } from './e2b-executor.js';
+} from './openai';
+import { executeCode, handleCodeExecutionToolCall } from './e2b-executor';
 
 // ============================================================================
 // Types

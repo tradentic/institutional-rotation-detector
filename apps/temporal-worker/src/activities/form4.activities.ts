@@ -1,7 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createSecClient } from '../lib/secClient.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { createSecClient } from '../lib/secClient';
 
 // ============================================================================
 // XML Schemas for Form 4 Parsing

@@ -5,9 +5,9 @@
  * This allows runtime selection of models (GPT-5, GPT-6, etc.)
  */
 
-import type { AIClient } from './core/types.js';
-import { GPT5Client, createGPT5Client } from './models/gpt5/client.js';
-import type { GPT5Model } from './models/gpt5/types.js';
+import type { AIClient } from './core/types';
+import { GPT5Client, createGPT5Client } from './models/gpt5/client';
+import type { GPT5Model } from './models/gpt5/types';
 
 export interface ClientConfig {
   /**

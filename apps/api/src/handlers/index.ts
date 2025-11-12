@@ -6,24 +6,24 @@
  */
 
 // Events
-export { handleGetEvents, GET as getEvents } from './events.js';
-export type { EventsParams } from './events.js';
+export { handleGetEvents, GET as getEvents } from './events';
+export type { EventsParams } from './events';
 
 // Graph
-export { handleGetGraph, GET as getGraph } from './graph.js';
-export type { GraphParams } from './graph.js';
+export { handleGetGraph, GET as getGraph } from './graph';
+export type { GraphParams } from './graph';
 
 // Graph Paths
-export { handleGetGraphPaths, GET as getGraphPaths } from './graph-paths.js';
-export type { GraphPathsParams } from './graph-paths.js';
+export { handleGetGraphPaths, GET as getGraphPaths } from './graph-paths';
+export type { GraphPathsParams } from './graph-paths';
 
 // Graph Explain
-export { handlePostGraphExplain, POST as postGraphExplain } from './graph-explain.js';
-export type { GraphExplainParams } from './graph-explain.js';
+export { handlePostGraphExplain, POST as postGraphExplain } from './graph-explain';
+export type { GraphExplainParams } from './graph-explain';
 
 // Run Workflow
-export { handlePostRun, POST as postRun } from './run.js';
-export type { RunParams } from './run.js';
+export { handlePostRun, POST as postRun } from './run';
+export type { RunParams } from './run';
 
 // Shared types
-export type { TemporalConfig } from './run.js';
+export type { TemporalConfig } from './run';

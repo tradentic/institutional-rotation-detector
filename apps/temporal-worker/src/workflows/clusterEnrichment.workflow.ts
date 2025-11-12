@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 import type {
   CreateClusterSummaryInput,
   CreateClusterSummaryResult,
-} from '../activities/filing-chunks.activities.js';
+} from '../activities/filing-chunks.activities';
 
 const activities = proxyActivities<{
   createClusterSummary(input: CreateClusterSummaryInput): Promise<CreateClusterSummaryResult>;

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createUnusualWhalesClient } from '../lib/unusualWhalesClient.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { createUnusualWhalesClient } from '../lib/unusualWhalesClient';
 import {
   // Generic helpers
   fetchAndParse,
@@ -18,7 +18,7 @@ import {
   transformFlowByExpiryToRecords,
   // Group 4: Unusual activity transformers
   transformFlowAlertsToRecords,
-} from './options.helpers.js';
+} from './options.helpers';
 
 // ============================================================================
 // Response Schemas (Based on Actual UW API)

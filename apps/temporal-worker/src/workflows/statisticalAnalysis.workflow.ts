@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 import type {
   StatisticalAnalysisInput,
   StatisticalAnalysisResult,
-} from '../activities/statistical-analysis.activities.js';
+} from '../activities/statistical-analysis.activities';
 
 const { performStatisticalAnalysis } = proxyActivities<{
   performStatisticalAnalysis(input: StatisticalAnalysisInput): Promise<StatisticalAnalysisResult>;

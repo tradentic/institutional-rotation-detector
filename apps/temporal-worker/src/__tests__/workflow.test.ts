@@ -5,8 +5,8 @@ import { isGrpcServiceError } from '@temporalio/common';
 import { WorkflowNotFoundError } from '@temporalio/client';
 import { status as grpcStatus } from '@grpc/grpc-js';
 import { temporal } from '@temporalio/proto';
-import { IngestIssuerInput } from '../workflows/ingestIssuer.workflow.js';
-import type { TestProbeInput } from '../workflows/testProbe.workflow.js';
+import { IngestIssuerInput } from '../workflows/ingestIssuer.workflow';
+import type { TestProbeInput } from '../workflows/testProbe.workflow';
 
 let env: TestWorkflowEnvironment;
 

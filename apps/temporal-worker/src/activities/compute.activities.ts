@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
-import { createSupabaseClient } from '../lib/supabase.js';
-import { computeRotationScore, ScoreInputs } from '../lib/scoring.js';
-import type { RotationEventRecord } from '../lib/schema.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { computeRotationScore, ScoreInputs } from '../lib/scoring';
+import type { RotationEventRecord } from '../lib/schema';
 
 type SupabaseFactory = typeof createSupabaseClient;
 

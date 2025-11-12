@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { RateLimiter } from '../lib/rateLimit.js';
+import { RateLimiter } from '../lib/rateLimit';
 
 describe('RateLimiter', () => {
   beforeEach(() => {

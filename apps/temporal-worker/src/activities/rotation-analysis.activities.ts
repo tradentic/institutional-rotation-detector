@@ -12,7 +12,7 @@
  */
 
 import { createClient, createAnalysisSession } from '@libs/openai-client';
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 
 export interface AnalyzeRotationEventInput {
   clusterId: string;

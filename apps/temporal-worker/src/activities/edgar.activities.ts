@@ -1,8 +1,8 @@
 import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
-import { createSupabaseClient } from '../lib/supabase.js';
-import { createSecClient } from '../lib/secClient.js';
-import type { FilingCadence, FilingRecord } from '../lib/schema.js';
+import { createSupabaseClient } from '../lib/supabase';
+import { createSecClient } from '../lib/secClient';
+import type { FilingCadence, FilingRecord } from '../lib/schema';
 
 const tickerSearchSchema = z.object({
   hits: z

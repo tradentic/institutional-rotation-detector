@@ -1,10 +1,10 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
-import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper.js';
+import { upsertWorkflowSearchAttributes } from './utils';
+import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper';
 import type {
   EdgarSubmissionWindowInput,
   EdgarSubmissionWindowResult,
-} from '../activities/edgar.activities.js';
+} from '../activities/edgar.activities';
 
 const DEFAULT_FORMS = ['13F-HR', '13F-HR/A', 'SC 13G', 'SC 13D'];
 const DEFAULT_CADENCE_MS = 5 * 60 * 1000;

@@ -38,7 +38,7 @@
 // Primary API - Model-Agnostic Factory
 // ============================================================================
 
-export { createClient, type ClientConfig } from './factory.js';
+export { createClient, type ClientConfig } from './factory';
 
 // ============================================================================
 // Core Types (Model-Agnostic)
@@ -62,7 +62,7 @@ export type {
   ForcedCustomChoice,
   ToolGrammar,
   E2BCodeExecutionConfig,
-} from './core/types.js';
+} from './core/types';
 
 // ============================================================================
 // CoT Session Exports (Model-Agnostic)
@@ -77,7 +77,7 @@ export {
   type CoTSessionConfig,
   type CoTSessionState,
   type CoTTurn,
-} from './core/session.js';
+} from './core/session';
 
 // ============================================================================
 // E2B Code Execution (Explicit usage outside of tool calling)
@@ -90,7 +90,7 @@ export {
   getE2BStatus,
   type E2BExecutionResult,
   type E2BSandboxConfig,
-} from './core/e2b.js';
+} from './core/e2b';
 
 // ============================================================================
 // GPT-5 Specific Exports
@@ -102,15 +102,15 @@ export {
   preventDeprecatedChatCompletions,
   runResponses, // Legacy compatibility
   chooseGPT5Model,
-} from './models/gpt5/client.js';
+} from './models/gpt5/client';
 
-export type { GPT5Model, GPT5Config } from './models/gpt5/types.js';
+export type { GPT5Model, GPT5Config } from './models/gpt5/types';
 
 // ============================================================================
 // Convenience Functions (Temporary - using GPT-5 directly)
 // ============================================================================
 
-import type { ReasoningEffort, Verbosity, ResponseResult, RequestParams } from './core/types.js';
+import type { ReasoningEffort, Verbosity, ResponseResult, RequestParams } from './core/types';
 
 /**
  * Quick single-turn response

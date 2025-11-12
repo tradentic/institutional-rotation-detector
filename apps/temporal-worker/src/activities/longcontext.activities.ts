@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 import { createClient } from '@libs/openai-client';
 
 export interface BundleForSynthesisInput {

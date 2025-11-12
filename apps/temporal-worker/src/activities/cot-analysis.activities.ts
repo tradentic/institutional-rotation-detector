@@ -12,7 +12,7 @@
  * and improving performance.
  */
 
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 import {
   CoTSession,
   createAnalysisSession,

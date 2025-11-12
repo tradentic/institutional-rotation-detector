@@ -1,5 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
-import type * as activities from '../activities/index.activities.js';
+import type * as activities from '../activities/index.activities';
 
 const {
   // Tier 1 endpoints (MUST HAVE)

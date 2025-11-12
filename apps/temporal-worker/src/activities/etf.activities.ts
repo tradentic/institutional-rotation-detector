@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createSupabaseClient } from '../lib/supabase.js';
+import { createSupabaseClient } from '../lib/supabase';
 
 const ISHARES_COMPONENT_ID = '1467271812596';
 

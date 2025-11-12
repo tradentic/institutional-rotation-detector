@@ -1,5 +1,5 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 
 const activities = proxyActivities<{
   detectFlip50: (symbol: string, lookbackDays?: number, consecutiveDaysThreshold?: number) => Promise<{ eventsDetected: number }>;

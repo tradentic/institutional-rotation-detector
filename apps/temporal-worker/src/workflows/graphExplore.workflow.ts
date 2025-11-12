@@ -1,9 +1,9 @@
 import { proxyActivities } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils.js';
+import { upsertWorkflowSearchAttributes } from './utils';
 import type {
   ExploreGraphInput,
   ExploreGraphResult,
-} from '../activities/graph-exploration.activities.js';
+} from '../activities/graph-exploration.activities';
 
 const { exploreGraph } = proxyActivities<{
   exploreGraph(input: ExploreGraphInput): Promise<ExploreGraphResult>;
