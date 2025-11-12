@@ -96,9 +96,7 @@ temporal server start-dev
 
 # 10. Build and start worker (from repo root)
 pnpm run build:worker
-
-cd apps/temporal-worker
-node dist/worker.js
+pnpm run start:worker
 ```
 
 **See [QUICK_START.md](QUICK_START.md) for step-by-step instructions and troubleshooting.**

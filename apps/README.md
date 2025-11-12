@@ -119,19 +119,17 @@ temporal-worker/
 **Running the Worker:**
 
 ```bash
-cd apps/temporal-worker
-
-# Install dependencies
+# Install dependencies (from repo root)
 pnpm install
 
-# Build TypeScript
-pnpm run build
+# Build TypeScript (from repo root)
+pnpm run build:worker
 
-# Run tests
+# Run tests (from repo root)
 pnpm test
 
-# Start worker
-node dist/worker.js
+# Start worker (from repo root)
+pnpm run start:worker
 ```
 
 **Configuration:**
@@ -157,9 +155,9 @@ See [Setup Guide](../docs/SETUP.md) for full configuration details.
 
 2. **Start Worker**
    ```bash
-   cd apps/temporal-worker
-   npm run build
-   node dist/worker.js
+   # From repo root
+   pnpm run build:worker
+   pnpm run start:worker
    ```
 
 3. **Start API Server** (if developing API)

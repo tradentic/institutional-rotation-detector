@@ -140,9 +140,8 @@ temporal server start-dev
 # 9. Build worker
 pnpm run build:worker
 
-# 10. Start worker (same Terminal 3)
-cd apps/temporal-worker
-node dist/worker.js
+# 10. Start worker (same Terminal 3, from repo root)
+pnpm run start:worker
 
 # 11. Test (in Terminal 4)
 curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
@@ -486,8 +485,8 @@ temporal server start-dev
 
 **Terminal 3: Worker**
 ```bash
-cd ~/institutional-rotation-detector/apps/temporal-worker
-pnpm run build && node dist/worker.js
+cd ~/institutional-rotation-detector
+pnpm run build:worker && pnpm run start:worker
 # Leave running
 ```
 
@@ -666,8 +665,8 @@ cd apps/temporal-worker/src
 
 **3. Rebuild and Restart Worker**
 ```bash
-# In Terminal 3
-pnpm run build && node dist/worker.js
+# In Terminal 3 (from repo root)
+pnpm run build:worker && pnpm run start:worker
 ```
 
 **4. Test Changes**

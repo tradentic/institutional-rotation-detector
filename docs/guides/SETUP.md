@@ -239,9 +239,9 @@ API_PORT=3000
 ### Start the Temporal Worker
 
 ```bash
-cd apps/temporal-worker
-npm run build
-node dist/worker.js
+# From repo root
+pnpm run build:worker
+pnpm run start:worker
 ```
 
 You should see output indicating the worker is connected:
