@@ -195,4 +195,51 @@ describe('fetchFilings activity', () => {
     expect(result[0]?.cadence).toBe('annual');
     expect(result[0]?.is_amendment).toBe(true);
   });
+
+  test('handles columnar format response from SEC API', async () => {
+    const upsert = vi.fn().mockResolvedValue({});
+    const from = vi.fn().mockReturnValue({ upsert });
+    vi.spyOn(supabaseModule, 'createSupabaseClient').mockReturnValue({ from } as any);
+
+    // SEC API returns columnar format for companies with many filings
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          filings: {
+            recent: {
+              accessionNumber: ['0001084869-24-000001', '0001084869-24-000002'],
+              filingDate: ['2024-05-15', '2024-02-14'],
+              reportDate: ['2024-03-31', '2023-12-31'],
+              acceptanceDateTime: ['2024-05-15T12:30:00Z', '2024-02-14T10:00:00Z'],
+              formType: ['13F-HR', '13F-HR'],
+              primaryDocument: ['form13fInfoTable.xml', 'form13fInfoTable.xml'],
+            },
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    global.fetch = fetchMock as any;
+
+    const result = await fetchFilings('0001084869', { start: '2024-01-01', end: '2024-06-30' }, ['13F-HR']);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(from).toHaveBeenCalledWith('filings');
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      accession: '000108486924000001',
+      form: '13F-HR',
+      filed_date: '2024-05-15',
+      period_end: '2024-03-31',
+      cadence: 'quarterly',
+    });
+    expect(result[1]).toMatchObject({
+      accession: '000108486924000002',
+      form: '13F-HR',
+      filed_date: '2024-02-14',
+      period_end: '2023-12-31',
+      cadence: 'quarterly',
+    });
+  });
 });
