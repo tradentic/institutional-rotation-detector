@@ -63,15 +63,16 @@ echo ""
 echo "⚠️  Note: Temporal dev server limits: max 10 Keyword, max 3 Datetime"
 echo ""
 
-# Core rotation detection attributes (9 Keyword total)
+# Core rotation detection attributes (10 Keyword total - at limit)
 create_search_attribute "Ticker" "Keyword"
 create_search_attribute "CIK" "Keyword"
+create_search_attribute "FilerCIK" "Keyword"
 create_search_attribute "Form" "Keyword"
 create_search_attribute "WindowKey" "Keyword"
 create_search_attribute "BatchId" "Keyword"
 create_search_attribute "RunKind" "Keyword"
 
-# Microstructure search attributes (3 more Keyword = 9 total)
+# Microstructure search attributes (3 more Keyword = 10 total - at limit)
 create_search_attribute "Symbol" "Keyword"
 create_search_attribute "Dataset" "Keyword"
 create_search_attribute "Granularity" "Keyword"
@@ -79,13 +80,12 @@ create_search_attribute "Granularity" "Keyword"
 # Datetime attributes (3 total - at limit)
 create_search_attribute "PeriodEnd" "Datetime"
 create_search_attribute "TradeDate" "Datetime"
-create_search_attribute "WeekEnd" "Datetime"
+create_search_attribute "SettlementDate" "Datetime"
 
 # Text attributes (no limit)
 echo ""
 echo "📝 Text search attributes (unlimited)..."
 create_search_attribute "Provenance" "Text"
-create_search_attribute "FilerCIK" "Text"
 create_search_attribute "Accession" "Text"
 
 echo ""
