@@ -174,10 +174,23 @@ function normalizeShares(value: number): number {
 
 export async function fetchDailyHoldings(
   cusips: string[],
-  funds: string[]
+  funds: string[],
+  cik?: string
 ): Promise<number> {
   const supabase = createSupabaseClient();
-  const targets = new Set(cusips.map((cusip) => cusip.toUpperCase()));
+
+  // If cusips not provided but CIK is, fetch from database
+  let targetCusips = cusips;
+  if (cusips.length === 0 && cik) {
+    const { data: cusipRows } = await supabase
+      .from('cusip_issuer_map')
+      .select('cusip')
+      .eq('issuer_cik', cik);
+    targetCusips = (cusipRows || []).map(row => row.cusip).filter(Boolean);
+    console.log(`[fetchDailyHoldings] Fetched ${targetCusips.length} CUSIPs from database for CIK ${cik}`);
+  }
+
+  const targets = new Set(targetCusips.map((cusip) => cusip.toUpperCase()));
   let totalUpserted = 0;
 
   for (const fund of funds) {

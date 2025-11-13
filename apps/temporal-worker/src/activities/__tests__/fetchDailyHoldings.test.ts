@@ -136,7 +136,7 @@ describe('fetchDailyHoldings', () => {
 
     const { fetchDailyHoldings } = await import('../etf.activities.js');
 
-    const inserted = await fetchDailyHoldings(['037833100'], ['IWB']);
+    const inserted = await fetchDailyHoldings(['037833100'], ['IWB'], undefined);
 
     expect(inserted).toBe(1);
     expect(entitiesQueryCount).toBe(1);

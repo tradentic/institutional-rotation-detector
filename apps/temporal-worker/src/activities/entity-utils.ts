@@ -36,14 +36,14 @@ function normalizeCik(value: string): string {
   return value.replace(/[^\d]/g, '').padStart(10, '0');
 }
 
-export interface EnsureEntityResult {
+export interface UpsertEntityResult {
   entity_id: string;
   kind: 'fund' | 'manager' | 'issuer' | 'etf';
   created: boolean;
 }
 
 /**
- * Ensure an entity exists for a given CIK, creating it if necessary.
+ * Upsert an entity for a given CIK, creating it if it doesn't exist.
  *
  * This function:
  * 1. Checks if entity already exists
@@ -51,14 +51,14 @@ export interface EnsureEntityResult {
  * 3. Creates entity with appropriate kind
  * 4. Returns entity_id and whether it was created
  *
- * @param cik - The CIK to ensure entity for
+ * @param cik - The CIK to upsert entity for
  * @param preferredKind - Optional hint for what kind to create if auto-detecting
  * @returns Entity info including whether it was newly created
  */
-export async function ensureEntity(
+export async function upsertEntity(
   cik: string,
   preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf'
-): Promise<EnsureEntityResult> {
+): Promise<UpsertEntityResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
@@ -113,7 +113,7 @@ export async function ensureEntity(
     }
   }
 
-  console.log(`[ensureEntity] Creating ${kind} entity for CIK ${normalizedCik}: ${entityName}`);
+  console.log(`[upsertEntity] Creating ${kind} entity for CIK ${normalizedCik}: ${entityName}`);
 
   // Extract ticker if available (typically for issuers)
   const ticker = parsed.tickers && parsed.tickers.length > 0 ? parsed.tickers[0] : null;
@@ -145,13 +145,13 @@ export async function ensureEntity(
   };
 }
 
-export interface EnsureIssuerCusipMappingsResult {
+export interface UpsertCusipMappingResult {
   cusipsAdded: number;
   source: 'existing' | 'submissions_api' | 'provided';
 }
 
 /**
- * Ensure CUSIP-to-issuer mappings exist for a given issuer CIK.
+ * Upsert CUSIP-to-issuer mappings for a given issuer CIK.
  *
  * This populates the cusip_issuer_map table which maps CUSIP identifiers
  * (or ticker symbols for FINRA lookups) to issuer CIKs.
@@ -165,10 +165,10 @@ export interface EnsureIssuerCusipMappingsResult {
  * @param providedCusips - Optional array of CUSIPs/tickers to seed
  * @returns Info about what was added
  */
-export async function ensureIssuerCusipMappings(
+export async function upsertCusipMapping(
   cik: string,
   providedCusips?: string[]
-): Promise<EnsureIssuerCusipMappingsResult> {
+): Promise<UpsertCusipMappingResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
@@ -223,7 +223,7 @@ export async function ensureIssuerCusipMappings(
   }
 
   if (cusipsToAdd.length === 0) {
-    console.warn(`[ensureIssuerCusipMappings] No CUSIPs found for issuer CIK ${normalizedCik}`);
+    console.warn(`[upsertCusipMapping] No CUSIPs found for issuer CIK ${normalizedCik}`);
     return {
       cusipsAdded: 0,
       source: 'submissions_api',
@@ -242,12 +242,12 @@ export async function ensureIssuerCusipMappings(
     .select('*', { count: 'exact', head: true });
 
   if (insertError) {
-    throw new Error(`Failed to create CUSIP mappings: ${insertError.message}`);
+    throw new Error(`Failed to upsert CUSIP mappings: ${insertError.message}`);
   }
 
   const added = count ?? records.length;
   console.log(
-    `[ensureIssuerCusipMappings] Added ${added} CUSIP mapping(s) for issuer CIK ${normalizedCik} (source: ${source})`
+    `[upsertCusipMapping] Added ${added} CUSIP mapping(s) for issuer CIK ${normalizedCik} (source: ${source})`
   );
 
   return {
@@ -257,25 +257,25 @@ export async function ensureIssuerCusipMappings(
 }
 
 /**
- * Ensure both entity and CUSIP mappings exist for a CIK.
- * Convenience function that calls both ensure functions.
+ * Upsert both entity and CUSIP mappings for a CIK.
+ * Convenience function that calls both upsert functions.
  *
- * @param cik - The CIK to ensure data for
+ * @param cik - The CIK to upsert data for
  * @param options - Optional parameters
  * @returns Combined results
  */
-export async function ensureEntityAndCusips(
+export async function upsertEntityAndCusips(
   cik: string,
   options?: {
     preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf';
     providedCusips?: string[];
   }
 ): Promise<{
-  entity: EnsureEntityResult;
-  cusips: EnsureIssuerCusipMappingsResult;
+  entity: UpsertEntityResult;
+  cusips: UpsertCusipMappingResult;
 }> {
-  const entity = await ensureEntity(cik, options?.preferredKind);
-  const cusips = await ensureIssuerCusipMappings(cik, options?.providedCusips);
+  const entity = await upsertEntity(cik, options?.preferredKind);
+  const cusips = await upsertCusipMapping(cik, options?.providedCusips);
 
   return { entity, cusips };
 }

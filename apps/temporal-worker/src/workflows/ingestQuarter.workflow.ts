@@ -7,7 +7,7 @@ const activities = proxyActivities<{
   parse13FInfoTables: (accessions: any[]) => Promise<number>;
   parse13G13D: (accessions: any[]) => Promise<number>;
   fetchMonthly: (cik: string, months: { month: string }[]) => Promise<number>;
-  fetchDailyHoldings: (cusips: string[], funds: string[]) => Promise<number>;
+  fetchDailyHoldings: (cusips: string[], funds: string[], cik?: string) => Promise<number>;
   fetchShortInterest: (cik: string, settleDates: string[]) => Promise<number>;
   fetchATSWeekly: (cik: string, weeks: string[]) => Promise<number>;
 }>(
@@ -25,6 +25,7 @@ export interface IngestQuarterInput {
   quarterStart: string;
   quarterEnd: string;
   etfUniverse?: string[];
+  entityKind?: 'issuer' | 'manager' | 'fund' | 'etf';
 }
 
 export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
@@ -68,13 +69,19 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
     await activities.parse13G13D(filings13G13D);
   }
 
-  // CUSIP mappings are now auto-populated by activities via ensureIssuerCusipMappings()
+  // CUSIP mappings are now auto-populated by activities via upsertCusipMapping()
   // Each activity (fetchShortInterest, fetchATSWeekly, computeDumpContext) handles this internally
 
   const derivedBounds = quarterBounds(input.quarter);
   const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
-  await activities.fetchMonthly(input.cik, months);
-  await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? ['IWB', 'IWM', 'IWN', 'IWC']);
+
+  // Only fetch N-PORT monthly holdings for funds (not for issuers)
+  // Funds file N-PORT, issuers don't
+  if (!input.entityKind || input.entityKind === 'fund' || input.entityKind === 'manager') {
+    await activities.fetchMonthly(input.cik, months);
+  }
+
+  await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? ['IWB', 'IWM', 'IWN', 'IWC'], input.cik);
   await activities.fetchShortInterest(input.cik, [bounds.start]);
   await activities.fetchATSWeekly(input.cik, [bounds.end]);
 

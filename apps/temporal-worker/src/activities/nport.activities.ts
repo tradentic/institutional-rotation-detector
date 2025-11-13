@@ -2,7 +2,7 @@ import { XMLParser } from 'fast-xml-parser';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
-import { ensureEntity } from './entity-utils';
+import { upsertEntity } from './entity-utils';
 
 export type Month = { month: string };
 
@@ -208,7 +208,7 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
   }
 
   // Ensure fund entity exists (auto-creates if needed)
-  const { entity_id: holderId } = await ensureEntity(normalizedCik, 'fund');
+  const { entity_id: holderId } = await upsertEntity(normalizedCik, 'fund');
 
   const monthToFiling = new Map<string, FilingSummary>();
   for (const filing of filings) {
