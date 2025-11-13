@@ -301,12 +301,13 @@ if (normalizedCusips.length === 0) {
 3. **No Visibility** - Impossible to detect without diagnostic tools
 4. **SEC API Limitation** - Common for 60% of stocks (AAPL, MSFT, GOOGL, etc.)
 
-#### Current Solution: Ticker Fallback with LOUD Warnings
+#### Current Solution: Multiple Fallback Sources
 
 After extensive testing, we discovered:
 - ❌ **OpenFIGI API**: Free tier doesn't return CUSIP field (only FIGI/ticker/exchange)
 - ❌ **SEC EDGAR XML**: Files mostly 404 or lack parseable CUSIPs (<5% success rate)
-- ✅ **SEC Submissions API**: Works ~40% of the time
+- ✅ **SEC Submissions API**: Works ~40% of the time (free)
+- ✅ **sec-api.io**: Works ~95%+ of the time (paid, ~$50-200/month)
 
 **Pragmatic approach:**
 
@@ -317,9 +318,9 @@ export async function resolveCIK(ticker: string) {
   const cik = /* ... resolve from SEC ... */;
   const secCusips = normalizeCusips(securities.map(s => s.cusip));
 
-  // CUSIP resolution with loud warnings on fallback
+  // CUSIP resolution with multiple fallbacks
   const cusips = await getCusipForTicker(ticker, cik, secCusips);
-  // Returns real CUSIPs (~40%) OR ticker with LOUD warnings (~60%)
+  // Returns real CUSIPs OR ticker with LOUD warnings
 
   await upsertEntity(cik, 'issuer');
   await upsertCusipMapping(cik, cusips);
@@ -331,27 +332,43 @@ export async function resolveCIK(ticker: string) {
 #### Resolution Strategy
 
 ```
-1. SEC Submissions API
+1. SEC Submissions API (free)
    ✓ Works ~40% of the time
    ✓ Fast (200-500ms)
    ↓ If securities array empty...
 
-2. Ticker Symbol Fallback with LOUD warnings
+2. sec-api.io (paid, optional)
+   ✓ Works ~95%+ of the time
+   ✓ Requires SEC_API_KEY environment variable
+   ✓ Dedicated CIK/Ticker/CUSIP mapping
+   ✓ Daily updated bulk files
+   ↓ If not configured or fails...
+
+3. Ticker Symbol Fallback with LOUD warnings
    ⚠️ 80-character warning banner in logs
    ⚠️ Lists impacted data sources (ETF, FINRA, 13F)
    ⚠️ Provides manual fix instructions
+   ⚠️ Suggests sec-api.io if not configured
    ⚠️ QA tool automatically detects
    ✓ Workflow continues (partial data > no data)
    ✓ Clear visibility (impossible to miss)
 ```
 
 **Why this approach:**
+- ✅ **With sec-api.io**: ~95%+ automatic CUSIP resolution
+- ✅ **Without sec-api.io**: ~40% automatic, clear visibility for rest
 - ✅ Partial data collection continues (13F holdings, price data work)
 - ✅ LOUD warnings make the issue impossible to miss
 - ✅ QA tool automatically detects ticker fallbacks
 - ✅ Manual fix guidance provided in logs
 - ✅ Better than hard failure (blocks all data)
 - ✅ Better than silent failure (old behavior)
+
+**Setup sec-api.io (recommended):**
+```bash
+# Get API key from https://sec-api.io/
+export SEC_API_KEY="your-api-key-here"
+```
 
 #### CUSIP Resolution Functions
 
