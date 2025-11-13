@@ -4,6 +4,153 @@ This document provides guidelines for AI coding assistants (Claude, GPT, etc.) w
 
 ---
 
+## 🔥 CRITICAL: Entity Identification - CIK and series_id
+
+**The most important schema concept:** Understanding how ETFs and funds are identified.
+
+### Entity Identification Rules
+
+**For regular stocks and managers:**
+- Identified by **CIK only** (10-digit SEC identifier)
+- Example: Apple Inc. = CIK `0000320193`
+- `series_id` is **NULL**
+
+**For ETFs and mutual funds:**
+- Identified by **CIK + series_id** (composite identifier)
+- **CIK** identifies the parent trust/company
+- **series_id** identifies the specific fund series (format: `S000012345`)
+- Example: Invesco QQQ Trust (CIK `0001067839`)
+  - QQQ: series_id `S000006218`
+  - QQQM: series_id `S000069622`
+
+### Why This Matters
+
+**❌ WRONG - Storing by CIK only:**
+```sql
+-- This loses per-ETF granularity!
+create table short_interest (
+  settle_date date,
+  cik text,           -- ❌ Multiple ETFs with same CIK get aggregated
+  short_shares bigint,
+  primary key (settle_date, cik)
+);
+```
+
+**✅ CORRECT - Storing by CUSIP (which maps to CIK + series_id):**
+```sql
+-- CUSIP uniquely identifies each ETF series
+create table short_interest (
+  settle_date date,
+  cusip text,         -- ✅ Each ETF has unique CUSIP
+  short_shares bigint,
+  primary key (settle_date, cusip)
+);
+
+-- CUSIP mapping includes series_id
+create table cusip_issuer_map (
+  cusip text primary key,
+  issuer_cik text not null,
+  series_id text      -- ✅ NULL for stocks, populated for ETFs
+);
+```
+
+### Critical Tables That Must Support series_id
+
+**1. cusip_issuer_map:**
+- **MUST** store `series_id` when mapping CUSIPs for ETFs
+- Allows resolution: CUSIP → (CIK, series_id) → specific entity
+
+**2. FINRA data (short_interest, ats_weekly):**
+- FINRA reports by **CUSIP**, not CIK
+- **MUST** store at CUSIP-level granularity
+- Never aggregate multiple CUSIPs to single CIK
+
+**3. Entity resolution functions:**
+- When creating entities for ETFs, **MUST** include `series_id`
+- When resolving CUSIPs, **MUST** propagate `series_id`
+
+### Code Patterns
+
+**✅ CORRECT - Creating ETF entity with series_id:**
+```typescript
+await upsertEntity(
+  cik: '0001067839',
+  preferredKind: 'etf',
+  seriesId: 'S000006218'  // ✅ Critical for multi-series trusts
+);
+```
+
+**✅ CORRECT - Storing CUSIP mapping with series_id:**
+```typescript
+await upsertCusipMapping(
+  cik: '0001067839',
+  providedCusips: ['46090E103'],
+  seriesId: 'S000006218'  // ✅ Links CUSIP to specific ETF series
+);
+```
+
+**✅ CORRECT - Storing FINRA data by CUSIP:**
+```typescript
+// Store per-CUSIP, not aggregated by CIK
+await supabase.from('short_interest').upsert([
+  { settle_date: '2024-01-15', cusip: '46090E103', short_shares: 1000000 },  // QQQ
+  { settle_date: '2024-01-15', cusip: '46138J784', short_shares: 500000 }    // QQQM
+]);
+```
+
+**❌ WRONG - Aggregating CUSIPs to CIK:**
+```typescript
+// ❌ This loses per-series granularity!
+const totalShares = cusipData.reduce((sum, item) => sum + item.shares, 0);
+await supabase.from('short_interest').upsert({
+  settle_date: date,
+  cik: cik,              // ❌ Can't distinguish QQQ vs QQQM
+  short_shares: totalShares
+});
+```
+
+### Testing Checklist
+
+When working with entity-related code, verify:
+
+- [ ] ETF entities include `series_id` parameter
+- [ ] CUSIP mappings store `series_id` for ETFs
+- [ ] FINRA data stored at CUSIP-level (not CIK-level)
+- [ ] No aggregation of multiple CUSIPs to single CIK entry
+- [ ] Entity unique constraint: `(cik, coalesce(series_id, ''), kind)`
+
+### Real-World Examples
+
+**QQQ Trust (CIK 0001067839):**
+```typescript
+// Two separate entities in same trust
+entities: [
+  { cik: '0001067839', series_id: 'S000006218', kind: 'etf', ticker: 'QQQ' },
+  { cik: '0001067839', series_id: 'S000069622', kind: 'etf', ticker: 'QQQM' }
+]
+
+// Separate CUSIP mappings
+cusip_issuer_map: [
+  { cusip: '46090E103', issuer_cik: '0001067839', series_id: 'S000006218' },  // QQQ
+  { cusip: '46138J784', issuer_cik: '0001067839', series_id: 'S000069622' }   // QQQM
+]
+
+// Separate short interest data
+short_interest: [
+  { settle_date: '2024-01-15', cusip: '46090E103', short_shares: 1000000 },  // QQQ
+  { settle_date: '2024-01-15', cusip: '46138J784', short_shares: 500000 }    // QQQM
+]
+```
+
+**Key Insight:** When a trust has multiple ETF series, they share a CIK but have:
+- Different series_ids (S000xxxxxx)
+- Different CUSIPs
+- Different tickers
+- Different trading activity and holdings
+- Must be tracked separately in all data tables
+
+---
+
 ## 🔥 CRITICAL: Chain of Thought (CoT) is First-Class
 
 **The most important concept:** For multi-step workflows, **ALWAYS** use `CoTSession`.

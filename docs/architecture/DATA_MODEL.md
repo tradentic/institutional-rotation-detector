@@ -102,8 +102,15 @@ CREATE TABLE entities (
   cik text,
   name text NOT NULL,
   kind text CHECK (kind IN ('issuer','manager','fund','etf')) NOT NULL,
-  UNIQUE(cik, kind)
+  ticker text,
+  series_id text,
+  datasource_type text,
+  datasource_config jsonb
 );
+
+-- Unique constraint: allows multiple ETFs/funds with same CIK but different series_id
+CREATE UNIQUE INDEX entities_unique_identifier_kind
+  ON entities (cik, coalesce(series_id, ''), kind);
 ```
 
 **Fields:**
@@ -111,9 +118,13 @@ CREATE TABLE entities (
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | `entity_id` | uuid | PK, auto-generated | Unique entity identifier |
-| `cik` | text | Unique w/ kind | SEC Central Index Key |
+| `cik` | text | Unique w/ series_id + kind | SEC Central Index Key (10 digits) |
 | `name` | text | NOT NULL | Entity legal name |
 | `kind` | text | NOT NULL, CHECK | Entity type |
+| `ticker` | text | NULL | Stock ticker (for issuers and ETFs) |
+| `series_id` | text | NULL | SEC series ID (format: S000012345) |
+| `datasource_type` | text | NULL | ETF data source (ishares, vanguard, etc.) |
+| `datasource_config` | jsonb | NULL | Vendor-specific scraping config |
 
 **Entity Types (`kind`):**
 - `issuer` - Public companies (Apple, Microsoft, etc.)
@@ -121,24 +132,64 @@ CREATE TABLE entities (
 - `fund` - Mutual funds
 - `etf` - Exchange-traded funds
 
+**🔥 CRITICAL: series_id for Multi-Series ETF Trusts**
+
+Many ETF trusts contain multiple ETF series under one CIK. **You MUST use series_id to distinguish them:**
+
+**Example - Invesco QQQ Trust (CIK 0001067839):**
+- QQQ (original): `series_id = 'S000006218'`, CUSIP `46090E103`
+- QQQM (mini): `series_id = 'S000069622'`, CUSIP `46138J784`
+
+**Entity Identification Rules:**
+- **Regular stocks/managers:** Identified by CIK only (`series_id` is NULL)
+- **ETFs/funds:** Identified by CIK + series_id (composite key)
+
+**Unique Constraint:**
+```sql
+-- Uses coalesce to handle NULL series_id for stocks/managers
+entities_unique_identifier_kind ON (cik, coalesce(series_id, ''), kind)
+```
+
+This allows:
+- Apple: `(0000320193, '', 'issuer')` ✅
+- QQQ: `(0001067839, 'S000006218', 'etf')` ✅
+- QQQM: `(0001067839, 'S000069622', 'etf')` ✅ Same CIK, different series!
+
+**When Creating ETF Entities:**
+```typescript
+// ✅ CORRECT - Include series_id for ETFs
+await upsertEntity('0001067839', 'etf', 'S000006218');
+
+// ❌ WRONG - Missing series_id will conflict if trust has multiple series
+await upsertEntity('0001067839', 'etf');
+```
+
 **Indexes:**
 ```sql
--- Covered by unique constraint
-CREATE UNIQUE INDEX idx_entities_cik_kind ON entities(cik, kind);
+CREATE UNIQUE INDEX entities_unique_identifier_kind
+  ON entities (cik, coalesce(series_id, ''), kind);
+CREATE INDEX idx_entities_ticker ON entities(ticker) WHERE ticker IS NOT NULL;
 ```
 
 **Example Data:**
 ```sql
-INSERT INTO entities (cik, name, kind) VALUES
-  ('0000320193', 'Apple Inc.', 'issuer'),
-  ('0001000097', 'Vanguard Group Inc', 'manager'),
-  ('0001364742', 'iShares Russell 2000 ETF', 'etf');
+INSERT INTO entities (cik, name, kind, ticker, series_id) VALUES
+  -- Regular stock (no series_id)
+  ('0000320193', 'Apple Inc.', 'issuer', 'AAPL', NULL),
+
+  -- Investment manager (no series_id)
+  ('0001000097', 'Vanguard Group Inc', 'manager', NULL, NULL),
+
+  -- Multi-series ETF trust (requires series_id for each)
+  ('0001067839', 'Invesco QQQ Trust - QQQ', 'etf', 'QQQ', 'S000006218'),
+  ('0001067839', 'Invesco QQQ Trust - QQQM', 'etf', 'QQQM', 'S000069622');
 ```
 
 **Usage:**
-- Deduplication: Ensures each CIK + kind combination exists once
+- Deduplication: Ensures each (CIK, series_id, kind) combination exists once
 - Central reference: All other tables reference `entity_id`
 - Multi-role entities: Same CIK can be both issuer and manager
+- Multi-series trusts: Same CIK can have multiple ETF/fund entities with different series_ids
 
 ---
 
@@ -207,13 +258,14 @@ INSERT INTO filings VALUES (
 
 ### `cusip_issuer_map`
 
-Maps CUSIP identifiers to issuer CIKs.
+Maps CUSIP identifiers to issuer CIKs and series_ids (for ETFs/funds).
 
 **Schema:**
 ```sql
 CREATE TABLE cusip_issuer_map (
   cusip text PRIMARY KEY,
-  issuer_cik text NOT NULL
+  issuer_cik text NOT NULL,
+  series_id text
 );
 ```
 
@@ -223,17 +275,38 @@ CREATE TABLE cusip_issuer_map (
 |--------|------|-------------|-------------|
 | `cusip` | text | PK | 9-character CUSIP identifier |
 | `issuer_cik` | text | NOT NULL | Issuer's SEC CIK |
+| `series_id` | text | NULL | SEC series ID (S000012345) for ETFs/funds |
+
+**🔥 CRITICAL: series_id Required for ETF/Fund CUSIPs**
+
+When mapping CUSIPs for ETFs or mutual funds, **MUST include series_id** to enable proper entity resolution.
+
+**Why this matters:**
+- FINRA data (short interest, ATS/dark pool) reports by CUSIP
+- Multiple ETFs in same trust have same CIK but different series_ids
+- Without series_id, cannot determine which specific ETF a CUSIP belongs to
 
 **Example Data:**
 ```sql
-INSERT INTO cusip_issuer_map VALUES
-  ('037833100', '0000320193'),  -- AAPL → Apple
-  ('594918104', '0000789019');  -- MSFT → Microsoft
+INSERT INTO cusip_issuer_map (cusip, issuer_cik, series_id) VALUES
+  -- Regular stocks (series_id = NULL)
+  ('037833100', '0000320193', NULL),  -- AAPL → Apple Inc.
+  ('594918104', '0000789019', NULL),  -- MSFT → Microsoft
+
+  -- Multi-series ETF trust (series_id REQUIRED)
+  ('46090E103', '0001067839', 'S000006218'),  -- QQQ → Invesco QQQ Trust
+  ('46138J784', '0001067839', 'S000069622');  -- QQQM → Invesco QQQ Trust (same CIK!)
 ```
 
+**Downstream Impact:**
+- `short_interest` table: Stores data by CUSIP (can distinguish QQQ vs QQQM)
+- `ats_weekly` table: Stores data by CUSIP (separate dark pool activity per ETF)
+- Entity lookup: `cusip_issuer_map.series_id` → `entities.series_id` → correct `entity_id`
+
 **Usage:**
-- Position resolution: Link holdings to issuers
-- Ticker lookup: Resolve positions from 13F filings
+- Position resolution: Link holdings to specific ETF entities
+- FINRA data ingestion: Map CUSIP-level data to correct entity
+- Entity lookup: Resolve CUSIP → (CIK, series_id) → entity_id
 - Historical tracking: Handle CUSIP changes over time
 
 ---

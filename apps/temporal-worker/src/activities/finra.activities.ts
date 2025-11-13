@@ -206,7 +206,7 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
   for (const date of settleDates) {
     const dataset = await finra.fetchShortInterest(date);
     const rows = normalizeRows(dataset);
-    const relevant: number[] = [];
+    const relevantData: Array<{ cusip: string; shares: number }> = [];
     for (const row of rows) {
       const cusip = extractCusip(row) ?? extractSymbol(row);
       if (!cusip || !cusips.has(cusip)) continue;
@@ -214,30 +214,27 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
       if (shares === null) {
         throw new Error(`Missing short interest value for CUSIP ${cusip} on ${date}`);
       }
-      relevant.push(shares);
+      relevantData.push({ cusip, shares });
     }
 
     // If no matching data found, skip this date (issuer may not have reportable short interest)
-    if (relevant.length === 0) {
+    if (relevantData.length === 0) {
       console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} on ${date}`);
       continue;
     }
 
-    const totalShares = relevant.reduce((acc, value) => acc + value, 0);
-    if (!Number.isFinite(totalShares) || totalShares < 0) {
-      throw new Error(`Invalid short interest total for ${cik} on ${date}`);
-    }
+    // Store per-CUSIP data (not aggregated by CIK) to support multi-series ETFs
+    const payload = relevantData.map(({ cusip, shares }) => ({
+      settle_date: date,
+      cusip,
+      short_shares: Math.round(shares),
+    }));
+
     const upsert = await supabase
       .from('short_interest')
       .upsert(
-        [
-          {
-            settle_date: date,
-            cik,
-            short_shares: Math.round(totalShares),
-          },
-        ],
-        { onConflict: 'settle_date,cik' }
+        payload,
+        { onConflict: 'settle_date,cusip' }
       )
       .select('settle_date')
       .maybeSingle();
@@ -270,7 +267,8 @@ export async function fetchATSWeekly(
   for (const week of weeks) {
     const dataset = await finra.fetchATSWeekly(week);
     const rows = normalizeRows(dataset);
-    const venueTotals = new Map<string, { shares: number; trades: number | null }>();
+    // Map by (cusip, venue) to support per-CUSIP granularity for multi-series ETFs
+    const cusipVenueTotals = new Map<string, { shares: number; trades: number | null }>();
     for (const row of rows) {
       const cusip = extractCusip(row) ?? extractSymbol(row);
       if (!cusip || !cusips.has(cusip)) continue;
@@ -280,36 +278,40 @@ export async function fetchATSWeekly(
       }
       const trades = extractAtsTrades(row);
       const venue = extractVenue(row);
-      const entry = venueTotals.get(venue);
+      const key = `${cusip}:${venue}`;
+      const entry = cusipVenueTotals.get(key);
       if (entry) {
         entry.shares += shares;
         if (trades !== null) {
           entry.trades = (entry.trades ?? 0) + trades;
         }
       } else {
-        venueTotals.set(venue, { shares, trades });
+        cusipVenueTotals.set(key, { shares, trades });
       }
     }
 
     // If no matching data found, skip this week (issuer may not have reportable ATS activity)
-    if (venueTotals.size === 0) {
+    if (cusipVenueTotals.size === 0) {
       console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} on week ${week}`);
       continue;
     }
 
-    const payload = Array.from(venueTotals.entries()).map(([venue, totals]) => ({
-      week_end: week,
-      cik,
-      venue,
-      shares: Math.round(totals.shares),
-      trades:
-        totals.trades === null || totals.trades === undefined
-          ? null
-          : Math.round(totals.trades),
-    }));
+    const payload = Array.from(cusipVenueTotals.entries()).map(([key, totals]) => {
+      const [cusip, venue] = key.split(':');
+      return {
+        week_end: week,
+        cusip,
+        venue,
+        shares: Math.round(totals.shares),
+        trades:
+          totals.trades === null || totals.trades === undefined
+            ? null
+            : Math.round(totals.trades),
+      };
+    });
     const upsert = await supabase
       .from('ats_weekly')
-      .upsert(payload, { onConflict: 'week_end,cik,venue' })
+      .upsert(payload, { onConflict: 'week_end,cusip,venue' })
       .select('week_end');
     if (upsert.error) {
       throw upsert.error;
