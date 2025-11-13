@@ -57,13 +57,7 @@ values
       'productId', '239716',
       'slug', 'ishares-micro-cap-etf'
     )
-  )
-on conflict (cik, kind) do update set
-  name = excluded.name,
-  ticker = excluded.ticker,
-  series_id = excluded.series_id,
-  datasource_type = excluded.datasource_type,
-  datasource_config = excluded.datasource_config;
+  );
 
 -- ========================================
 -- Index Rebalance Windows
@@ -79,7 +73,7 @@ insert into index_windows (index_name, phase, window_start, window_end) values
 ('Russell 2000', 'effective', '2024-06-21', '2024-06-30'),
 ('Russell 2000', 'announcement', '2025-05-01', '2025-05-31'),
 ('Russell 2000', 'effective', '2025-06-20', '2025-06-30')
-on conflict (index_name, phase, window_start, window_end) do nothing;
+on conflict (index_name, phase, window_start) do nothing;
 
 -- S&P 500 quarterly rebalance windows (2023-2025)
 insert into index_windows (index_name, phase, window_start, window_end) values
@@ -95,7 +89,7 @@ insert into index_windows (index_name, phase, window_start, window_end) values
 ('S&P 500', 'q2_rebal', '2025-06-23', '2025-06-30'),
 ('S&P 500', 'q3_rebal', '2025-09-22', '2025-09-30'),
 ('S&P 500', 'q4_rebal', '2025-12-22', '2025-12-31')
-on conflict (index_name, phase, window_start, window_end) do nothing;
+on conflict (index_name, phase, window_start) do nothing;
 
 -- S&P 400 MidCap quarterly rebalance windows (2024-2025)
 insert into index_windows (index_name, phase, window_start, window_end) values
@@ -107,4 +101,4 @@ insert into index_windows (index_name, phase, window_start, window_end) values
 ('S&P 400', 'q2_rebal', '2025-06-23', '2025-06-30'),
 ('S&P 400', 'q3_rebal', '2025-09-22', '2025-09-30'),
 ('S&P 400', 'q4_rebal', '2025-12-22', '2025-12-31')
-on conflict (index_name, phase, window_start, window_end) do nothing;
+on conflict (index_name, phase, window_start) do nothing;
