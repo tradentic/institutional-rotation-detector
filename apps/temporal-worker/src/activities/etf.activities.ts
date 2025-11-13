@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
-import { upsertEntity } from './entity-utils';
+import { upsertEntity, resolveSeriesId } from './entity-utils';
 import { z } from 'zod';
 
 const ISHARES_COMPONENT_ID = '1467271812596';
@@ -101,14 +101,22 @@ async function autoCreateEtfEntity(
     return null;
   }
 
-  // For now, use a placeholder series_id (can be enriched later from N-PORT)
-  // iShares ETFs typically have series_id format like "S000001234"
-  const placeholderSeriesId = `S${resolved.cik.substring(0, 9)}`;
+  // Attempt to resolve real series_id from N-PORT filings
+  console.log(`[autoCreateEtfEntity] Attempting to resolve series_id for ${normalizedTicker} from N-PORT filings...`);
+  let seriesId = await resolveSeriesId(resolved.cik, normalizedTicker);
 
-  console.log(`[autoCreateEtfEntity] Creating ETF entity for ${normalizedTicker} (CIK: ${resolved.cik})`);
+  // Fallback: use placeholder series_id if N-PORT parsing fails
+  if (!seriesId) {
+    console.warn(`[autoCreateEtfEntity] Could not resolve series_id from N-PORT, using placeholder`);
+    seriesId = `S${resolved.cik.substring(0, 9)}`;
+  } else {
+    console.log(`[autoCreateEtfEntity] Successfully resolved series_id: ${seriesId}`);
+  }
+
+  console.log(`[autoCreateEtfEntity] Creating ETF entity for ${normalizedTicker} (CIK: ${resolved.cik}, series_id: ${seriesId})`);
 
   // Create entity using upsertEntity
-  const { entity_id } = await upsertEntity(resolved.cik, 'etf', placeholderSeriesId);
+  const { entity_id } = await upsertEntity(resolved.cik, 'etf', seriesId);
 
   // Update with datasource configuration
   const { error: updateError } = await supabase
@@ -130,7 +138,7 @@ async function autoCreateEtfEntity(
   return {
     entity_id,
     cik: resolved.cik,
-    series_id: placeholderSeriesId,
+    series_id: seriesId,
     ticker: normalizedTicker,
     datasource_type: 'ishares',
     datasource_config: datasourceConfig,

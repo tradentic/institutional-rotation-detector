@@ -7,6 +7,7 @@
 
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
+import { XMLParser } from 'fast-xml-parser';
 import { z } from 'zod';
 
 const companySubmissionsSchema = z.object({
@@ -362,6 +363,102 @@ export async function enrichCusipMetadata(cusips?: string[]): Promise<number> {
 }
 
 /**
+ * Parse N-PORT XML filing to extract series_id
+ *
+ * N-PORT filings have structure:
+ * edgarSubmission > headerData > seriesClassInfo > seriesId
+ */
+async function parseNportSeriesId(accession: string, cik: string): Promise<string | null> {
+  try {
+    const secClient = createSecClient();
+
+    // Build URL for N-PORT XML primary document
+    // Format: /Archives/edgar/data/CIK/ACCESSION/primary_doc.xml
+    const formattedCik = cik.replace(/^0+/, ''); // Remove leading zeros for URL
+    const formattedAccession = accession.replace(/-/g, ''); // Remove dashes
+
+    // N-PORT primary documents are typically named with the form type
+    // Try common naming patterns
+    const possibleUrls = [
+      `/Archives/edgar/data/${formattedCik}/${formattedAccession}/primary_doc.xml`,
+      `/Archives/edgar/data/${formattedCik}/${formattedAccession}/nport.xml`,
+      `/Archives/edgar/data/${formattedCik}/${formattedAccession}/${accession}.xml`,
+    ];
+
+    let xmlContent: string | null = null;
+
+    for (const url of possibleUrls) {
+      try {
+        const response = await secClient.get(url);
+        xmlContent = await response.text();
+        console.log(`[parseNportSeriesId] Successfully fetched N-PORT XML from ${url}`);
+        break;
+      } catch (error) {
+        console.warn(`[parseNportSeriesId] Failed to fetch from ${url}, trying next...`);
+      }
+    }
+
+    if (!xmlContent) {
+      console.warn(`[parseNportSeriesId] Could not fetch N-PORT XML for accession ${accession}`);
+      return null;
+    }
+
+    // Parse XML
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      textNodeName: '#text',
+      ignoreDeclaration: true,
+      parseAttributeValue: true,
+    });
+
+    const parsed = parser.parse(xmlContent);
+
+    // Navigate to seriesId: edgarSubmission > headerData > seriesClassInfo > seriesId
+    const edgarSubmission = parsed.edgarSubmission || parsed.edgarsubmission;
+    if (!edgarSubmission) {
+      console.warn(`[parseNportSeriesId] No edgarSubmission element found in XML`);
+      return null;
+    }
+
+    const headerData = edgarSubmission.headerData || edgarSubmission.headerdata;
+    if (!headerData) {
+      console.warn(`[parseNportSeriesId] No headerData element found in XML`);
+      return null;
+    }
+
+    const seriesClassInfo = headerData.seriesClassInfo || headerData.seriesclassinfo;
+    if (!seriesClassInfo) {
+      console.warn(`[parseNportSeriesId] No seriesClassInfo element found in XML`);
+      return null;
+    }
+
+    // Handle both single object and array cases
+    const seriesInfoArray = Array.isArray(seriesClassInfo) ? seriesClassInfo : [seriesClassInfo];
+
+    // Extract all unique series IDs
+    const seriesIds = seriesInfoArray
+      .map(info => info.seriesId || info.seriesid)
+      .filter(Boolean);
+
+    if (seriesIds.length === 0) {
+      console.warn(`[parseNportSeriesId] No seriesId found in seriesClassInfo`);
+      return null;
+    }
+
+    // If multiple series IDs, return the first one
+    // (Caller should match by ticker if needed)
+    const seriesId = seriesIds[0];
+    console.log(`[parseNportSeriesId] Found seriesId: ${seriesId}`);
+
+    return seriesId;
+  } catch (error) {
+    console.error(`[parseNportSeriesId] Error parsing N-PORT XML:`, error);
+    return null;
+  }
+}
+
+/**
  * Resolve series_id for an ETF or fund by querying N-PORT filings or SEC registration data.
  *
  * Multi-series trusts (like iShares) have multiple ETFs under one CIK, each with a unique series_id.
@@ -385,11 +482,12 @@ export async function resolveSeriesId(cik: string, ticker: string): Promise<stri
     .maybeSingle();
 
   if (existing?.series_id) {
+    console.log(`[resolveSeriesId] Found existing series_id for ${normalizedTicker}: ${existing.series_id}`);
     return existing.series_id;
   }
 
   // Attempt to resolve from N-PORT filings
-  // N-PORT filings contain seriesId in the XML structure
+  // N-PORT filings contain seriesId in the XML structure: edgarSubmission > headerData > seriesClassInfo > seriesId
   try {
     const { data: nportFilings } = await supabase
       .from('filings')
@@ -397,20 +495,30 @@ export async function resolveSeriesId(cik: string, ticker: string): Promise<stri
       .eq('cik', normalizedCik)
       .eq('form', 'NPORT-P')
       .order('filed_date', { ascending: false })
-      .limit(1);
+      .limit(5); // Get last 5 filings in case first one fails
 
-    if (nportFilings && nportFilings.length > 0) {
-      // Would need to parse N-PORT XML to extract series_id
-      // For now, return null and let manual configuration handle it
-      console.log(`[resolveSeriesId] Found N-PORT filing for CIK ${normalizedCik}, but parsing not yet implemented`);
+    if (!nportFilings || nportFilings.length === 0) {
+      console.warn(`[resolveSeriesId] No N-PORT filings found for CIK ${normalizedCik}`);
+      return null;
     }
-  } catch (error) {
-    console.warn(`[resolveSeriesId] Failed to query N-PORT filings:`, error);
-  }
 
-  // If we can't auto-resolve, return null
-  console.warn(`[resolveSeriesId] Could not auto-resolve series_id for ${normalizedTicker} (CIK ${normalizedCik})`);
-  return null;
+    console.log(`[resolveSeriesId] Found ${nportFilings.length} N-PORT filings for CIK ${normalizedCik}, attempting to parse...`);
+
+    // Try each filing until we successfully extract a series_id
+    for (const filing of nportFilings) {
+      const seriesId = await parseNportSeriesId(filing.accession, normalizedCik);
+      if (seriesId) {
+        console.log(`[resolveSeriesId] Successfully resolved series_id for ${normalizedTicker}: ${seriesId}`);
+        return seriesId;
+      }
+    }
+
+    console.warn(`[resolveSeriesId] Could not extract series_id from any N-PORT filing for ${normalizedTicker}`);
+    return null;
+  } catch (error) {
+    console.error(`[resolveSeriesId] Error resolving series_id for ${normalizedTicker}:`, error);
+    return null;
+  }
 }
 
 // Legacy aliases for backward compatibility
