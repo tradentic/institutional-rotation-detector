@@ -4,6 +4,7 @@ export { rotationDetectWorkflow } from './rotationDetect.workflow';
 export { eventStudyWorkflow } from './eventStudy.workflow';
 export { testSearchAttributesWorkflow } from './testProbe.workflow';
 export { qaReportWorkflow, qaReportExportWorkflow } from './qaReport.workflow';
+export { diagnosticEntityCreationWorkflow } from './diagnosticEntityCreation.workflow';
 export { graphBuildWorkflow } from './graphBuild.workflow';
 export { graphSummarizeWorkflow } from './graphSummarize.workflow';
 export { graphQueryWorkflow } from './graphQuery.workflow';
