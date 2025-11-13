@@ -108,24 +108,6 @@ comment on column positions_13f.opt_put_shares is 'Put option shares (share-equi
 comment on column positions_13f.opt_call_shares is 'Call option shares (share-equivalent)';
 
 -- ========================================
--- BENEFICIAL OWNERSHIP SNAPSHOTS
--- ========================================
--- 13D/13G beneficial ownership filings (>5% stakes)
-
-create table bo_snapshots (
-  issuer_cik text not null,
-  holder_cik text not null,
-  event_date date not null,
-  filed_date date not null,
-  pct_of_class numeric,
-  shares_est bigint,
-  accession text references filings(accession),
-  primary key (issuer_cik, holder_cik, event_date, accession)
-);
-
-comment on table bo_snapshots is 'Beneficial ownership snapshots from 13D/13G filings (>5% stakes)';
-
--- ========================================
 -- ULTRA-HIGH-FREQUENCY POSITIONS
 -- ========================================
 -- Monthly N-PORT and daily ETF holdings (faster than 13F)
