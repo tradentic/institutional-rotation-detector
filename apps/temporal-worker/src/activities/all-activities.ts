@@ -55,5 +55,8 @@ export * from './options.activities';
 export { fetchPrices, setPriceSource } from './prices.activities';
 export type { PriceSource, DailyPrice, EventStudyResult } from './prices.activities';
 
+// QA and diagnostics activities
+export * from './qa.activities';
+
 // Sankey diagram activities
 export * from './sankey.activities';
