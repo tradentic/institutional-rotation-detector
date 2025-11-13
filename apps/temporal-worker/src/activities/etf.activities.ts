@@ -1,7 +1,34 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
+import { createSecClient } from '../lib/secClient';
+import { upsertEntity } from './entity-utils';
+import { z } from 'zod';
 
 const ISHARES_COMPONENT_ID = '1467271812596';
+
+// Known iShares ETF configurations for self-healing
+// Format: { ticker: { productId, slug } }
+const KNOWN_ISHARES_ETFS: Record<string, IsharesConfig> = {
+  'IWM': { productId: '239710', slug: 'iwm-ishares-russell-2000-etf' },
+  'IWB': { productId: '239707', slug: 'iwb-ishares-russell-1000-etf' },
+  'IWN': { productId: '239714', slug: 'iwn-ishares-russell-2000-value-etf' },
+  'IWC': { productId: '239722', slug: 'iwc-ishares-microcap-etf' },
+  'IWD': { productId: '239706', slug: 'iwd-ishares-russell-1000-value-etf' },
+  'IWF': { productId: '239705', slug: 'iwf-ishares-russell-1000-growth-etf' },
+  'IWO': { productId: '239713', slug: 'iwo-ishares-russell-2000-growth-etf' },
+  'IJH': { productId: '239763', slug: 'ijh-ishares-core-sp-mid-cap-etf' },
+  'IJR': { productId: '239774', slug: 'ijr-ishares-core-sp-small-cap-etf' },
+  'IVV': { productId: '239726', slug: 'ivv-ishares-core-sp-500-etf' },
+};
+
+const tickerSearchSchema = z.record(
+  z.string(),
+  z.object({
+    cik_str: z.number(),
+    ticker: z.string(),
+    title: z.string(),
+  })
+);
 
 interface IsharesConfig {
   productId: string;
@@ -28,7 +55,91 @@ interface IsharesHolding {
 const etfEntityCache = new Map<string, EtfEntity>();
 
 /**
+ * Resolve CIK for a given ticker from SEC
+ */
+async function resolveCikFromTicker(ticker: string): Promise<{ cik: string; name: string } | null> {
+  try {
+    const secClient = createSecClient();
+    const tickerEndpoint = process.env.SEC_TICKER_ENDPOINT ?? '/files/company_tickers.json';
+    const searchResponse = await secClient.get(tickerEndpoint);
+    const searchJson = await searchResponse.json();
+    const tickerData = tickerSearchSchema.parse(searchJson);
+
+    const match = Object.values(tickerData).find((entry) => entry.ticker.toUpperCase() === ticker.toUpperCase());
+    if (!match) {
+      return null;
+    }
+
+    const cik = match.cik_str.toString().padStart(10, '0');
+    return { cik, name: match.title };
+  } catch (error) {
+    console.warn(`[resolveCikFromTicker] Failed to resolve CIK for ${ticker}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Auto-create ETF entity with known configuration
+ */
+async function autoCreateEtfEntity(
+  supabase: SupabaseClient,
+  ticker: string
+): Promise<EtfEntity | null> {
+  const normalizedTicker = ticker.toUpperCase();
+
+  // Resolve CIK from SEC
+  const resolved = await resolveCikFromTicker(normalizedTicker);
+  if (!resolved) {
+    console.warn(`[autoCreateEtfEntity] Could not resolve CIK for ${normalizedTicker}`);
+    return null;
+  }
+
+  // Check if we have known iShares configuration
+  const datasourceConfig = KNOWN_ISHARES_ETFS[normalizedTicker];
+  if (!datasourceConfig) {
+    console.warn(`[autoCreateEtfEntity] No known datasource config for ${normalizedTicker}`);
+    return null;
+  }
+
+  // For now, use a placeholder series_id (can be enriched later from N-PORT)
+  // iShares ETFs typically have series_id format like "S000001234"
+  const placeholderSeriesId = `S${resolved.cik.substring(0, 9)}`;
+
+  console.log(`[autoCreateEtfEntity] Creating ETF entity for ${normalizedTicker} (CIK: ${resolved.cik})`);
+
+  // Create entity using upsertEntity
+  const { entity_id } = await upsertEntity(resolved.cik, 'etf', placeholderSeriesId);
+
+  // Update with datasource configuration
+  const { error: updateError } = await supabase
+    .from('entities')
+    .update({
+      ticker: normalizedTicker,
+      datasource_type: 'ishares',
+      datasource_config: datasourceConfig,
+      name: resolved.name,
+    })
+    .eq('entity_id', entity_id);
+
+  if (updateError) {
+    console.error(`[autoCreateEtfEntity] Failed to update datasource config:`, updateError);
+    throw updateError;
+  }
+
+  // Return the created entity
+  return {
+    entity_id,
+    cik: resolved.cik,
+    series_id: placeholderSeriesId,
+    ticker: normalizedTicker,
+    datasource_type: 'ishares',
+    datasource_config: datasourceConfig,
+  };
+}
+
+/**
  * Resolve ETF entity by ticker, including datasource configuration
+ * Self-healing: auto-creates entity if not found and configuration is known
  */
 async function resolveEtfEntity(
   supabase: SupabaseClient,
@@ -53,15 +164,19 @@ async function resolveEtfEntity(
     .eq('ticker', normalizedTicker)
     .maybeSingle();
 
-  if (error) {
-    if (error.code && error.code !== 'PGRST116') {
-      throw error;
-    }
+  if (error && error.code !== 'PGRST116') {
     throw new Error(`Failed to query ETF entity for ticker ${normalizedTicker}: ${error.message}`);
   }
 
+  // Self-healing: auto-create if not found
   if (!data) {
-    throw new Error(`ETF entity not found for ticker ${normalizedTicker}`);
+    console.log(`[resolveEtfEntity] ETF entity not found for ${normalizedTicker}, attempting auto-creation`);
+    const autoCreated = await autoCreateEtfEntity(supabase, normalizedTicker);
+    if (autoCreated) {
+      etfEntityCache.set(normalizedTicker, autoCreated);
+      return autoCreated;
+    }
+    throw new Error(`ETF entity not found for ticker ${normalizedTicker} and could not be auto-created`);
   }
 
   if (!data.datasource_type || !data.datasource_config) {

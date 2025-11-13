@@ -94,6 +94,14 @@ export async function eventStudy(
 ): Promise<EventStudyResult> {
   const supabase = createSupabaseClient();
 
+  // Self-healing: ensure entity exists before querying
+  try {
+    const { upsertEntity } = await import('./entity-utils');
+    await upsertEntity(cik, 'issuer');
+  } catch (error) {
+    console.warn(`[eventStudy] Failed to ensure entity exists for CIK ${cik}:`, error);
+  }
+
   // Resolve ticker from CIK
   const entityQuery = await supabase
     .from('entities')

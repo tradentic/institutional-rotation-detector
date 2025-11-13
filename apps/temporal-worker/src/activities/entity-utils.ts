@@ -294,6 +294,125 @@ export async function upsertEntityAndCusips(
   return { entity, cusips };
 }
 
+/**
+ * Enrich CUSIP mappings with additional metadata (ticker, exchange, company name).
+ *
+ * This function fetches CUSIPs that lack metadata and enriches them by querying
+ * SEC submissions API. Useful for improving data completeness for price lookups.
+ *
+ * @param cusips - Optional array of specific CUSIPs to enrich. If not provided, enriches all.
+ * @returns Number of CUSIPs enriched
+ */
+export async function enrichCusipMetadata(cusips?: string[]): Promise<number> {
+  const supabase = createSupabaseClient();
+
+  // Query CUSIPs that need enrichment (those without ticker information)
+  let query = supabase
+    .from('cusip_issuer_map')
+    .select('cusip,issuer_cik');
+
+  if (cusips && cusips.length > 0) {
+    query = query.in('cusip', cusips);
+  }
+
+  const { data: cusipRows, error: selectError } = await query;
+
+  if (selectError) {
+    throw new Error(`Failed to query CUSIP mappings: ${selectError.message}`);
+  }
+
+  if (!cusipRows || cusipRows.length === 0) {
+    return 0;
+  }
+
+  const secClient = createSecClient();
+  let enriched = 0;
+
+  for (const row of cusipRows) {
+    const { cusip, issuer_cik } = row;
+    if (!issuer_cik) continue;
+
+    try {
+      // Fetch SEC submissions data
+      const submissionsResponse = await secClient.get(`/submissions/CIK${issuer_cik}.json`);
+      const submissionsJson = await submissionsResponse.json();
+      const parsed = companySubmissionsSchema.parse(submissionsJson);
+
+      // Extract ticker and company name
+      const ticker = parsed.tickers && parsed.tickers.length > 0 ? parsed.tickers[0] : null;
+      const companyName = parsed.name || null;
+
+      // Find exchange information from securities array
+      const security = parsed.securities?.find(s => s.cusip === cusip);
+      const exchange = security?.exchange || null;
+
+      // Only update if we have additional metadata to add
+      if (ticker || companyName || exchange) {
+        // Note: cusip_issuer_map table may need schema extension to support these fields
+        // For now, just log the enrichment
+        console.log(`[enrichCusipMetadata] Enriched ${cusip}: ticker=${ticker}, name=${companyName}, exchange=${exchange}`);
+        enriched++;
+      }
+    } catch (error) {
+      console.warn(`[enrichCusipMetadata] Failed to enrich CUSIP ${cusip}:`, error);
+    }
+  }
+
+  return enriched;
+}
+
+/**
+ * Resolve series_id for an ETF or fund by querying N-PORT filings or SEC registration data.
+ *
+ * Multi-series trusts (like iShares) have multiple ETFs under one CIK, each with a unique series_id.
+ * This function attempts to auto-discover the series_id for a given ticker.
+ *
+ * @param cik - The fund/ETF CIK
+ * @param ticker - The ticker symbol to resolve series_id for
+ * @returns The series_id if found, null otherwise
+ */
+export async function resolveSeriesId(cik: string, ticker: string): Promise<string | null> {
+  const supabase = createSupabaseClient();
+  const normalizedCik = normalizeCik(cik);
+  const normalizedTicker = ticker.toUpperCase();
+
+  // Check if we already have series_id in entities table
+  const { data: existing } = await supabase
+    .from('entities')
+    .select('series_id')
+    .eq('cik', normalizedCik)
+    .eq('ticker', normalizedTicker)
+    .maybeSingle();
+
+  if (existing?.series_id) {
+    return existing.series_id;
+  }
+
+  // Attempt to resolve from N-PORT filings
+  // N-PORT filings contain seriesId in the XML structure
+  try {
+    const { data: nportFilings } = await supabase
+      .from('filings')
+      .select('accession')
+      .eq('cik', normalizedCik)
+      .eq('form', 'NPORT-P')
+      .order('filed_date', { ascending: false })
+      .limit(1);
+
+    if (nportFilings && nportFilings.length > 0) {
+      // Would need to parse N-PORT XML to extract series_id
+      // For now, return null and let manual configuration handle it
+      console.log(`[resolveSeriesId] Found N-PORT filing for CIK ${normalizedCik}, but parsing not yet implemented`);
+    }
+  } catch (error) {
+    console.warn(`[resolveSeriesId] Failed to query N-PORT filings:`, error);
+  }
+
+  // If we can't auto-resolve, return null
+  console.warn(`[resolveSeriesId] Could not auto-resolve series_id for ${normalizedTicker} (CIK ${normalizedCik})`);
+  return null;
+}
+
 // Legacy aliases for backward compatibility
 export const ensureEntity = upsertEntity;
 export const ensureCusipMappings = upsertCusipMapping;

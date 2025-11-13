@@ -187,6 +187,14 @@ export async function fetchForm4Filings(params: {
   }
 
   const normalizedCik = normalizeCik(issuerCik);
+
+  // Self-healing: ensure issuer entity exists
+  try {
+    const { upsertEntity } = await import('./entity-utils');
+    await upsertEntity(normalizedCik, 'issuer');
+  } catch (error) {
+    console.warn(`[fetchForm4Filings] Failed to ensure entity exists for CIK ${normalizedCik}:`, error);
+  }
   const response = await client.get(`/submissions/CIK${normalizedCik}.json`);
   const json = await response.json() as { filings?: { recent?: { accessionNumber: string[]; filingDate: string[]; form: string[] } } };
 

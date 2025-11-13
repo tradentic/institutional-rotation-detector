@@ -154,6 +154,8 @@ export interface ResolveIssuerNodeResult {
 export async function resolveIssuerNode(input: ResolveIssuerNodeInput): Promise<ResolveIssuerNodeResult> {
   const supabase = createSupabaseClient();
   let cik = input.cik ?? null;
+
+  // If CIK not provided, try to resolve from ticker
   if (!cik && input.ticker) {
     const { data, error } = await supabase
       .from('entities')
@@ -164,10 +166,57 @@ export async function resolveIssuerNode(input: ResolveIssuerNodeInput): Promise<
       .maybeSingle();
     if (error) throw error;
     cik = data?.cik ?? null;
+
+    // Self-healing: if entity not found, try to resolve from SEC and create
+    if (!cik) {
+      console.log(`[resolveIssuerNode] Entity not found for ticker ${input.ticker}, attempting SEC lookup`);
+      const { upsertEntity } = await import('./entity-utils');
+      const { createSecClient } = await import('../lib/secClient');
+      const { z } = await import('zod');
+
+      try {
+        const secClient = createSecClient();
+        const tickerEndpoint = process.env.SEC_TICKER_ENDPOINT ?? '/files/company_tickers.json';
+        const tickerSearchSchema = z.record(
+          z.string(),
+          z.object({
+            cik_str: z.number(),
+            ticker: z.string(),
+            title: z.string(),
+          })
+        );
+
+        const searchResponse = await secClient.get(tickerEndpoint);
+        const searchJson = await searchResponse.json();
+        const tickerData = tickerSearchSchema.parse(searchJson);
+
+        const match = Object.values(tickerData).find(
+          (entry) => entry.ticker.toUpperCase() === input.ticker.toUpperCase()
+        );
+
+        if (match) {
+          cik = match.cik_str.toString().padStart(10, '0');
+          console.log(`[resolveIssuerNode] Resolved CIK ${cik} for ticker ${input.ticker}, creating entity`);
+          await upsertEntity(cik, 'issuer');
+        }
+      } catch (error) {
+        console.warn(`[resolveIssuerNode] Failed to auto-create entity for ticker ${input.ticker}:`, error);
+      }
+    }
   }
+
   if (!cik) {
     throw new Error('Unable to resolve issuer CIK');
   }
+
+  // Ensure entity exists before creating graph node
+  try {
+    const { upsertEntity } = await import('./entity-utils');
+    await upsertEntity(cik, 'issuer');
+  } catch (error) {
+    console.warn(`[resolveIssuerNode] Failed to ensure entity exists for CIK ${cik}:`, error);
+  }
+
   const nodeStore = createSupabaseGraphStore();
   const nodeId = await nodeStore.ensureNode({ kind: 'issuer', key: cik });
   return { nodeId, cik, ticker: input.ticker };
