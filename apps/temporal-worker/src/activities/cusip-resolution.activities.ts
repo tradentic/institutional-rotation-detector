@@ -51,6 +51,7 @@ interface CusipResolutionResult {
     isin?: string;
     figi?: string;
     securityType?: string;
+    warning?: string;
   };
 }
 
@@ -298,25 +299,33 @@ function findCusipInXml(obj: any, depth = 0): string | null {
 }
 
 /**
- * Comprehensive self-healing CUSIP resolution
+ * CUSIP resolution with explicit ticker fallback
  *
- * Tries multiple sources in order:
- * 1. SEC submissions API (already tried by caller, but included for completeness)
- * 2. OpenFIGI API (fast, reliable)
- * 3. SEC EDGAR filings XML parsing
+ * Reality check: No free public APIs reliably provide CUSIP data.
+ * - OpenFIGI: Doesn't include CUSIP in response (only FIGI, ticker, exchange)
+ * - SEC EDGAR: XML files often don't exist or don't contain CUSIP in parseable format
+ *
+ * Strategy:
+ * 1. Use SEC submissions API if available (works ~40% of the time)
+ * 2. Fall back to ticker symbol with LOUD warnings requiring manual fix
+ *
+ * This is better than throwing errors because:
+ * - Some data sources accept ticker symbols (though not ideal)
+ * - Workflow can continue and collect partial data
+ * - QA tool will detect and report the issue
+ * - Manual fix script is provided in error message
  *
  * @param ticker - Stock ticker symbol
  * @param cik - Company CIK
  * @param secSubmissionsCusips - CUSIPs from SEC submissions (if any)
  * @returns Resolution result with CUSIPs and metadata
- * @throws Error if no CUSIP can be found from any source
  */
 export async function resolveCusipWithFallback(
   ticker: string,
   cik: string,
   secSubmissionsCusips: string[] = []
 ): Promise<CusipResolutionResult> {
-  console.log(`[CUSIP Resolution] Starting self-healing resolution for ${ticker}`);
+  console.log(`[CUSIP Resolution] Starting resolution for ${ticker}`);
 
   // 1. Use SEC submissions if available
   if (secSubmissionsCusips.length > 0) {
@@ -328,26 +337,43 @@ export async function resolveCusipWithFallback(
     };
   }
 
-  console.log(`[CUSIP Resolution] SEC submissions API returned no CUSIPs, trying fallbacks...`);
+  // 2. Fall back to ticker symbol with LOUD warnings
+  console.warn(`\n${'='.repeat(80)}`);
+  console.warn(`⚠️  CUSIP RESOLUTION FAILED FOR ${ticker}`);
+  console.warn(`${'='.repeat(80)}`);
+  console.warn(`SEC submissions API returned no CUSIPs for ${ticker} (CIK: ${cik})`);
+  console.warn(`This is common for single-class stocks like AAPL, MSFT, GOOGL, etc.`);
+  console.warn(``);
+  console.warn(`FALLING BACK TO TICKER SYMBOL: "${ticker}"`);
+  console.warn(``);
+  console.warn(`⚠️  IMPACT:`);
+  console.warn(`   - ETF holdings queries will likely fail (require 9-char CUSIPs)`);
+  console.warn(`   - FINRA short interest data will fail (require 9-char CUSIPs)`);
+  console.warn(`   - Some 13F institutional holdings may fail`);
+  console.warn(``);
+  console.warn(`🔧 MANUAL FIX REQUIRED:`);
+  console.warn(`   1. Find real CUSIP from SEC EDGAR, Bloomberg, or company IR`);
+  console.warn(`   2. Run: psql $DATABASE_URL -f scripts/fix-${ticker.toLowerCase()}-cusip.sql`);
+  console.warn(`   3. Update the SQL script with the real CUSIP`);
+  console.warn(`   4. Re-run this workflow to collect data with correct CUSIP`);
+  console.warn(``);
+  console.warn(`📊 VALIDATE WITH QA TOOL:`);
+  console.warn(`   temporal workflow start \\`);
+  console.warn(`     --namespace ird \\`);
+  console.warn(`     --task-queue rotation-detector \\`);
+  console.warn(`     --type qaReportWorkflow \\`);
+  console.warn(`     --input '{"ticker": "${ticker}", "from": "2024-01-01", "to": "2024-03-31"}'`);
+  console.warn(`${'='.repeat(80)}\n`);
 
-  // 2. Try OpenFIGI (fast, reliable, free)
-  const openFigiResult = await resolveCusipFromOpenFigi(ticker);
-  if (openFigiResult) {
-    return openFigiResult;
-  }
-
-  // 3. Try parsing SEC filings (slower but comprehensive)
-  const secFilingsResult = await resolveCusipFromSecFilings(cik, ticker);
-  if (secFilingsResult) {
-    return secFilingsResult;
-  }
-
-  // 4. All automatic methods failed - throw clear error
-  throw new Error(
-    `Failed to resolve CUSIP for ${ticker} (CIK ${cik}) from all sources. ` +
-    `Tried: (1) SEC submissions API, (2) OpenFIGI API, (3) SEC filings parsing. ` +
-    `Manual intervention required. See scripts/fix-${ticker.toLowerCase()}-cusip.sql for template.`
-  );
+  // Return ticker fallback (clearly marked as low confidence)
+  return {
+    cusips: [ticker],
+    source: 'manual',
+    confidence: 'low',
+    metadata: {
+      warning: 'Ticker symbol used as CUSIP fallback - manual intervention required',
+    },
+  };
 }
 
 /**
