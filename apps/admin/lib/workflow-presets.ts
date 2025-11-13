@@ -21,8 +21,8 @@ export const workflowPresets: WorkflowPreset[] = [
     workflowId: 'ingest-issuer',
     input: {
       ticker: 'AAPL',
-      from: '2024Q1',
-      to: '2024Q4',
+      from: '2024-01-01',
+      to: '2024-12-31',
       runKind: 'daily',
       minPct: 5,
       quarterBatch: 8,
@@ -34,8 +34,8 @@ export const workflowPresets: WorkflowPreset[] = [
     workflowId: 'ingest-issuer',
     input: {
       ticker: 'MSFT',
-      from: '2024Q1',
-      to: '2024Q1',
+      from: '2024-01-01',
+      to: '2024-03-31',
       runKind: 'daily',
       minPct: 5,
     },
@@ -46,8 +46,8 @@ export const workflowPresets: WorkflowPreset[] = [
     workflowId: 'ingest-issuer',
     input: {
       ticker: 'TSLA',
-      from: '2024Q3',
-      to: '2024Q4',
+      from: '2024-07-01',
+      to: '2024-12-31',
       runKind: 'daily',
       minPct: 5,
     },

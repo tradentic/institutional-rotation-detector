@@ -58,7 +58,7 @@ REST API for querying rotation data and triggering workflows.
 **Usage Example:**
 ```bash
 # Trigger analysis for AAPL Q1 2024
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-03-31&runKind=daily"
 
 # Get rotation events
 curl "http://localhost:3000/api/events?ticker=AAPL"

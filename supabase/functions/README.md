@@ -56,7 +56,7 @@ curl "http://localhost:54321/functions/v1/events?ticker=AAPL"
 curl "http://localhost:54321/functions/v1/graph?ticker=AAPL&period=2024-01"
 
 # Run workflow
-curl -X POST "http://localhost:54321/functions/v1/run?ticker=AAPL&from=2024Q1&to=2024Q4"
+curl -X POST "http://localhost:54321/functions/v1/run?ticker=AAPL&from=2024-01-01&to=2024-12-31"
 
 # Graph explain
 curl -X POST "http://localhost:54321/functions/v1/graph-explain" \
