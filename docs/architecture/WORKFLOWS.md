@@ -139,8 +139,8 @@ temporal workflow start \
   --input '{
     "ticker": "AAPL",
     "minPct": 5,
-    "from": "2024Q1",
-    "to": "2024Q4",
+    "from": "2024-01-01",
+    "to": "2024-12-31",
     "runKind": "daily",
     "quarterBatch": 8
   }'
@@ -1332,7 +1332,7 @@ temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id my-custom-id \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q4","runKind":"daily","minPct":5}'
+  --input '{"ticker":"AAPL","from":"2024-01-01","to":"2024-12-31","runKind":"daily","minPct":5}'
 
 # Execute and wait for result
 temporal workflow execute \
@@ -1363,8 +1363,8 @@ const handle = await temporal.connection
   .start('ingestIssuerWorkflow', {
     args: [{
       ticker: 'AAPL',
-      from: '2024Q1',
-      to: '2024Q4',
+      from: '2024-01-01',
+      to: '2024-12-31',
       runKind: 'daily',
       minPct: 5,
     }],
@@ -1380,7 +1380,7 @@ console.log('Result:', result);
 ### Via REST API
 
 ```bash
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q4&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-12-31&runKind=daily"
 ```
 
 ---

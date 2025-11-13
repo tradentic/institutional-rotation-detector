@@ -250,7 +250,7 @@ export async function upsertCusipMapping(
 
   const { error: insertError } = await supabase
     .from('cusip_issuer_map')
-    .upsert(mappings, { onConflict: 'cusip,issuer_cik' });
+    .upsert(mappings, { onConflict: 'cusip' });
 
   if (insertError) {
     throw new Error(`Failed to insert CUSIP mappings: ${insertError.message}`);
