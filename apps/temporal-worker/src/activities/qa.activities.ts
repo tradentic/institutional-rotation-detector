@@ -90,8 +90,17 @@ export async function generateQAReport(input: QAReportInput): Promise<QAReportOu
   const cusipData = await checkCusips(supabase, cik, normalizedTicker);
 
   if (cusipData.usingTickerFallback) {
-    issues.push(`No real CUSIP found - using ticker symbol as fallback`);
-    recommendations.push(`Verify SEC submissions API response contains 'tickers' field with CUSIP data`);
+    issues.push(`No real CUSIP found - using ticker symbol as fallback: ${cusipData.fromDatabase.join(', ')}`);
+    if (cusipData.fromSecApi.length === 0) {
+      recommendations.push(
+        `SEC submissions API has empty 'securities' array (common for single-class stocks). ` +
+        `Options: (1) Manually add CUSIP via SQL: UPDATE cusip_issuer_map SET cusip='<real-cusip>' WHERE cusip='${normalizedTicker}', ` +
+        `(2) Use external CUSIP lookup service (OpenFIGI, Bloomberg, etc.), ` +
+        `(3) Accept ticker fallback (works for some data sources but not ETFs/FINRA)`
+      );
+    } else {
+      recommendations.push(`Run upsertCusipMapping to sync ${cusipData.fromSecApi.length} CUSIPs from SEC API`);
+    }
   }
 
   if (cusipData.missing.length > 0) {
@@ -111,8 +120,13 @@ export async function generateQAReport(input: QAReportInput): Promise<QAReportOu
   const etfHoldings = await checkEtfHoldings(supabase, cusipData.fromDatabase, from, to);
 
   if (etfHoldings.totalPositions === 0 && cusipData.fromDatabase.length > 0) {
-    issues.push(`No ETF holdings found despite having ${cusipData.fromDatabase.length} CUSIPs`);
-    recommendations.push(`Run fetchDailyHoldings activity to ingest ETF data`);
+    if (cusipData.usingTickerFallback) {
+      issues.push(`No ETF holdings found - ticker fallback CUSIPs don't match ETF holdings data`);
+      recommendations.push(`ETF holdings require real 9-character CUSIPs. Fix CUSIP resolution first (see above), then run fetchDailyHoldings`);
+    } else {
+      issues.push(`No ETF holdings found despite having ${cusipData.fromDatabase.length} valid CUSIPs`);
+      recommendations.push(`Run fetchDailyHoldings activity to ingest ETF data`);
+    }
   } else if (etfHoldings.totalPositions === 0 && cusipData.fromDatabase.length === 0) {
     issues.push(`No ETF holdings found (no CUSIPs to search)`);
     recommendations.push(`Fix CUSIP resolution first, then run fetchDailyHoldings`);
@@ -122,8 +136,13 @@ export async function generateQAReport(input: QAReportInput): Promise<QAReportOu
   const shortInterest = await checkShortInterest(supabase, cusipData.fromDatabase, from, to);
 
   if (shortInterest.totalRecords === 0) {
-    issues.push(`No FINRA short interest data found for date range`);
-    recommendations.push(`Verify FINRA data availability for this ticker and date range`);
+    if (cusipData.usingTickerFallback) {
+      issues.push(`No FINRA short interest data - ticker fallback CUSIPs don't match FINRA data`);
+      recommendations.push(`FINRA data requires real 9-character CUSIPs. Fix CUSIP resolution first (see above)`);
+    } else {
+      issues.push(`No FINRA short interest data found for date range`);
+      recommendations.push(`Verify FINRA data availability for this ticker and date range, or check if fetchShortInterest was run`);
+    }
   }
 
   // 6. Filings
@@ -214,8 +233,10 @@ async function checkCusips(supabase: SupabaseClient, cik: string | null, ticker:
   const secSet = new Set(secCusips);
   const missing = secCusips.filter(cusip => !dbSet.has(cusip));
 
-  // Check if using ticker fallback (ticker symbol stored as CUSIP)
-  const usingTickerFallback = dbCusips.includes(ticker) && secCusips.length > 0;
+  // Check if using ticker fallback: CUSIP should be 9 alphanumeric characters
+  // If any DB CUSIP doesn't match this pattern, it's likely a ticker symbol fallback
+  const isValidCusip = (cusip: string) => /^[0-9A-Z]{9}$/.test(cusip);
+  const usingTickerFallback = dbCusips.length > 0 && dbCusips.some(c => !isValidCusip(c));
 
   return {
     fromDatabase: dbCusips,
