@@ -55,18 +55,20 @@ interface CusipResolutionResult {
   };
 }
 
-// sec-api.io response schema
-const secApiResponseSchema = z.object({
-  name: z.string().optional(),
-  ticker: z.string().optional(),
-  cik: z.string().optional(),
-  cusip: z.string().optional(), // Space-separated if multiple
-  cusips: z.array(z.string()).optional(), // Array format
-  exchange: z.string().optional(),
-  sector: z.string().optional(),
-  industry: z.string().optional(),
-  sic: z.string().optional(),
-});
+// sec-api.io response schema - API returns an array
+const secApiResponseSchema = z.array(
+  z.object({
+    name: z.string().optional(),
+    ticker: z.string().optional(),
+    cik: z.string().optional(),
+    cusip: z.string().optional(), // Space-separated if multiple
+    cusips: z.array(z.string()).optional(), // Array format
+    exchange: z.string().optional(),
+    sector: z.string().optional(),
+    industry: z.string().optional(),
+    sic: z.string().optional(),
+  })
+);
 
 /**
  * Resolve CUSIP from OpenFIGI API
@@ -201,14 +203,23 @@ async function resolveCusipFromSecApi(
     const json = await response.json();
     const parsed = secApiResponseSchema.parse(json);
 
+    // API returns an array - check if we have results
+    if (parsed.length === 0) {
+      console.log(`[sec-api.io] No mapping found for ${ticker} (empty array)`);
+      return null;
+    }
+
+    // Get first result from array
+    const result = parsed[0];
+
     // Extract CUSIPs - can be in 'cusip' (space-separated) or 'cusips' (array)
     let cusips: string[] = [];
 
-    if (parsed.cusips && parsed.cusips.length > 0) {
-      cusips = parsed.cusips;
-    } else if (parsed.cusip) {
+    if (result.cusips && result.cusips.length > 0) {
+      cusips = result.cusips;
+    } else if (result.cusip) {
       // Handle space-separated CUSIPs
-      cusips = parsed.cusip.split(/\s+/).filter(Boolean);
+      cusips = result.cusip.split(/\s+/).filter(Boolean);
     }
 
     // Validate CUSIP format (9 alphanumeric characters)
@@ -220,9 +231,9 @@ async function resolveCusipFromSecApi(
     }
 
     // Optionally validate CIK matches
-    if (cik && parsed.cik) {
+    if (cik && result.cik) {
       const normalizedCik = cik.padStart(10, '0');
-      const parsedCik = parsed.cik.padStart(10, '0');
+      const parsedCik = result.cik.padStart(10, '0');
       if (normalizedCik !== parsedCik) {
         console.warn(
           `[sec-api.io] CIK mismatch: expected ${normalizedCik}, got ${parsedCik}`
@@ -237,7 +248,7 @@ async function resolveCusipFromSecApi(
       source: 'sec_api',
       confidence: 'high',
       metadata: {
-        securityType: parsed.sector || parsed.industry,
+        securityType: result.sector || result.industry,
       },
     };
   } catch (error) {
