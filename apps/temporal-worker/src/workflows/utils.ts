@@ -2,6 +2,16 @@ import type {} from '../types/temporal';
 import { defineQuery, setHandler, upsertSearchAttributes } from '@temporalio/workflow';
 import { defineSearchAttributeKey, SearchAttributeType, type SearchAttributeUpdatePair } from '@temporalio/common';
 
+/**
+ * Default ETF universe for institutional rotation analysis.
+ * These represent major iShares Russell index ETFs tracking different market cap segments:
+ * - IWB: Russell 1000 (Large-cap)
+ * - IWM: Russell 2000 (Small-cap)
+ * - IWN: Russell 2000 Value (Small-cap value)
+ * - IWC: Russell Microcap (Micro-cap)
+ */
+export const DEFAULT_ETF_UNIVERSE = ['IWB', 'IWM', 'IWN', 'IWC'] as const;
+
 export function resolveQuarterRange(from: string, to: string): string[] {
   const start = new Date(from);
   const end = new Date(to);

@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase';
 import { computeRotationScore, ScoreInputs } from '../lib/scoring';
 import type { RotationEventRecord } from '../lib/schema';
-import { ensureCusipMappings } from './entity-utils';
+import { upsertCusipMapping } from './entity-utils';
 
 type SupabaseFactory = typeof createSupabaseClient;
 
@@ -116,7 +116,7 @@ async function computeDumpContext(cik: string, quarter: QuarterBounds): Promise<
   }
 
   // Ensure CUSIP mappings exist before querying
-  await ensureCusipMappings(cik);
+  await upsertCusipMapping(cik);
 
   const supabase = getSupabaseClient();
   const { data: cusipRows, error: cusipError} = await supabase
@@ -504,6 +504,8 @@ export async function scoreV4_1(
 ): Promise<RotationEventRecord> {
   const supabase = getSupabaseClient();
   const result = computeRotationScore(inputs);
+
+  // Build base event
   const event: RotationEventRecord = {
     cluster_id: anchor.clusterId,
     issuer_cik: cik,
@@ -523,6 +525,19 @@ export async function scoreV4_1(
     t_to_plus20_days: 20,
     max_ret_w13: 0,
   };
+
+  // Add microstructure signals if available (Problem 8: Microstructure Integration)
+  // When microstructure confidence > 0.7, boosts r_score by up to 0.5
+  if (inputs.microConfidence && inputs.microConfidence > 0.5) {
+    Object.assign(event, {
+      microstructure_vpin: inputs.microVpinAvg ?? null,
+      microstructure_kyle_lambda: inputs.microLambdaAvg ?? null,
+      microstructure_order_imbalance: inputs.microOrderImbalanceAvg ?? null,
+      microstructure_confidence: inputs.microConfidence,
+      microstructure_detected_at: new Date().toISOString(),
+    });
+  }
+
   await supabase.from('rotation_events').upsert(event, {
     onConflict: 'cluster_id',
   });

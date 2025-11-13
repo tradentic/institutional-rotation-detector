@@ -1,5 +1,5 @@
 import { continueAsNew, proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils';
+import { DEFAULT_ETF_UNIVERSE, quarterBounds, resolveQuarterRange, upsertWorkflowSearchAttributes } from './utils';
 import type { IngestQuarterInput } from './ingestQuarter.workflow';
 
 const { resolveCIK } = proxyActivities<{ resolveCIK: (ticker: string) => Promise<{ cik: string; cusips: string[] }> }>(
@@ -22,7 +22,7 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
   const quarterBatch = input.quarterBatch ?? 8;
   const quarters = input.quarters ?? resolveQuarterRange(input.from, input.to);
   const { cik, cusips } = await resolveCIK(input.ticker);
-  const etfUniverse = ['IWB', 'IWM', 'IWN', 'IWC'];
+  const etfUniverse = [...DEFAULT_ETF_UNIVERSE];
   const currentBatch = quarters.slice(0, quarterBatch);
   const remaining = quarters.slice(quarterBatch);
   const firstQuarter = (currentBatch[0] ?? quarters[0]) ?? null;
@@ -49,6 +49,7 @@ export async function ingestIssuerWorkflow(input: IngestIssuerInput) {
           quarterStart: quarterBoundsForChild.start,
           quarterEnd: quarterBoundsForChild.end,
           etfUniverse,
+          entityKind: 'issuer',
         } satisfies IngestQuarterInput,
       ],
     });

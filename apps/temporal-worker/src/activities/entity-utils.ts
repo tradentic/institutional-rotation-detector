@@ -36,38 +36,44 @@ function normalizeCik(value: string): string {
   return value.replace(/[^\d]/g, '').padStart(10, '0');
 }
 
-export interface EnsureEntityResult {
+export interface UpsertEntityResult {
   entity_id: string;
   kind: 'fund' | 'manager' | 'issuer' | 'etf';
   created: boolean;
 }
 
 /**
- * Ensure an entity exists for a given CIK, creating it if necessary.
+ * Upsert an entity for a given CIK, creating it if it doesn't exist.
  *
  * This function:
  * 1. Checks if entity already exists
  * 2. If not, fetches SEC data to determine entity type
- * 3. Creates entity with appropriate kind
+ * 3. Creates entity with appropriate kind and series_id (for funds/ETFs)
  * 4. Returns entity_id and whether it was created
  *
- * @param cik - The CIK to ensure entity for
+ * @param cik - The CIK to upsert entity for
  * @param preferredKind - Optional hint for what kind to create if auto-detecting
+ * @param seriesId - Optional series ID for ETFs and mutual funds (Problem 9)
  * @returns Entity info including whether it was newly created
  */
-export async function ensureEntity(
+export async function upsertEntity(
   cik: string,
-  preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf'
-): Promise<EnsureEntityResult> {
+  preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf',
+  seriesId?: string // Problem 9: Support series_id for funds/ETFs
+): Promise<UpsertEntityResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
   // Check if entity already exists
-  const { data: existing, error: selectError } = await supabase
-    .from('entities')
-    .select('entity_id,kind')
-    .eq('cik', normalizedCik)
-    .maybeSingle();
+  // For funds/ETFs with series_id, match on both cik and series_id
+  // For others, match on cik only
+  let query = supabase.from('entities').select('entity_id,kind').eq('cik', normalizedCik);
+
+  if (seriesId && (preferredKind === 'fund' || preferredKind === 'etf')) {
+    query = query.eq('series_id', seriesId);
+  }
+
+  const { data: existing, error: selectError } = await query.maybeSingle();
 
   if (selectError) {
     throw new Error(`Failed to check for existing entity: ${selectError.message}`);
@@ -113,16 +119,26 @@ export async function ensureEntity(
     }
   }
 
-  console.log(`[ensureEntity] Creating ${kind} entity for CIK ${normalizedCik}: ${entityName}`);
+  console.log(`[upsertEntity] Creating ${kind} entity for CIK ${normalizedCik}${seriesId ? ` (series_id: ${seriesId})` : ''}: ${entityName}`);
 
-  // Create entity
+  // Extract ticker if available (typically for issuers)
+  const ticker = parsed.tickers && parsed.tickers.length > 0 ? parsed.tickers[0] : null;
+
+  // Create entity with series_id if provided (Problem 9)
+  const entityData: any = {
+    cik: normalizedCik,
+    name: entityName,
+    kind,
+    ticker,
+  };
+
+  if (seriesId && (kind === 'fund' || kind === 'etf')) {
+    entityData.series_id = seriesId;
+  }
+
   const { data: newEntity, error: insertError } = await supabase
     .from('entities')
-    .insert({
-      cik: normalizedCik,
-      name: entityName,
-      kind,
-    })
+    .insert(entityData)
     .select('entity_id')
     .single();
 
@@ -141,27 +157,30 @@ export async function ensureEntity(
   };
 }
 
-export interface EnsureCusipMappingResult {
+export interface UpsertCusipMappingResult {
   cusipsAdded: number;
   source: 'existing' | 'submissions_api' | 'provided';
 }
 
 /**
- * Ensure CUSIP mappings exist for a given CIK.
+ * Upsert CUSIP-to-issuer mappings for a given issuer CIK.
+ *
+ * This populates the cusip_issuer_map table which maps CUSIP identifiers
+ * (or ticker symbols for FINRA lookups) to issuer CIKs.
  *
  * Priority order:
  * 1. Use provided CUSIPs if given
  * 2. Check if mappings already exist in DB
- * 3. Fetch from SEC submissions API (tickers as fallback)
+ * 3. Fetch from SEC submissions API (real CUSIPs or tickers as fallback)
  *
  * @param cik - The issuer CIK
  * @param providedCusips - Optional array of CUSIPs/tickers to seed
  * @returns Info about what was added
  */
-export async function ensureCusipMappings(
+export async function upsertCusipMapping(
   cik: string,
   providedCusips?: string[]
-): Promise<EnsureCusipMappingResult> {
+): Promise<UpsertCusipMappingResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
@@ -197,78 +216,84 @@ export async function ensureCusipMappings(
     const parsed = companySubmissionsSchema.parse(submissionsJson);
 
     // Try to get CUSIPs from securities array
-    const securities = parsed.securities ?? [];
-    const cusipsFromSecurities = securities
-      .map((sec) => sec.cusip)
-      .filter((c): c is string => c !== undefined && c.length >= 8);
+    if (parsed.securities && parsed.securities.length > 0) {
+      const cusips = parsed.securities
+        .map((s) => s.cusip)
+        .filter((c): c is string => Boolean(c));
 
-    if (cusipsFromSecurities.length > 0) {
-      cusipsToAdd = cusipsFromSecurities;
-    } else {
-      // Fallback to ticker symbols for FINRA lookups
-      const tickers = parsed.tickers ?? [];
-      if (tickers.length > 0) {
-        cusipsToAdd = tickers.map((t) => t.toUpperCase());
+      if (cusips.length > 0) {
+        cusipsToAdd = cusips;
+        source = 'submissions_api';
       }
     }
 
-    source = 'submissions_api';
+    // Fallback to tickers if no CUSIPs found
+    if (cusipsToAdd.length === 0 && parsed.tickers && parsed.tickers.length > 0) {
+      cusipsToAdd = parsed.tickers;
+      source = 'submissions_api';
+    }
   }
 
   if (cusipsToAdd.length === 0) {
-    console.warn(`[ensureCusipMappings] No CUSIPs found for CIK ${normalizedCik}`);
+    console.warn(`[upsertCusipMapping] No CUSIPs or tickers found for CIK ${normalizedCik}`);
     return {
       cusipsAdded: 0,
       source: 'submissions_api',
     };
   }
 
-  // Insert mappings
-  const records = cusipsToAdd.map((cusip) => ({
-    cusip: cusip.toUpperCase().replace(/[^A-Z0-9]/g, ''),
+  // Insert CUSIP mappings
+  const mappings = cusipsToAdd.map((cusip) => ({
+    cusip,
     issuer_cik: normalizedCik,
   }));
 
-  const { error: insertError, count } = await (supabase
+  const { error: insertError } = await supabase
     .from('cusip_issuer_map')
-    .upsert(records, { onConflict: 'cusip' }) as any)
-    .select('*', { count: 'exact', head: true });
+    .upsert(mappings, { onConflict: 'cusip,issuer_cik' });
 
   if (insertError) {
-    throw new Error(`Failed to create CUSIP mappings: ${insertError.message}`);
+    throw new Error(`Failed to insert CUSIP mappings: ${insertError.message}`);
   }
 
-  const added = count ?? records.length;
-  console.log(
-    `[ensureCusipMappings] Added ${added} CUSIP mapping(s) for CIK ${normalizedCik} (source: ${source})`
-  );
+  console.log(`[upsertCusipMapping] Added ${cusipsToAdd.length} CUSIP mappings for CIK ${normalizedCik}`);
 
   return {
-    cusipsAdded: added,
+    cusipsAdded: cusipsToAdd.length,
     source,
   };
 }
 
 /**
- * Ensure both entity and CUSIP mappings exist for a CIK.
- * Convenience function that calls both ensure functions.
+ * Combined operation to ensure both entity and CUSIP mappings exist.
+ *
+ * This is a convenience wrapper that combines upsertEntity and upsertCusipMapping
+ * into a single operation.
  *
  * @param cik - The CIK to ensure data for
  * @param options - Optional parameters
  * @returns Combined results
  */
-export async function ensureEntityAndCusips(
+export async function upsertEntityAndCusips(
   cik: string,
   options?: {
     preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf';
     providedCusips?: string[];
+    seriesId?: string; // Problem 9: Support series_id for funds/ETFs
   }
 ): Promise<{
-  entity: EnsureEntityResult;
-  cusips: EnsureCusipMappingResult;
+  entity: UpsertEntityResult;
+  cusips: UpsertCusipMappingResult;
 }> {
-  const entity = await ensureEntity(cik, options?.preferredKind);
-  const cusips = await ensureCusipMappings(cik, options?.providedCusips);
+  const entity = await upsertEntity(cik, options?.preferredKind, options?.seriesId);
+  const cusips = await upsertCusipMapping(cik, options?.providedCusips);
 
   return { entity, cusips };
 }
+
+// Legacy aliases for backward compatibility
+export const ensureEntity = upsertEntity;
+export const ensureCusipMappings = upsertCusipMapping;
+export const ensureEntityAndCusips = upsertEntityAndCusips;
+export type EnsureEntityResult = UpsertEntityResult;
+export type EnsureCusipMappingResult = UpsertCusipMappingResult;

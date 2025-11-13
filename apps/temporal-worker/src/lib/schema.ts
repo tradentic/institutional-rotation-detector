@@ -56,6 +56,13 @@ export interface RotationEventRecord {
   car_m5_p20: number;
   t_to_plus20_days: number;
   max_ret_w13: number;
+  // Microstructure integration (Problem 8)
+  microstructure_vpin?: number | null;
+  microstructure_kyle_lambda?: number | null;
+  microstructure_order_imbalance?: number | null;
+  microstructure_confidence?: number | null;
+  microstructure_attribution_entity_id?: string | null;
+  microstructure_detected_at?: string | null;
 }
 
 // ============================================================================

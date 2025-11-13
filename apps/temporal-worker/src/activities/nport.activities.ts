@@ -2,13 +2,12 @@ import { XMLParser } from 'fast-xml-parser';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
-import { ensureEntity } from './entity-utils';
+import { upsertEntity } from './entity-utils';
 
 export type Month = { month: string };
 
 const AVAILABILITY_LAG_DAYS = Number(process.env.NPORT_AVAILABILITY_LAG_DAYS ?? '60');
 const HOLDINGS_CHUNK_SIZE = 500;
-const KIND_PRIORITY: Record<string, number> = { fund: 0, etf: 1, manager: 2, issuer: 3 };
 
 export interface NportHolding {
   cusip: string;
@@ -20,11 +19,6 @@ interface FilingSummary {
   reportDate?: string | null;
   primaryDocument?: string | null;
   form?: string | null;
-}
-
-interface HolderEntityRow {
-  entity_id: string;
-  kind: string;
 }
 
 function normalizeCik(value: string): string {
@@ -167,23 +161,6 @@ function combineRecentFilings(recent: Record<string, unknown>): FilingSummary[] 
   return filings;
 }
 
-async function resolveHolderId(supabase: SupabaseClient, cik: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('entities')
-    .select('entity_id,kind')
-    .eq('cik', cik);
-  if (error) {
-    throw new Error(`Failed to load holder entity: ${error.message}`);
-  }
-  const rows = (data as HolderEntityRow[] | null) ?? [];
-  if (rows.length === 0) {
-    // Entity doesn't exist - likely an issuer company, not a fund
-    return null;
-  }
-  rows.sort((a, b) => (KIND_PRIORITY[a.kind] ?? 99) - (KIND_PRIORITY[b.kind] ?? 99));
-  return rows[0]!.entity_id;
-}
-
 function buildDocumentUrl(cik: string, accession: string, document: string): string {
   const accessionSanitized = accession.replace(/-/g, '');
   const cikNumeric = String(parseInt(cik, 10));
@@ -209,6 +186,45 @@ export function parseNportDocument(content: string): NportHolding[] {
   }
 }
 
+/**
+ * Extract series_id from N-PORT document header (Problem 9: Series ID for mutual funds)
+ * Series ID format: S000012345 (9 digits after 'S')
+ */
+function extractSeriesId(content: string): string | null {
+  const trimmed = content.trim();
+
+  // Try JSON format first
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const json = JSON.parse(trimmed);
+      const submission = json?.edgarSubmission ?? json;
+      const headerData = submission?.headerData ?? submission;
+      const seriesId = headerData?.seriesId ?? headerData?.seriesID ?? headerData?.series_id;
+      if (seriesId && typeof seriesId === 'string' && /^S\d{9}$/.test(seriesId)) {
+        return seriesId;
+      }
+    } catch {
+      // Fall through to XML parsing
+    }
+  }
+
+  // Try XML format
+  try {
+    const parser = new XMLParser({ ignoreAttributes: false });
+    const parsed = parser.parse(trimmed);
+    const submission = parsed?.edgarSubmission ?? parsed;
+    const headerData = submission?.headerData ?? submission;
+    const seriesId = headerData?.seriesId ?? headerData?.seriesID ?? headerData?.series_id;
+    if (seriesId && typeof seriesId === 'string' && /^S\d{9}$/.test(seriesId)) {
+      return seriesId;
+    }
+  } catch {
+    // Fall through
+  }
+
+  return null;
+}
+
 export async function fetchMonthly(cik: string, months: Month[], now = new Date()): Promise<number> {
   const supabase = createSupabaseClient();
   const secClient = createSecClient();
@@ -230,8 +246,25 @@ export async function fetchMonthly(cik: string, months: Month[], now = new Date(
     return 0;
   }
 
-  // Ensure fund entity exists (auto-creates if needed)
-  const { entity_id: holderId } = await ensureEntity(normalizedCik, 'fund');
+  // Try to extract series_id from the most recent N-PORT filing (Problem 9)
+  let seriesId: string | null = null;
+  const firstNportFiling = filings.find((f) => f?.form?.startsWith('NPORT-P') && f.primaryDocument);
+  if (firstNportFiling && firstNportFiling.primaryDocument) {
+    try {
+      const documentPath = buildDocumentUrl(normalizedCik, firstNportFiling.accessionNumber, firstNportFiling.primaryDocument);
+      const documentResponse = await secClient.get(documentPath);
+      const raw = await documentResponse.text();
+      seriesId = extractSeriesId(raw);
+      if (seriesId) {
+        console.log(`[fetchMonthly] Extracted series_id ${seriesId} for CIK ${normalizedCik}`);
+      }
+    } catch (error) {
+      console.warn(`[fetchMonthly] Failed to extract series_id from N-PORT document:`, error);
+    }
+  }
+
+  // Ensure fund entity exists with series_id (auto-creates if needed)
+  const { entity_id: holderId } = await upsertEntity(normalizedCik, 'fund', seriesId ?? undefined);
 
   const monthToFiling = new Map<string, FilingSummary>();
   for (const filing of filings) {

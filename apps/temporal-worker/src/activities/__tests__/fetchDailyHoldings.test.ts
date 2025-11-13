@@ -19,9 +19,19 @@ class EntitiesQuery {
   async maybeSingle() {
     entitiesQueryCount += 1;
     const kind = this.filters.get('kind');
-    const cik = this.filters.get('cik');
-    if (kind === 'etf' && cik === 'IWB') {
-      return { data: { entity_id: 'etf-iwb' }, error: null };
+    const ticker = this.filters.get('ticker');
+    if (kind === 'etf' && ticker === 'IWB') {
+      return {
+        data: {
+          entity_id: 'etf-iwb',
+          cik: '0001100663',
+          series_id: 'S000004347',
+          ticker: 'IWB',
+          datasource_type: 'ishares',
+          datasource_config: { productId: '239707', slug: 'ishares-russell-1000-etf' },
+        },
+        error: null,
+      };
     }
     return { data: null, error: { code: 'PGRST116', message: 'No rows' } };
   }
@@ -126,7 +136,7 @@ describe('fetchDailyHoldings', () => {
 
     const { fetchDailyHoldings } = await import('../etf.activities.js');
 
-    const inserted = await fetchDailyHoldings(['037833100'], ['IWB']);
+    const inserted = await fetchDailyHoldings(['037833100'], ['IWB'], undefined);
 
     expect(inserted).toBe(1);
     expect(entitiesQueryCount).toBe(1);
