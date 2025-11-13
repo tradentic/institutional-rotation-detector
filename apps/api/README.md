@@ -227,8 +227,8 @@ import { handlePostRun, type RunParams, type TemporalConfig } from '@rotation-de
 
 const params: RunParams = {
   ticker: 'AAPL',
-  from: '2024Q1',
-  to: '2024Q4',
+  from: '2024-01-01',
+  to: '2024-12-31',
   runKind: 'daily',
 };
 

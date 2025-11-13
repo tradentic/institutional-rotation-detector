@@ -58,14 +58,14 @@ Starts a rotation analysis workflow for a ticker.
 | Parameter | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
 | `ticker` | string | Yes | Stock ticker symbol | `AAPL` |
-| `from` | string | Yes | Start quarter or date | `2024Q1` or `2024-01-01` |
-| `to` | string | Yes | End quarter or date | `2024Q4` or `2024-12-31` |
+| `from` | string | Yes | Start date (YYYY-MM-DD) | `2024-01-01` |
+| `to` | string | Yes | End date (YYYY-MM-DD) | `2024-12-31` |
 | `runKind` | string | No | Run type (default: `daily`) | `daily` or `backfill` |
 | `min_pct` | number | No | Min dump % (default: 5) | `5` |
 
 **Example Request:**
 ```bash
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q4&runKind=daily&min_pct=5"
+curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-12-31&runKind=daily&min_pct=5"
 ```
 
 **Example Response:**
@@ -589,7 +589,7 @@ await client.start('ingestIssuerWorkflow', {
 
 ```bash
 # 1. Trigger analysis
-WORKFLOW_ID=$(curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily" | jq -r .workflowId)
+WORKFLOW_ID=$(curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-03-31&runKind=daily" | jq -r .workflowId)
 
 # 2. Wait for completion (or monitor in Temporal UI)
 temporal workflow describe --workflow-id $WORKFLOW_ID
