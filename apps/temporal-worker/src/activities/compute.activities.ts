@@ -464,7 +464,13 @@ export async function shortReliefV2(cik: string, quarter: QuarterBounds) {
   const supabase = getSupabaseClient();
 
   // Get all CUSIPs for this CIK (may be multiple for multi-series ETFs)
-  const cusips = await loadCusips(supabase, cik);
+  const { data: cusipRows, error: cusipError } = await supabase
+    .from('cusip_issuer_map')
+    .select('cusip')
+    .eq('issuer_cik', cik);
+  if (cusipError) throw cusipError;
+  const cusips = (cusipRows ?? []).map((row: any) => row.cusip).filter(Boolean);
+
   if (cusips.length === 0) {
     console.log(`[shortReliefV2] No CUSIPs found for CIK ${cik}`);
     return 0;
