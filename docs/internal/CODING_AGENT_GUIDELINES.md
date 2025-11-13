@@ -151,6 +151,353 @@ short_interest: [
 
 ---
 
+## 🔥 CRITICAL: Self-Healing / Self-Populating Patterns
+
+**The second most important concept:** Activities must be resilient and self-sufficient by automatically creating missing reference data.
+
+### The Self-Healing Philosophy
+
+**Problem:** Traditional systems require manual database seeding and fail when reference data is missing.
+
+**Solution:** Activities automatically create missing entities, CUSIP mappings, and other reference data by querying authoritative sources (SEC, FINRA) on-demand.
+
+### Core Principles
+
+1. **Zero Manual Seeding** - No need to pre-populate reference tables
+2. **On-Demand Creation** - Fetch and create data only when needed
+3. **Graceful Degradation** - Warn but don't fail if auto-creation unsuccessful
+4. **Idempotent Operations** - Safe to retry, upserts prevent duplicates
+5. **Authoritative Sources** - Always pull from SEC/FINRA APIs, not third-party data
+
+### When to Apply Self-Healing
+
+✅ **ALWAYS apply when:**
+- Querying `entities` table for issuer/manager/fund/ETF data
+- Querying `cusip_issuer_map` for CUSIP lookups
+- Processing workflows that depend on reference data
+- Activities that receive CIK or ticker as input
+- Graph operations that create nodes for entities
+- Price analysis that needs entity metadata
+- Any operation that could fail due to missing entity
+
+❌ **DON'T apply when:**
+- Processing transactional data (positions, prices, trades)
+- Bulk operations on existing data
+- Read-only queries with no side effects
+- Performance-critical hot paths (use caching instead)
+
+### Standard Implementation Pattern
+
+**✅ CORRECT - Self-healing activity:**
+```typescript
+export async function someActivity(cik: string) {
+  // 1. Self-healing: ensure entity exists
+  try {
+    const { upsertEntity } = await import('./entity-utils');
+    await upsertEntity(cik, 'issuer');
+  } catch (error) {
+    console.warn(`[someActivity] Failed to ensure entity exists: ${error}`);
+    // Continue anyway - entity may already exist
+  }
+
+  // 2. Self-healing: ensure CUSIP mappings exist
+  try {
+    const { upsertCusipMapping } = await import('./entity-utils');
+    await upsertCusipMapping(cik);
+  } catch (error) {
+    console.warn(`[someActivity] Failed to ensure CUSIP mappings: ${error}`);
+  }
+
+  // 3. Proceed with main logic
+  const { data } = await supabase.from('entities')...
+}
+```
+
+**❌ WRONG - Hard fails on missing data:**
+```typescript
+export async function someActivity(cik: string) {
+  const { data } = await supabase
+    .from('entities')
+    .select('*')
+    .eq('cik', cik)
+    .single();
+
+  if (!data) {
+    throw new Error('Entity not found'); // ❌ Fails instead of self-healing
+  }
+}
+```
+
+### Entity Creation Utilities
+
+The `entity-utils.ts` module provides self-healing primitives:
+
+**1. `upsertEntity(cik, kind?, seriesId?)`** - Create entity if missing
+```typescript
+// For issuers (stocks, companies)
+await upsertEntity('0000320193', 'issuer');
+
+// For ETFs (requires series_id)
+await upsertEntity('0001067839', 'etf', 'S000006218');
+
+// For managers (13F filers)
+await upsertEntity('0001234567', 'manager');
+```
+
+**2. `upsertCusipMapping(cik, cusips?, seriesId?)` - Create CUSIP mappings**
+```typescript
+// Auto-fetches from SEC submissions API
+await upsertCusipMapping('0000320193');
+
+// Or provide CUSIPs explicitly
+await upsertCusipMapping('0000320193', ['037833100']);
+
+// For ETFs with series_id
+await upsertCusipMapping('0001067839', ['46090E103'], 'S000006218');
+```
+
+**3. `upsertEntityAndCusips(cik, options?)` - Combined operation**
+```typescript
+// One-liner for both entity + CUSIP mappings
+await upsertEntityAndCusips('0000320193', {
+  preferredKind: 'issuer',
+  providedCusips: ['037833100']
+});
+```
+
+**4. `enrichCusipMetadata(cusips?)` - Enrich with ticker/exchange data**
+```typescript
+// Enrich specific CUSIPs with metadata
+await enrichCusipMetadata(['037833100', '46090E103']);
+
+// Or enrich all CUSIPs without metadata
+await enrichCusipMetadata();
+```
+
+**5. `resolveSeriesId(cik, ticker)` - Auto-discover series_id**
+```typescript
+// Attempts to resolve series_id from N-PORT filings
+const seriesId = await resolveSeriesId('0001067839', 'QQQ');
+// Returns: 'S000006218' or null
+```
+
+### Real-World Examples
+
+**Example 1: resolveCIK (edgar.activities.ts:198-199)**
+```typescript
+export async function resolveCIK(ticker: string) {
+  const cik = /* ... resolve from SEC ... */;
+  const cusips = /* ... extract from submissions ... */;
+
+  // ✅ Self-healing: create entity and mappings immediately
+  await upsertEntity(cik, 'issuer');
+  await upsertCusipMapping(cik, cusipsToReturn);
+
+  return { cik, cusips: cusipsToReturn };
+}
+```
+
+**Example 2: ETF Entity Resolution (etf.activities.ts:144-202)**
+```typescript
+async function resolveEtfEntity(supabase: SupabaseClient, ticker: string) {
+  // Try to find existing entity
+  const { data, error } = await supabase
+    .from('entities')
+    .select('*')
+    .eq('kind', 'etf')
+    .eq('ticker', ticker)
+    .maybeSingle();
+
+  // ✅ Self-healing: auto-create if not found
+  if (!data) {
+    console.log(`ETF entity not found, attempting auto-creation`);
+    const autoCreated = await autoCreateEtfEntity(supabase, ticker);
+    if (autoCreated) {
+      return autoCreated;
+    }
+    throw new Error('Could not auto-create ETF entity');
+  }
+
+  return data;
+}
+```
+
+**Example 3: Graph Node Resolution (graph.activities.ts:154-223)**
+```typescript
+export async function resolveIssuerNode(input: ResolveIssuerNodeInput) {
+  let cik = input.cik;
+
+  // ✅ Self-healing: resolve from SEC if entity not found
+  if (!cik && input.ticker) {
+    const { data } = await supabase.from('entities')...;
+    cik = data?.cik;
+
+    if (!cik) {
+      // Auto-resolve from SEC and create entity
+      const resolved = await resolveCikFromSEC(input.ticker);
+      if (resolved) {
+        cik = resolved.cik;
+        await upsertEntity(cik, 'issuer');
+      }
+    }
+  }
+
+  // ✅ Ensure entity exists before creating graph node
+  await upsertEntity(cik, 'issuer');
+
+  const nodeStore = createSupabaseGraphStore();
+  const nodeId = await nodeStore.ensureNode({ kind: 'issuer', key: cik });
+  return { nodeId, cik, ticker: input.ticker };
+}
+```
+
+**Example 4: Event Study (prices.activities.ts:91-103)**
+```typescript
+export async function eventStudy(anchorDate: string, cik: string) {
+  // ✅ Self-healing: ensure entity exists before querying
+  try {
+    await upsertEntity(cik, 'issuer');
+  } catch (error) {
+    console.warn(`Failed to ensure entity exists: ${error}`);
+  }
+
+  // Proceed with price analysis
+  const entityQuery = await supabase.from('entities')...;
+}
+```
+
+### Auto-Creation Logic for ETFs
+
+For ETFs, self-healing includes:
+1. **CIK Resolution** - Lookup from SEC ticker search
+2. **Series ID** - Generate placeholder or resolve from N-PORT
+3. **Datasource Config** - Known iShares ETF configurations
+4. **Entity Creation** - Full entity with ticker, name, datasource
+
+**Known iShares ETF Configurations:**
+```typescript
+const KNOWN_ISHARES_ETFS: Record<string, IsharesConfig> = {
+  'IWM': { productId: '239710', slug: 'iwm-ishares-russell-2000-etf' },
+  'IWB': { productId: '239707', slug: 'iwb-ishares-russell-1000-etf' },
+  'IWN': { productId: '239714', slug: 'iwn-ishares-russell-2000-value-etf' },
+  'IWC': { productId: '239722', slug: 'iwc-ishares-microcap-etf' },
+  // ... 10 total pre-configured
+};
+```
+
+**Extend with new ETFs as needed!**
+
+### Self-Healing Checklist
+
+When implementing new activities:
+
+- [ ] Receives CIK or ticker as input?
+- [ ] Queries `entities` table?
+- [ ] Queries `cusip_issuer_map` table?
+- [ ] Could fail due to missing reference data?
+- [ ] If YES to any: Add self-healing with `upsertEntity`/`upsertCusipMapping`
+
+When reviewing existing activities:
+
+- [ ] Does it hard-fail on missing entity? → Add self-healing
+- [ ] Does it require manual seeding? → Add self-healing
+- [ ] Could it auto-create from SEC/FINRA? → Add self-healing
+- [ ] Does it have graceful error handling? → Add try/catch with warnings
+
+### Testing Self-Healing
+
+**Test that activities auto-create missing data:**
+```typescript
+describe('Self-healing', () => {
+  it('should auto-create entity when missing', async () => {
+    // Start with empty database
+    await clearEntities();
+
+    // Activity should create entity automatically
+    const result = await someActivity('0000320193');
+
+    // Verify entity was created
+    const { data } = await supabase
+      .from('entities')
+      .select('*')
+      .eq('cik', '0000320193')
+      .single();
+
+    expect(data).toBeTruthy();
+    expect(data.kind).toBe('issuer');
+  });
+
+  it('should work when entity already exists', async () => {
+    // Pre-create entity
+    await upsertEntity('0000320193', 'issuer');
+
+    // Activity should work without recreating
+    const result = await someActivity('0000320193');
+
+    expect(result).toBeTruthy();
+  });
+});
+```
+
+### Benefits of Self-Healing
+
+1. **Zero Setup** - New environments work immediately
+2. **Resilient** - Recovers from missing data automatically
+3. **Efficient** - Only fetches data that's needed
+4. **Maintainable** - No manual sync scripts required
+5. **Testable** - Can test with empty database
+6. **Scalable** - Handles new tickers/CIKs automatically
+
+### Anti-Patterns to Avoid
+
+**❌ WRONG - Assumes data exists:**
+```typescript
+// Brittle, fails on missing data
+const entity = await getEntity(cik);  // Throws if missing
+processEntity(entity);
+```
+
+**❌ WRONG - Manual bulk seeding:**
+```typescript
+// Requires pre-seeding entire universe
+await seedAllTickers();  // Fetches unnecessary data
+await seedAllCUSIPs();   // Wastes API calls
+```
+
+**❌ WRONG - Hard-coded configurations:**
+```typescript
+// Can't handle new tickers
+if (ticker === 'AAPL') {
+  cik = '0000320193';
+} else if (ticker === 'MSFT') {
+  cik = '0000789019';
+}
+// ❌ What about other tickers?
+```
+
+**✅ CORRECT - Self-healing pattern:**
+```typescript
+// Resilient, scales to any ticker
+const resolved = await resolveCikFromSEC(ticker);
+if (resolved) {
+  await upsertEntity(resolved.cik, 'issuer');
+}
+```
+
+### Summary
+
+**When implementing ANY activity that touches reference data:**
+
+1. **Check** if entity/mapping exists
+2. **Auto-create** if missing using `upsertEntity`/`upsertCusipMapping`
+3. **Warn** if auto-creation fails (don't throw)
+4. **Continue** with main logic (may succeed if data already exists)
+5. **Test** both missing and existing data scenarios
+
+**The goal:** Activities should "just work" without manual setup, automatically creating what they need from authoritative sources.
+
+---
+
 ## 🔥 CRITICAL: Chain of Thought (CoT) is First-Class
 
 **The most important concept:** For multi-step workflows, **ALWAYS** use `CoTSession`.
