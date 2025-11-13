@@ -236,7 +236,8 @@ export async function fetchShortInterest(cik: string, dateRange: { start: string
 
     if (!identifier || !identifiers.has(identifier)) continue;
 
-    const settleDateValue = row['settlementDate'] || row['settlementdate'] || row['settle_date'];
+    const settleDateValue = row.get('settlementdate') ||
+                           row.get('settle_date');
     const settleDate = settleDateValue instanceof Date
       ? settleDateValue.toISOString().slice(0, 10)
       : String(settleDateValue);
@@ -329,7 +330,10 @@ export async function fetchATSWeekly(
 
     if (!identifier || !identifiers.has(identifier)) continue;
 
-    const weekEndValue = row['weekEndDate'] || row['weekending'] || row['weekof'] || row['week_end'];
+    const weekEndValue = row.get('weekenddate') ||
+                        row.get('weekending') ||
+                        row.get('weekof') ||
+                        row.get('week_end');
     const weekEnd = weekEndValue instanceof Date
       ? weekEndValue.toISOString().slice(0, 10)
       : String(weekEndValue);
