@@ -20,7 +20,6 @@ interface QAReportOutput {
     entityId?: string;
     name?: string;
     kind?: string;
-    createdAt?: string;
   };
 
   cusips: {
@@ -153,7 +152,7 @@ export async function generateQAReport(input: QAReportInput): Promise<QAReportOu
 async function checkEntity(supabase: SupabaseClient, ticker: string) {
   const { data, error } = await supabase
     .from('entities')
-    .select('entity_id, cik, name, kind, created_at')
+    .select('entity_id, cik, name, kind')
     .eq('ticker', ticker)
     .maybeSingle();
 
@@ -168,7 +167,6 @@ async function checkEntity(supabase: SupabaseClient, ticker: string) {
       cik: data.cik,
       name: data.name,
       kind: data.kind,
-      createdAt: data.created_at,
     } : {
       exists: false,
       cik: null,
