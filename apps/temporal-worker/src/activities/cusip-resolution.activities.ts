@@ -45,14 +45,28 @@ const openFigiResponseSchema = z.array(
 
 interface CusipResolutionResult {
   cusips: string[];
-  source: 'sec_submissions' | 'openfigi' | 'sec_filings' | 'manual';
+  source: 'sec_submissions' | 'sec_api' | 'openfigi' | 'sec_filings' | 'manual';
   confidence: 'high' | 'medium' | 'low';
   metadata?: {
     isin?: string;
     figi?: string;
     securityType?: string;
+    warning?: string;
   };
 }
+
+// sec-api.io response schema
+const secApiResponseSchema = z.object({
+  name: z.string().optional(),
+  ticker: z.string().optional(),
+  cik: z.string().optional(),
+  cusip: z.string().optional(), // Space-separated if multiple
+  cusips: z.array(z.string()).optional(), // Array format
+  exchange: z.string().optional(),
+  sector: z.string().optional(),
+  industry: z.string().optional(),
+  sic: z.string().optional(),
+});
 
 /**
  * Resolve CUSIP from OpenFIGI API
@@ -132,6 +146,102 @@ async function resolveCusipFromOpenFigi(
     };
   } catch (error) {
     console.error(`[OpenFIGI] Error resolving ${ticker}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Resolve CUSIP from sec-api.io
+ *
+ * sec-api.io provides a dedicated CIK/Ticker/CUSIP mapping API that reliably
+ * returns CUSIP data for US-listed companies and ETFs.
+ *
+ * API Docs: https://docs.sec-api.io/
+ * Endpoints:
+ * - /mapping/ticker/{TICKER}
+ * - /mapping/cik/{CIK}
+ * - /mapping/cusip/{CUSIP}
+ *
+ * Requires SEC_API_KEY environment variable.
+ *
+ * @param ticker - Stock ticker symbol
+ * @param cik - Optional CIK for validation
+ * @returns CUSIP if found, null otherwise
+ */
+async function resolveCusipFromSecApi(
+  ticker: string,
+  cik?: string
+): Promise<CusipResolutionResult | null> {
+  const apiKey = process.env.SEC_API_KEY;
+
+  if (!apiKey) {
+    console.log(`[sec-api.io] Skipping - SEC_API_KEY not configured`);
+    return null;
+  }
+
+  try {
+    console.log(`[sec-api.io] Requesting CUSIP for ticker ${ticker}`);
+
+    const response = await fetch(`https://api.sec-api.io/mapping/ticker/${ticker}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': apiKey,
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log(`[sec-api.io] No mapping found for ${ticker}`);
+        return null;
+      }
+      console.warn(`[sec-api.io] API error: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const json = await response.json();
+    const parsed = secApiResponseSchema.parse(json);
+
+    // Extract CUSIPs - can be in 'cusip' (space-separated) or 'cusips' (array)
+    let cusips: string[] = [];
+
+    if (parsed.cusips && parsed.cusips.length > 0) {
+      cusips = parsed.cusips;
+    } else if (parsed.cusip) {
+      // Handle space-separated CUSIPs
+      cusips = parsed.cusip.split(/\s+/).filter(Boolean);
+    }
+
+    // Validate CUSIP format (9 alphanumeric characters)
+    const validCusips = cusips.filter(c => /^[0-9A-Z]{9}$/.test(c));
+
+    if (validCusips.length === 0) {
+      console.log(`[sec-api.io] No valid CUSIPs found for ${ticker}`);
+      return null;
+    }
+
+    // Optionally validate CIK matches
+    if (cik && parsed.cik) {
+      const normalizedCik = cik.padStart(10, '0');
+      const parsedCik = parsed.cik.padStart(10, '0');
+      if (normalizedCik !== parsedCik) {
+        console.warn(
+          `[sec-api.io] CIK mismatch: expected ${normalizedCik}, got ${parsedCik}`
+        );
+      }
+    }
+
+    console.log(`[sec-api.io] ✓ Resolved ${ticker} → CUSIP: ${validCusips.join(', ')}`);
+
+    return {
+      cusips: validCusips,
+      source: 'sec_api',
+      confidence: 'high',
+      metadata: {
+        securityType: parsed.sector || parsed.industry,
+      },
+    };
+  } catch (error) {
+    console.error(`[sec-api.io] Error resolving ${ticker}:`, error);
     return null;
   }
 }
@@ -298,25 +408,29 @@ function findCusipInXml(obj: any, depth = 0): string | null {
 }
 
 /**
- * Comprehensive self-healing CUSIP resolution
+ * CUSIP resolution with multiple fallback sources
  *
- * Tries multiple sources in order:
- * 1. SEC submissions API (already tried by caller, but included for completeness)
- * 2. OpenFIGI API (fast, reliable)
- * 3. SEC EDGAR filings XML parsing
+ * Fallback chain:
+ * 1. SEC submissions API (free, ~40% success rate)
+ * 2. sec-api.io (paid API, very reliable, requires SEC_API_KEY)
+ * 3. Ticker symbol with LOUD warnings (last resort)
+ *
+ * This approach balances:
+ * - Free sources first (SEC submissions)
+ * - Paid but reliable source second (sec-api.io)
+ * - Visible fallback third (ticker with warnings)
  *
  * @param ticker - Stock ticker symbol
  * @param cik - Company CIK
  * @param secSubmissionsCusips - CUSIPs from SEC submissions (if any)
  * @returns Resolution result with CUSIPs and metadata
- * @throws Error if no CUSIP can be found from any source
  */
 export async function resolveCusipWithFallback(
   ticker: string,
   cik: string,
   secSubmissionsCusips: string[] = []
 ): Promise<CusipResolutionResult> {
-  console.log(`[CUSIP Resolution] Starting self-healing resolution for ${ticker}`);
+  console.log(`[CUSIP Resolution] Starting resolution for ${ticker}`);
 
   // 1. Use SEC submissions if available
   if (secSubmissionsCusips.length > 0) {
@@ -328,26 +442,61 @@ export async function resolveCusipWithFallback(
     };
   }
 
-  console.log(`[CUSIP Resolution] SEC submissions API returned no CUSIPs, trying fallbacks...`);
-
-  // 2. Try OpenFIGI (fast, reliable, free)
-  const openFigiResult = await resolveCusipFromOpenFigi(ticker);
-  if (openFigiResult) {
-    return openFigiResult;
+  // 2. Try sec-api.io (requires API key)
+  console.log(`[CUSIP Resolution] SEC submissions API returned no CUSIPs, trying sec-api.io...`);
+  const secApiResult = await resolveCusipFromSecApi(ticker, cik);
+  if (secApiResult) {
+    return secApiResult;
   }
 
-  // 3. Try parsing SEC filings (slower but comprehensive)
-  const secFilingsResult = await resolveCusipFromSecFilings(cik, ticker);
-  if (secFilingsResult) {
-    return secFilingsResult;
+  // 3. Fall back to ticker symbol with LOUD warnings
+  console.warn(`\n${'='.repeat(80)}`);
+  console.warn(`⚠️  CUSIP RESOLUTION FAILED FOR ${ticker}`);
+  console.warn(`${'='.repeat(80)}`);
+  console.warn(`SEC submissions API returned no CUSIPs for ${ticker} (CIK: ${cik})`);
+
+  if (!process.env.SEC_API_KEY) {
+    console.warn(`sec-api.io not configured (SEC_API_KEY not set)`);
+    console.warn(``);
+    console.warn(`💡 TIP: Get a sec-api.io API key for reliable CUSIP resolution:`);
+    console.warn(`   https://sec-api.io/`);
+  } else {
+    console.warn(`sec-api.io lookup failed (no mapping found or API error)`);
   }
 
-  // 4. All automatic methods failed - throw clear error
-  throw new Error(
-    `Failed to resolve CUSIP for ${ticker} (CIK ${cik}) from all sources. ` +
-    `Tried: (1) SEC submissions API, (2) OpenFIGI API, (3) SEC filings parsing. ` +
-    `Manual intervention required. See scripts/fix-${ticker.toLowerCase()}-cusip.sql for template.`
-  );
+  console.warn(``);
+  console.warn(`This is common for single-class stocks like AAPL, MSFT, GOOGL, etc.`);
+  console.warn(``);
+  console.warn(`FALLING BACK TO TICKER SYMBOL: "${ticker}"`);
+  console.warn(``);
+  console.warn(`⚠️  IMPACT:`);
+  console.warn(`   - ETF holdings queries will likely fail (require 9-char CUSIPs)`);
+  console.warn(`   - FINRA short interest data will fail (require 9-char CUSIPs)`);
+  console.warn(`   - Some 13F institutional holdings may fail`);
+  console.warn(``);
+  console.warn(`🔧 MANUAL FIX REQUIRED:`);
+  console.warn(`   1. Find real CUSIP from SEC EDGAR, Bloomberg, or company IR`);
+  console.warn(`   2. Run: psql $DATABASE_URL -f scripts/fix-${ticker.toLowerCase()}-cusip.sql`);
+  console.warn(`   3. Update the SQL script with the real CUSIP`);
+  console.warn(`   4. Re-run this workflow to collect data with correct CUSIP`);
+  console.warn(``);
+  console.warn(`📊 VALIDATE WITH QA TOOL:`);
+  console.warn(`   temporal workflow start \\`);
+  console.warn(`     --namespace ird \\`);
+  console.warn(`     --task-queue rotation-detector \\`);
+  console.warn(`     --type qaReportWorkflow \\`);
+  console.warn(`     --input '{"ticker": "${ticker}", "from": "2024-01-01", "to": "2024-03-31"}'`);
+  console.warn(`${'='.repeat(80)}\n`);
+
+  // Return ticker fallback (clearly marked as low confidence)
+  return {
+    cusips: [ticker],
+    source: 'manual',
+    confidence: 'low',
+    metadata: {
+      warning: 'Ticker symbol used as CUSIP fallback - manual intervention required',
+    },
+  };
 }
 
 /**
