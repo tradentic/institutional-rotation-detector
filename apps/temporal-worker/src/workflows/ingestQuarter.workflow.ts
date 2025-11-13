@@ -8,8 +8,8 @@ const activities = proxyActivities<{
   parse13G13D: (accessions: any[]) => Promise<number>;
   fetchMonthly: (cik: string, months: { month: string }[]) => Promise<number>;
   fetchDailyHoldings: (cusips: string[], funds: string[], cik?: string) => Promise<number>;
-  fetchShortInterest: (cik: string, settleDates: string[]) => Promise<number>;
-  fetchATSWeekly: (cik: string, weeks: string[]) => Promise<number>;
+  fetchShortInterest: (cik: string, dateRange: { start: string; end: string }) => Promise<number>;
+  fetchATSWeekly: (cik: string, dateRange: { start: string; end: string }) => Promise<number>;
 }>(
   {
     startToCloseTimeout: '5 minutes',
@@ -29,36 +29,6 @@ export interface IngestQuarterInput {
 }
 
 /**
- * Generate FINRA settlement dates (15th and month-end) between from and to dates
- */
-function generateSettlementDates(from: string, to: string): string[] {
-  const start = new Date(from);
-  const end = new Date(to);
-  const settlements: string[] = [];
-
-  let current = new Date(start.getFullYear(), start.getMonth(), 1);
-
-  while (current <= end) {
-    // Mid-month (15th)
-    const midMonth = new Date(current.getFullYear(), current.getMonth(), 15);
-    if (midMonth >= start && midMonth <= end) {
-      settlements.push(midMonth.toISOString().slice(0, 10));
-    }
-
-    // Month-end
-    const monthEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0);
-    if (monthEnd >= start && monthEnd <= end) {
-      settlements.push(monthEnd.toISOString().slice(0, 10));
-    }
-
-    // Move to next month
-    current.setMonth(current.getMonth() + 1);
-  }
-
-  return settlements;
-}
-
-/**
  * Generate all months (YYYY-MM) between from and to dates
  */
 function generateMonths(from: string, to: string): Array<{ month: string }> {
@@ -74,30 +44,6 @@ function generateMonths(from: string, to: string): Array<{ month: string }> {
   }
 
   return months;
-}
-
-/**
- * Generate all week-ending Fridays between from and to dates
- * FINRA ATS data is published weekly for week-ending dates
- */
-function generateWeekEndingDates(from: string, to: string): string[] {
-  const start = new Date(from);
-  const end = new Date(to);
-  const weeks: string[] = [];
-
-  // Find first Friday on or after start date
-  let current = new Date(start);
-  const dayOfWeek = current.getDay();
-  const daysUntilFriday = (5 - dayOfWeek + 7) % 7;
-  current.setDate(current.getDate() + daysUntilFriday);
-
-  // Generate all Fridays until end date
-  while (current <= end) {
-    weeks.push(current.toISOString().slice(0, 10));
-    current.setDate(current.getDate() + 7); // Next Friday
-  }
-
-  return weeks;
 }
 
 
@@ -156,13 +102,11 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
 
   await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? [...DEFAULT_ETF_UNIVERSE], input.cik);
 
-  // Generate all FINRA settlement dates (15th and month-end) for the quarter
-  const settlementDates = generateSettlementDates(bounds.start, bounds.end);
-  await activities.fetchShortInterest(input.cik, settlementDates);
+  // Fetch FINRA short interest for entire quarter (activity will filter by settlement dates)
+  await activities.fetchShortInterest(input.cik, { start: bounds.start, end: bounds.end });
 
-  // Generate all week-ending Fridays for FINRA ATS data
-  const weekEndingDates = generateWeekEndingDates(bounds.start, bounds.end);
-  await activities.fetchATSWeekly(input.cik, weekEndingDates);
+  // Fetch FINRA ATS data for entire quarter (activity will filter by week-ending dates)
+  await activities.fetchATSWeekly(input.cik, { start: bounds.start, end: bounds.end });
 
   const child = await startChild('rotationDetectWorkflow', {
     args: [
