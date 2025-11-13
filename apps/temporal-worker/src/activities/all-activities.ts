@@ -8,6 +8,9 @@
 // Core rotation detection activities
 export * from './compute.activities';
 
+// CUSIP resolution with self-healing fallback
+export * from './cusip-resolution.activities';
+
 // SEC EDGAR filing activities
 export * from './edgar.activities';
 

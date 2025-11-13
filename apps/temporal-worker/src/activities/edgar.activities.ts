@@ -4,6 +4,7 @@ import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
 import type { FilingCadence, FilingRecord } from '../lib/schema';
 import { upsertEntity, upsertCusipMapping } from './entity-utils';
+import { getCusipForTicker } from './cusip-resolution.activities';
 
 const tickerSearchSchema = z.record(
   z.string(),
@@ -174,25 +175,9 @@ export async function resolveCIK(ticker: string) {
   const normalizedCusips = normalizeCusips(cusipValues);
   console.log(`[resolveCIK] Normalized ${normalizedCusips.length} CUSIPs from securities`);
 
-  let cusipsToReturn: string[];
-  if (normalizedCusips.length > 0) {
-    console.log(`[resolveCIK] Returning CUSIPs for ${ticker}:`, normalizedCusips);
-    cusipsToReturn = normalizedCusips;
-  } else {
-    // Fallback 1: Try tickers from securities array
-    const securitiesTickers = Array.from(
-      new Set(
-        securities
-          .map((sec) => sec.ticker?.toUpperCase())
-          .filter((value): value is string => Boolean(value))
-      )
-    );
-
-    // Fallback 2: Use top-level tickers if securities tickers are empty
-    const fallbackTickers = securitiesTickers.length > 0 ? securitiesTickers : topLevelTickers;
-    console.log(`[resolveCIK] No CUSIPs found, falling back to ${fallbackTickers.length} ticker symbols for ${ticker}:`, fallbackTickers);
-    cusipsToReturn = fallbackTickers;
-  }
+  // Self-healing CUSIP resolution with automatic fallback to OpenFIGI and SEC filings
+  // This replaces the old ticker symbol fallback which caused silent data collection failures
+  const cusipsToReturn = await getCusipForTicker(ticker, cik, normalizedCusips);
 
   // Ensure entity and CUSIP mappings are created immediately
   await upsertEntity(cik, 'issuer');
