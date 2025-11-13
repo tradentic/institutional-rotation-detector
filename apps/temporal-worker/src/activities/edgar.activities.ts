@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
 import type { FilingCadence, FilingRecord } from '../lib/schema';
-import { upsertEntity } from './entity-utils';
+import { upsertEntity, upsertCusipMapping } from './entity-utils';
 
 const tickerSearchSchema = z.record(
   z.string(),
@@ -174,24 +174,31 @@ export async function resolveCIK(ticker: string) {
   const normalizedCusips = normalizeCusips(cusipValues);
   console.log(`[resolveCIK] Normalized ${normalizedCusips.length} CUSIPs from securities`);
 
+  let cusipsToReturn: string[];
   if (normalizedCusips.length > 0) {
     console.log(`[resolveCIK] Returning CUSIPs for ${ticker}:`, normalizedCusips);
-    return { cik, cusips: normalizedCusips };
+    cusipsToReturn = normalizedCusips;
+  } else {
+    // Fallback 1: Try tickers from securities array
+    const securitiesTickers = Array.from(
+      new Set(
+        securities
+          .map((sec) => sec.ticker?.toUpperCase())
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+
+    // Fallback 2: Use top-level tickers if securities tickers are empty
+    const fallbackTickers = securitiesTickers.length > 0 ? securitiesTickers : topLevelTickers;
+    console.log(`[resolveCIK] No CUSIPs found, falling back to ${fallbackTickers.length} ticker symbols for ${ticker}:`, fallbackTickers);
+    cusipsToReturn = fallbackTickers;
   }
 
-  // Fallback 1: Try tickers from securities array
-  const securitiesTickers = Array.from(
-    new Set(
-      securities
-        .map((sec) => sec.ticker?.toUpperCase())
-        .filter((value): value is string => Boolean(value))
-    )
-  );
+  // Ensure entity and CUSIP mappings are created immediately
+  await upsertEntity(cik, 'issuer');
+  await upsertCusipMapping(cik, cusipsToReturn);
 
-  // Fallback 2: Use top-level tickers if securities tickers are empty
-  const fallbackTickers = securitiesTickers.length > 0 ? securitiesTickers : topLevelTickers;
-  console.log(`[resolveCIK] No CUSIPs found, falling back to ${fallbackTickers.length} ticker symbols for ${ticker}:`, fallbackTickers);
-  return { cik, cusips: fallbackTickers };
+  return { cik, cusips: cusipsToReturn };
 }
 
 const filingSchema = z.object({
