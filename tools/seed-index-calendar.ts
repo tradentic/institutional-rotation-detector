@@ -46,8 +46,17 @@ async function main() {
       });
     }
   }
-  await supabase.from('index_windows').upsert(entries);
-  console.log(`Seeded ${entries.length} windows`);
+  const { error } = await supabase
+    .from('index_windows')
+    .upsert(entries, {
+      ignoreDuplicates: true,
+    });
+
+  if (error) {
+    throw new Error(`Failed to seed index windows: ${error.message}`);
+  }
+
+  console.log(`✓ Successfully seeded ${entries.length} index windows`);
 }
 
 main().catch((err) => {

@@ -34,9 +34,14 @@ async function main() {
 
   console.log(`Seeding ${managers.length} fund managers...`);
 
+  // Insert managers, ignoring conflicts (they already exist)
+  // Note: Can't use onConflict with new constraint that uses coalesce()
   const { data, error } = await supabase
     .from('entities')
-    .upsert(managers, { onConflict: 'cik,kind' });
+    .upsert(managers, {
+      ignoreDuplicates: true,
+      // Managers have series_id = null, so unique constraint is (cik, '', kind)
+    });
 
   if (error) {
     throw new Error(`Failed to seed fund managers: ${error.message}`);
