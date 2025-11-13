@@ -149,10 +149,10 @@ temporal workflow start \
   --namespace ird \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily"}'
+  --input '{"ticker":"AAPL","from":"2024-01-01","to":"2024-03-31","runKind":"daily","minPct":5}'
 
 # Or via API (if API server is running)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily"
+curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-03-31&runKind=daily"
 
 # Query rotation events
 curl "http://localhost:3000/api/events?ticker=AAPL"

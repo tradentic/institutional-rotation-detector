@@ -310,7 +310,7 @@ Using the API (if running API server):
 
 ```bash
 # Start a small test run (single quarter)
-curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024Q1&to=2024Q1&runKind=daily&min_pct=5"
+curl -X POST "http://localhost:3000/api/run?ticker=AAPL&from=2024-01-01&to=2024-03-31&runKind=daily&min_pct=5"
 ```
 
 Or trigger directly via Temporal CLI:
@@ -321,7 +321,7 @@ temporal workflow start \
   --task-queue rotation-detector \
   --type ingestIssuerWorkflow \
   --workflow-id test-run-$(date +%s) \
-  --input '{"ticker":"AAPL","from":"2024Q1","to":"2024Q1","runKind":"daily","minPct":5}'
+  --input '{"ticker":"AAPL","from":"2024-01-01","to":"2024-03-31","runKind":"daily","minPct":5}'
 ```
 
 ### Monitor Workflow Execution

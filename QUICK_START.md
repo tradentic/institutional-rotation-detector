@@ -175,8 +175,8 @@ temporal workflow start \
   --type ingestIssuerWorkflow \
   --input '{
     "ticker": "AAPL",
-    "from": "2024Q1",
-    "to": "2024Q1",
+    "from": "2024-01-01",
+    "to": "2024-03-31",
     "runKind": "daily",
     "minPct": 5
   }'
