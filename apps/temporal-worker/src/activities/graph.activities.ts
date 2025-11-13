@@ -191,7 +191,7 @@ export async function resolveIssuerNode(input: ResolveIssuerNodeInput): Promise<
         const tickerData = tickerSearchSchema.parse(searchJson);
 
         const match = Object.values(tickerData).find(
-          (entry) => entry.ticker.toUpperCase() === input.ticker.toUpperCase()
+          (entry) => entry.ticker.toUpperCase() === input.ticker?.toUpperCase()
         );
 
         if (match) {
