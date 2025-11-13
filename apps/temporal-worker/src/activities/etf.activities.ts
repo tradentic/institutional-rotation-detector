@@ -8,7 +8,12 @@ const ISHARES_COMPONENT_ID = '1467271812596';
 
 // Known iShares ETF configurations for self-healing
 // Format: { ticker: { productId, slug } }
+//
+// Note: Only iShares ETFs are supported for daily holdings fetching via their public API.
+// Other ETF families (Vanguard, SPDR, etc.) don't provide similar public APIs with productId/slug structure.
+// For non-iShares ETFs, holdings data can still be obtained via N-PORT monthly filings.
 const KNOWN_ISHARES_ETFS: Record<string, IsharesConfig> = {
+  // Russell Index ETFs
   'IWM': { productId: '239710', slug: 'iwm-ishares-russell-2000-etf' },
   'IWB': { productId: '239707', slug: 'iwb-ishares-russell-1000-etf' },
   'IWN': { productId: '239714', slug: 'iwn-ishares-russell-2000-value-etf' },
@@ -16,9 +21,24 @@ const KNOWN_ISHARES_ETFS: Record<string, IsharesConfig> = {
   'IWD': { productId: '239706', slug: 'iwd-ishares-russell-1000-value-etf' },
   'IWF': { productId: '239705', slug: 'iwf-ishares-russell-1000-growth-etf' },
   'IWO': { productId: '239713', slug: 'iwo-ishares-russell-2000-growth-etf' },
-  'IJH': { productId: '239763', slug: 'ijh-ishares-core-sp-mid-cap-etf' },
-  'IJR': { productId: '239774', slug: 'ijr-ishares-core-sp-small-cap-etf' },
+  'IWP': { productId: '239717', slug: 'ishares-russell-midcap-growth-etf' },
+
+  // S&P Index ETFs
   'IVV': { productId: '239726', slug: 'ivv-ishares-core-sp-500-etf' },
+  'IVW': { productId: '239725', slug: 'ishares-sp-500-growth-etf' },
+  'IJH': { productId: '239763', slug: 'ijh-ishares-core-sp-mid-cap-etf' },
+  'IJK': { productId: '239762', slug: 'ishares-sp-midcap-400-growth-etf' },
+  'IJJ': { productId: '239764', slug: 'ishares-sp-midcap-400-value-etf' },
+  'IJR': { productId: '239774', slug: 'ijr-ishares-core-sp-small-cap-etf' },
+  'IJS': { productId: '239775', slug: 'ishares-sp-smallcap-600-value-etf' },
+
+  // International Equity ETFs
+  'EFA': { productId: '239623', slug: 'ishares-msci-eafe-etf' },
+  'EEM': { productId: '239637', slug: 'ishares-msci-emerging-markets-etf' },
+
+  // Fixed Income ETFs
+  'AGG': { productId: '239458', slug: 'ishares-core-total-us-bond-market-etf' },
+  'LQD': { productId: '239566', slug: 'ishares-iboxx-investment-grade-corporate-bond-etf' },
 };
 
 const tickerSearchSchema = z.record(
