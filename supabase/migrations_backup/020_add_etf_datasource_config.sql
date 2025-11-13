@@ -4,6 +4,9 @@
 alter table entities add column datasource_type text;
 alter table entities add column datasource_config jsonb;
 
+-- Set default datasource_type for existing ETFs
+update entities set datasource_type = 'ishares' where kind = 'etf' and datasource_type is null;
+
 -- Add check constraint to ensure only ETFs have datasource config
 alter table entities add constraint etf_datasource_check
   check (
