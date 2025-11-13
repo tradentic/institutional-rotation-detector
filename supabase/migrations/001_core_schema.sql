@@ -19,11 +19,14 @@ create table entities (
   name text not null,
   kind text check (kind in ('issuer','manager','fund','etf')) not null,
   ticker text, -- For issuers and ETFs
-  series_id uuid, -- For ETFs (multiple share classes)
+  series_id text, -- SEC series ID for ETFs/funds (format: S000012345)
   datasource_type text, -- ETF data source (e.g., 'ishares', 'vanguard')
-  datasource_config jsonb, -- Vendor-specific config for ETF scraping
-  unique(cik, kind)
+  datasource_config jsonb -- Vendor-specific config for ETF scraping
 );
+
+-- Unique constraint: allows multiple ETFs/funds with same CIK but different series_id
+create unique index entities_unique_identifier_kind
+  on entities (cik, coalesce(series_id, ''), kind);
 
 -- Check constraint: only ETFs can have datasource config
 alter table entities add constraint etf_datasource_check
@@ -32,9 +35,16 @@ alter table entities add constraint etf_datasource_check
     (kind != 'etf' and datasource_type is null and datasource_config is null)
   );
 
-comment on table entities is 'Institutional investors, issuers, funds, and ETFs';
+-- Check constraint: validate series_id format (S000000000)
+alter table entities add constraint check_series_id_format
+  check (
+    series_id is null or
+    series_id ~ '^S[0-9]{9}$'
+  );
+
+comment on table entities is 'Entities table supporting issuers, managers, ETFs, and mutual funds. For ETFs/funds, cik identifies the parent trust and series_id identifies the specific fund series.';
 comment on column entities.ticker is 'Stock ticker for issuers and ETFs';
-comment on column entities.series_id is 'Series identifier for ETF share classes';
+comment on column entities.series_id is 'SEC series identifier for ETFs and mutual funds (format: S000012345). NULL for issuers and managers. Required for fund-specific SEC EDGAR queries.';
 comment on column entities.datasource_type is 'ETF data source provider (e.g., ishares, vanguard)';
 comment on column entities.datasource_config is 'Vendor-specific configuration for fetching ETF holdings';
 

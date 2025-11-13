@@ -55,6 +55,9 @@ create unique index if not exists idx_entities_ticker_kind
 create index if not exists idx_entities_series_id
   on entities(series_id)
   where series_id is not null;
+create index if not exists idx_entities_datasource
+  on entities(datasource_type)
+  where datasource_type is not null;
 
 -- Short Interest
 create index if not exists idx_short_interest_cik_date
@@ -155,6 +158,9 @@ create index if not exists micro_offex_ratio_daily_approx_idx
 -- Flip50 Events
 create index if not exists micro_flip50_events_sym_flip_desc_idx
   on micro_flip50_events(symbol, flip_date desc);
+create index if not exists micro_flip50_event_studies_pending_idx
+  on micro_flip50_event_studies(flip50_id)
+  where study_status = 'pending';
 
 -- Short Interest Points
 create index if not exists micro_short_interest_points_sym_date_desc_idx

@@ -16,9 +16,11 @@ create table micro_offex_venue_weekly (
   total_trades numeric,
   finra_file_id text,
   finra_sha256 text,
-  created_at timestamptz default now(),
-  unique (symbol, week_end, source, coalesce(venue_id, '-'))
+  created_at timestamptz default now()
 );
+
+create unique index micro_offex_venue_weekly_unique_idx
+  on micro_offex_venue_weekly(symbol, week_end, source, coalesce(venue_id, '-'));
 
 -- FINRA OTC symbol-level weekly aggregate
 create table micro_offex_symbol_weekly (
@@ -89,6 +91,25 @@ create table micro_flip50_events (
 );
 
 comment on table micro_flip50_events is 'Detects when off-exchange % drops below 50% after sustained high period';
+
+-- Flip50 event studies (links to rotation events)
+create table micro_flip50_event_studies (
+  flip50_id bigint not null references micro_flip50_events(id) on delete cascade,
+  rotation_event_id bigint,
+  study_status text default 'pending',
+  car_m5_p20 numeric,
+  max_ret_w13 numeric,
+  t_to_plus20_days int,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  primary key (flip50_id)
+);
+
+create index micro_flip50_event_studies_status_idx
+  on micro_flip50_event_studies(study_status);
+
+comment on table micro_flip50_event_studies is
+  'Event-study results for Flip50 events (links to rotation_events or standalone)';
 
 -- Short interest points (semi-monthly FINRA)
 create table micro_short_interest_points (
