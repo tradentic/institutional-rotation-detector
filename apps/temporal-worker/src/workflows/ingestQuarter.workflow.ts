@@ -58,6 +58,48 @@ function generateSettlementDates(from: string, to: string): string[] {
   return settlements;
 }
 
+/**
+ * Generate all months (YYYY-MM) between from and to dates
+ */
+function generateMonths(from: string, to: string): Array<{ month: string }> {
+  const start = new Date(from);
+  const end = new Date(to);
+  const months: Array<{ month: string }> = [];
+
+  let current = new Date(start.getFullYear(), start.getMonth(), 1);
+
+  while (current <= end) {
+    months.push({ month: current.toISOString().slice(0, 7) });
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  return months;
+}
+
+/**
+ * Generate all week-ending Fridays between from and to dates
+ * FINRA ATS data is published weekly for week-ending dates
+ */
+function generateWeekEndingDates(from: string, to: string): string[] {
+  const start = new Date(from);
+  const end = new Date(to);
+  const weeks: string[] = [];
+
+  // Find first Friday on or after start date
+  let current = new Date(start);
+  const dayOfWeek = current.getDay();
+  const daysUntilFriday = (5 - dayOfWeek + 7) % 7;
+  current.setDate(current.getDate() + daysUntilFriday);
+
+  // Generate all Fridays until end date
+  while (current <= end) {
+    weeks.push(current.toISOString().slice(0, 10));
+    current.setDate(current.getDate() + 7); // Next Friday
+  }
+
+  return weeks;
+}
+
 
 export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   const bounds = {
@@ -103,8 +145,8 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   // CUSIP mappings are now auto-populated by activities via upsertCusipMapping()
   // Each activity (fetchShortInterest, fetchATSWeekly, computeDumpContext) handles this internally
 
-  const derivedBounds = quarterBounds(input.quarter);
-  const months = [derivedBounds.start.slice(0, 7), derivedBounds.end.slice(0, 7)].map((month) => ({ month }));
+  // Generate all months in the quarter for N-PORT holdings
+  const months = generateMonths(bounds.start, bounds.end);
 
   // Only fetch N-PORT monthly holdings for funds (not for issuers)
   // Funds file N-PORT, issuers don't
@@ -118,7 +160,9 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   const settlementDates = generateSettlementDates(bounds.start, bounds.end);
   await activities.fetchShortInterest(input.cik, settlementDates);
 
-  await activities.fetchATSWeekly(input.cik, [bounds.end]);
+  // Generate all week-ending Fridays for FINRA ATS data
+  const weekEndingDates = generateWeekEndingDates(bounds.start, bounds.end);
+  await activities.fetchATSWeekly(input.cik, weekEndingDates);
 
   const child = await startChild('rotationDetectWorkflow', {
     args: [
