@@ -57,17 +57,22 @@ export interface EnsureEntityResult {
  */
 export async function ensureEntity(
   cik: string,
-  preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf'
+  preferredKind?: 'fund' | 'manager' | 'issuer' | 'etf',
+  seriesId?: string // Problem 9: Support series_id for funds/ETFs
 ): Promise<EnsureEntityResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
   // Check if entity already exists
-  const { data: existing, error: selectError } = await supabase
-    .from('entities')
-    .select('entity_id,kind')
-    .eq('cik', normalizedCik)
-    .maybeSingle();
+  // For funds/ETFs with series_id, match on both cik and series_id
+  // For others, match on cik only
+  let query = supabase.from('entities').select('entity_id,kind').eq('cik', normalizedCik);
+
+  if (seriesId && (preferredKind === 'fund' || preferredKind === 'etf')) {
+    query = query.eq('series_id', seriesId);
+  }
+
+  const { data: existing, error: selectError } = await query.maybeSingle();
 
   if (selectError) {
     throw new Error(`Failed to check for existing entity: ${selectError.message}`);
@@ -113,16 +118,22 @@ export async function ensureEntity(
     }
   }
 
-  console.log(`[ensureEntity] Creating ${kind} entity for CIK ${normalizedCik}: ${entityName}`);
+  console.log(`[ensureEntity] Creating ${kind} entity for CIK ${normalizedCik}${seriesId ? ` (series_id: ${seriesId})` : ''}: ${entityName}`);
 
-  // Create entity
+  // Create entity with series_id if provided (Problem 9)
+  const entityData: any = {
+    cik: normalizedCik,
+    name: entityName,
+    kind,
+  };
+
+  if (seriesId && (kind === 'fund' || kind === 'etf')) {
+    entityData.series_id = seriesId;
+  }
+
   const { data: newEntity, error: insertError } = await supabase
     .from('entities')
-    .insert({
-      cik: normalizedCik,
-      name: entityName,
-      kind,
-    })
+    .insert(entityData)
     .select('entity_id')
     .single();
 

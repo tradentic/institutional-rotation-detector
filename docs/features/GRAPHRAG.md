@@ -32,51 +32,82 @@ Both components work together but serve distinct purposes and can be used indepe
 
 ## Two-Part Architecture
 
-### Part 1: Graph Algorithms (No LLM Required)
+The graph analysis system uses a **layered architecture** that clearly separates algorithmic operations from AI enhancement:
+
+### Layer 1: Core Graph Construction (Pure Algorithms - No AI)
+
+**Purpose:** Deterministic graph operations that structure institutional flow data
+
+**Workflows:**
+- `graphBuildWorkflow` - 100% deterministic, constructs knowledge graph from rotation edges
+- Louvain community detection algorithm
+- PageRank node importance scoring
+- K-hop graph traversal
+- Path finding and relationship discovery
 
 **Files:** `apps/temporal-worker/src/activities/graphrag.activities.ts`
 
-**Operations:**
-- **Community Detection** - Louvain algorithm identifies clusters
-- **PageRank** - Ranks node importance
-- **K-Hop Neighborhood** - Traverses graph relationships
-- **Path Finding** - Discovers connections between entities
-
 **Storage:** `graph_nodes`, `graph_edges`, `graph_communities` tables
 
-**Benefits:**
-- **Fast** - Pure algorithmic, no API calls
-- **Deterministic** - Same input → same output
-- **Scalable** - Handles millions of nodes/edges
-- **Cost-effective** - No per-query costs
+**Characteristics:**
+- **100% Algorithmic** - Zero AI/LLM usage
+- **Fast** - Pure computation, no API calls
+- **Deterministic** - Same input → same output, always
+- **Scalable** - Handles millions of nodes/edges efficiently
+- **Cost-effective** - Zero per-query costs
+- **Real-time** - Millisecond response times
 
-### Part 2: Long Context Synthesis (LLM-Powered)
+**Use Cases:**
+- Network analysis and visualization
+- Community detection
+- Relationship mapping
+- Graph database queries
+- Performance-critical operations
 
-**Files:** `apps/temporal-worker/src/activities/longcontext.activities.ts`
+### Layer 2: Intelligence Enhancement (Selective AI)
 
-**Operations:**
-- **Context Bundling** - Combines graph edges with filing text chunks
-- **Synthesis** - Uses OpenAI's 128K context window to generate explanations
-- **Question Answering** - Responds to natural language queries
+**Purpose:** Add natural language understanding and synthesis where valuable
 
-**Storage:** `graph_explanations` table, `filing_chunks` table (with embeddings)
+**Workflows:**
+- `graphSummarizeWorkflow` - Uses GPT-5-mini for community descriptions (~500 tokens per community)
+- `graphQueryWorkflow` - Uses GPT-5 for long-context synthesis (up to 200K tokens)
 
-**Benefits:**
-- **Natural language** - Human-readable explanations
-- **Contextual** - Combines structured (graph) + unstructured (text) data
-- **Flexible** - Adapts to different question types
-- **Evidence-based** - Cites specific filings and edges
+**Files:** `apps/temporal-worker/src/activities/longcontext.activities.ts`, `apps/temporal-worker/src/activities/filing-chunks.activities.ts`
 
-**When to Use Each:**
-- **Graph algorithms alone**: Fast queries, visualizations, network analysis
-- **Long context synthesis**: Explanations, summaries, question answering
-- **Both together**: `graphQueryWorkflow` - find relevant data via graph, explain via LLM
+**Storage:** `graph_explanations` table, `filing_chunks` table (text only, no embeddings)
 
-**Benefits:**
-- **Explainable**: Visual graph shows relationships
-- **Contextual**: AI has structured data to reason about
-- **Scalable**: Graph algorithms handle millions of relationships
-- **Queryable**: Complex patterns discoverable via graph traversal
+**Characteristics:**
+- **Selective AI** - Only 2-5% of graph operations use AI
+- **Cost-optimized** - AI used only where human-readable output needed
+- **Context-aware** - Combines structured graph data with unstructured filing text
+- **Evidence-based** - All AI outputs cite specific filings and graph edges
+- **No Vector Search** - Uses long context windows (128K-200K) instead of embeddings
+
+**Use Cases:**
+- Natural language explanations of graph patterns
+- Community summaries for investor audiences
+- Question answering about institutional flows
+- Narrative synthesis with filing citations
+
+**Cost Profile:**
+- Graph algorithms: $0/query (pure computation)
+- AI summaries: ~$0.0003/community (GPT-5-mini)
+- Long-context synthesis: ~$0.001-0.002/query (GPT-5)
+
+**When to Use Each Layer:**
+
+| Task | Layer | Rationale |
+|------|-------|-----------|
+| Find connected entities | Layer 1 | Fast algorithmic traversal |
+| Visualize rotation flows | Layer 1 | Pure graph rendering |
+| Detect communities | Layer 1 | Louvain algorithm is deterministic |
+| Explain rotation patterns | Layer 2 | Natural language needed |
+| Answer "why" questions | Layer 2 | Requires synthesis and reasoning |
+| Generate investor summaries | Layer 2 | Human-readable narratives |
+
+**Hybrid Usage:**
+- **`graphQueryWorkflow`**: Layer 1 finds relevant data → Layer 2 explains it
+- **`graphSummarizeWorkflow`**: Layer 1 detects communities → Layer 2 describes them
 
 ---
 
@@ -115,11 +146,11 @@ Both components work together but serve distinct purposes and can be used indepe
 
 ---
 
-## Part 1: Graph Algorithms
+## Part 1: Graph Algorithms (Layer 1 - Pure Algorithms)
 
 This section covers the **pure algorithmic** operations that structure institutional flow data into a queryable knowledge graph.
 
-**No LLM required** - these operations are deterministic and fast.
+**100% Algorithmic, Zero AI** - These operations are deterministic, fast, and require no LLM or AI models. They form the foundation of the graph analysis system.
 
 ### Graph Construction
 
@@ -536,11 +567,11 @@ SELECT * FROM subgraph;
 
 ---
 
-## Part 2: Long Context Synthesis
+## Part 2: Long Context Synthesis (Layer 2 - Selective AI)
 
 This section covers the **LLM-powered** synthesis operations that generate natural language explanations from graph data + filing text.
 
-**Uses OpenAI GPT-5 Responses API** with 200K+ context window.
+**Selective AI Enhancement** - Uses OpenAI GPT-5 Responses API with 200K+ context window. Only applied where natural language output adds value (2-5% of operations).
 
 **Important:** This approach does **NOT use vector embeddings or semantic search**. Instead, it relies on:
 - Graph structure to identify relevant documents
