@@ -146,25 +146,178 @@ If the dump’s **date_of_event** (13D/13G) lies within the **final 5 business d
 
 ---
 
-## 8) Overlaps & deconfliction
+## 8) AI-powered rotation analysis (v5.1 enhancement)
+
+After computing the algorithmic R-score, the system performs **AI-powered analysis** using GPT-5 with Chain of Thought reasoning to transform raw scores into actionable trading intelligence.
+
+### 8.1 Purpose & innovation
+
+**The "10x Value" Feature:**
+- Transforms formula-based scores into narrative explanations
+- Detects anomalies beyond algorithmic thresholds
+- Provides trading implications with confidence levels
+- Cites specific filing accessions as evidence
+- Uses Chain of Thought (CoT) for 60-80% token savings
+
+**Why this matters:**
+- Algorithmic scores tell you "what" (R-score magnitude)
+- AI analysis tells you "why" and "what to do"
+- Bridges the gap from signals to trading decisions
+
+### 8.2 Analysis process (4-turn CoT)
+
+The analysis uses a **multi-turn Chain of Thought session** where each turn builds on previous reasoning without re-processing context:
+
+**Turn 1: Signal Quality Assessment**
+- Inputs: All rotation signals (dumpZ, uptake, UHF, options, short relief, index penalty, R-score)
+- Outputs: Signal strength assessment, confidence level (0-1 scale)
+- Key question: "Is this genuine rotation or noise?"
+
+**Turn 2: Anomaly Detection**
+- Inputs: Provenance data (filing accessions), rotation edges, signal assessment from Turn 1
+- Outputs: Anomaly score (0-10 scale), red flags
+- Checks for:
+  - **Timing anomalies**: Coordinated filings, end-of-window dumps
+  - **Magnitude anomalies**: Unrealistic position changes, extreme Z-scores (>5)
+  - **Participant anomalies**: Unusual institutional behavior
+  - **Data quality issues**: Missing filings, sparse edges (<3)
+
+**Turn 3: Narrative Generation**
+- Inputs: All previous analysis + issuer information
+- Outputs: 2-3 paragraph narrative with filing citations
+- Format:
+  - Paragraph 1: What happened (who sold, who bought, when, magnitude)
+  - Paragraph 2: Why this is a rotation signal (evidence, confidence)
+  - Cites filing accessions: `[0001234567-24-000123]`
+
+**Turn 4: Trading Implications**
+- Inputs: Complete analysis from all previous turns
+- Outputs: Actionable guidance (3-4 bullet points)
+- Provides:
+  - Expected price movement direction
+  - Timeline for impact (days/weeks)
+  - Risk level (Low/Medium/High)
+  - Recommended action: Monitor, Consider trade, Ignore
+
+### 8.3 Anomaly scoring
+
+**Scale:** 0-10
+
+| Score | Interpretation | Action |
+|-------|----------------|--------|
+| 0-3 | Normal rotation pattern | Proceed with confidence |
+| 4-6 | Mildly unusual but likely valid | Review manually |
+| 7-8 | Suspicious, needs investigation | Flag for review |
+| 9-10 | Likely false positive or data error | Reject or investigate data quality |
+
+### 8.4 Suspicion flags
+
+Automatically generated based on analysis:
+
+| Flag | Trigger Condition | Meaning |
+|------|------------------|---------|
+| `HIGH_ANOMALY` | Anomaly score ≥ 7 | Unusual pattern detected |
+| `EXTREME_DUMP` | dumpZ > 5 | Unrealistically large sell-off |
+| `INDEX_REBALANCE` | indexPenalty > 0.5 | Likely index-driven flow |
+| `LOW_CONFIDENCE` | AI confidence < 0.5 | Weak evidence for rotation |
+| `SPARSE_EDGES` | Edge count < 3 | Insufficient provenance data |
+
+### 8.5 Confidence calibration
+
+**AI Confidence** (0-1 scale) represents the model's assessment of rotation genuineness:
+
+- **0.8-1.0**: High confidence - strong evidence across multiple signals
+- **0.6-0.8**: Moderate confidence - some supporting signals, minor concerns
+- **0.4-0.6**: Low confidence - mixed signals, significant uncertainties
+- **0.0-0.4**: Very low confidence - likely noise or false positive
+
+**Calibration factors:**
+- Signal consistency (all pointing same direction = higher confidence)
+- Provenance completeness (more filings = higher confidence)
+- Magnitude reasonableness (extreme values = lower confidence)
+- Timing coherence (coordinated moves = context-dependent)
+
+### 8.6 Model configuration
+
+**GPT-5 Responses API:**
+- Model: `gpt-5` (full reasoning capability)
+- Reasoning effort: `medium` (balance quality vs. cost)
+- Verbosity: `low` (concise outputs)
+- Session type: `createAnalysisSession()` with CoT preservation
+
+**Token efficiency:**
+- Traditional approach: ~8,000 tokens (4 independent calls)
+- CoT approach: ~2,000-3,000 tokens (context preserved)
+- **Savings: 60-80%** without quality loss
+
+### 8.7 Persistence
+
+Analysis results are persisted to `rotation_events` table with these additional fields:
+
+```sql
+-- AI analysis fields (added in v5.1)
+anomaly_score NUMERIC,           -- 0-10 scale
+suspicion_flags TEXT[],           -- Array of flag strings
+ai_narrative TEXT,                -- Full narrative with trading implications
+trading_implications TEXT,        -- Extracted actionable guidance
+ai_confidence NUMERIC             -- 0-1 scale
+```
+
+### 8.8 Example output
+
+**Algorithmic Inputs:**
+```
+DumpZ: 3.2
+U_same: 0.45, U_next: 0.32
+R-score: 8.5
+```
+
+**AI Analysis Output:**
+```
+Anomaly Score: 2.5/10
+Confidence: 0.82
+Suspicion Flags: []
+
+Narrative:
+"Between Q1 and Q2 2024, Vanguard reduced its AAPL position by 15M shares
+(1.2% of float), documented in filing [0001548474-24-003567]. This was
+absorbed by BlackRock (+8M shares) and Fidelity (+5M shares) per filings
+[0001086364-24-002341] and [0000315066-24-001892].
+
+The 3.2σ dump Z-score indicates this was an unusually large position
+reduction for Vanguard. Combined with strong same-quarter uptake (0.45)
+and no index rebalancing concerns (penalty: 0.05), this appears to be
+genuine institutional rotation with 82% confidence."
+
+Trading Implications:
+• Expected direction: Bullish (uptake absorbed dump)
+• Timeline: 2-4 weeks for price stabilization
+• Risk: Low (high confidence, multiple buyers)
+• Action: Consider long position with tight stops
+```
+
+---
+
+## 9) Overlaps & deconfliction
 - **Multiple anchors** in a quarter: score each seller separately; buyers may contribute to multiple anchors if temporally consistent.  
 - **Overlapping clusters** (13D/13G): merge filings within **±5bd** into one cluster; choose earliest public as anchor.  
 - **Amendments** (13F‑HR/A, 13D/13G‑A): update positions/event dates; maintain link `amendment_of_accession`.
 
 ---
 
-## 9) Data quality & NA handling
+## 10) Data quality & NA handling
 - Missing float → compute from latest available; if still missing, suppress `%float` features and mark **N/A**.  
 - Incoherent CUSIP/ticker mapping → skip affected rows, log for remediation.  
 - ETF daily gaps → forward‑fill up to **2 business days**; beyond that, exclude from `Uhf_*` for those days.
 
 ---
 
-## 10) Outputs & storage
+## 11) Outputs & storage
 Write one row per scored anchor to `rotation_event`:
-- Keys: `security_id`, `anchor_filing_id`, `window_same_d1/d2`, `window_next_d1/d2`, `eow_override`.  
-- Components: `dumpz`, `u_same`, `u_next`, `uhf_same`, `uhf_next`, `opt_same`, `opt_next`, `short_relief`, `index_penalty`, `r_score`.  
-- Outcomes: `car_m5_p20`, `t_to_plus20_days`, `max_ret_w13`.  
+- Keys: `security_id`, `anchor_filing_id`, `window_same_d1/d2`, `window_next_d1/d2`, `eow_override`.
+- Components: `dumpz`, `u_same`, `u_next`, `uhf_same`, `uhf_next`, `opt_same`, `opt_next`, `short_relief`, `index_penalty`, `r_score`.
+- Outcomes: `car_m5_p20`, `t_to_plus20_days`, `max_ret_w13`.
+- **AI Analysis (v5.1)**: `anomaly_score`, `suspicion_flags`, `ai_narrative`, `trading_implications`, `ai_confidence`.
 - Provenance: list of accession IDs (seller & buyers) persisted in a side table `rotation_event_provenance(event_id, accession_no, role)`.
 
 **GraphRAG**: emit nodes/edges per fact with `(relation, asof, weight)`; edges unique on `(src,dst,relation,asof)`.
@@ -173,17 +326,19 @@ Write one row per scored anchor to `rotation_event`:
 
 ---
 
-## 11) Scheduling & freshness
-- **Watchers**:  
-  - `edgarSubmissionsPoller` (per CIK) → near‑real‑time 13F/13D/13G arrivals.  
-  - `nportMonthlyTimer` → fetch at **M+60**.  
-  - `etfDailyCron` → business‑day EOD.  
-  - `finraShortPublish` → on FINRA publish dates.  
-- Stamp `filing.cadence`, `expected_publish_at`; expose `/api/due?date=` for “what should publish today”.
+## 12) Scheduling & freshness
+- **Watchers**:
+  - `edgarSubmissionsPoller` (per CIK) → near‑real‑time 13F/13D/13G arrivals.
+  - `nportMonthlyTimer` → fetch at **M+60**.
+  - `etfDailyCron` → business‑day EOD.
+  - `finraShortPublish` → on FINRA publish dates.
+  - `form4DailyCron` → daily at market close (Form 4 insider transactions).
+  - `unusualOptionsActivityCron` → daily EOD (unusual options activity detection).
+- Stamp `filing.cadence`, `expected_publish_at`; expose `/api/due?date=` for "what should publish today".
 
 ---
 
-## 12) Pseudocode
+## 13) Pseudocode
 ```pseudo
 for each security S in quarter Q:
   sellers = holders with Δshares% triggering dump rules
@@ -200,23 +355,31 @@ for each security S in quarter Q:
     if gates_pass(DumpZ, U_same, U_next, Uhf_*):
       R = weighted_sum(DumpZ, U_*, Uhf_*, Opt_*, ShortRelief, IndexPenalty)
       outcome = event_study(S, anchor)
-      persist_rotation_event(S, anchor, components, R, outcome, accessions)
+
+      # v5.1: AI-powered analysis
+      ai_analysis = analyze_rotation_event_with_gpt5(
+        cluster_id, issuer_cik,
+        signals={DumpZ, U_same, U_next, Uhf_*, Opt_*, ShortRelief, IndexPenalty, R}
+      )
+
+      persist_rotation_event(S, anchor, components, R, outcome, ai_analysis, accessions)
 ```
 
 ---
 
-## 13) Acceptance tests
-1) **EOW override** raises next‑window influence without changing same‑window terms.  
-2) **IndexPenalty** increases with overlap days and passive buyer share; capped at 0.5.  
-3) **Idempotence**: reprocessing Q yields no duplicate filings/positions/edges/events.  
-4) **Reuse**: manager‑first ingest enables issuer‑first analysis with zero refetch (accessions reused).  
-5) **Gates**: no score emitted when buyer sufficiency fails.  
-6) **Event study**: CAR matches fixture series within tolerance; regression uses pre‑window only (no look‑ahead).  
+## 14) Acceptance tests
+1) **EOW override** raises next‑window influence without changing same‑window terms.
+2) **IndexPenalty** increases with overlap days and passive buyer share; capped at 0.5.
+3) **Idempotence**: reprocessing Q yields no duplicate filings/positions/edges/events.
+4) **Reuse**: manager‑first ingest enables issuer‑first analysis with zero refetch (accessions reused).
+5) **Gates**: no score emitted when buyer sufficiency fails.
+6) **Event study**: CAR matches fixture series within tolerance; regression uses pre‑window only (no look‑ahead).
 7) **Provenance**: every event row lists all contributing accessions.
+8) **AI Analysis (v5.1)**: anomaly score (0-10), confidence (0-1), and narrative are populated for all rotation events; suspicion flags match trigger conditions; analysis cites filing accessions from provenance data.
 
 ---
 
-## 14) Tunables (config)
+## 15) Tunables (config)
 - Thresholds: dump %cut (**30%**), %float (**1.0%**), buyer single‑name ≥ **0.75% float**.  
 - Weights: `[2.0, 1.0, 0.85, 0.7, 0.6, 0.5, 0.4, 0.4]` as defaults (DumpZ, U_same, U_next, Uhf_same, Uhf_next, Opt_same, Opt_next, ShortRelief).  
 - IndexPenalty cap **0.5**; base_penalty **0.2**.  
