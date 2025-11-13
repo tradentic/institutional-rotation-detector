@@ -2,7 +2,7 @@ import { createSupabaseClient } from '../lib/supabase';
 import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient';
 import crypto from 'crypto';
 import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
-import { ensureCusipMappings } from './entity-utils';
+import { ensureIssuerCusipMappings } from './entity-utils';
 
 let cachedClient: FinraClient | null = null;
 
@@ -190,7 +190,7 @@ function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
 
 export async function fetchShortInterest(cik: string, settleDates: string[]): Promise<number> {
   // Ensure CUSIP mappings exist before attempting to fetch
-  await ensureCusipMappings(cik);
+  await ensureIssuerCusipMappings(cik);
 
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
@@ -254,7 +254,7 @@ export async function fetchATSWeekly(
   weeks: string[]
 ): Promise<number> {
   // Ensure CUSIP mappings exist before attempting to fetch
-  await ensureCusipMappings(cik);
+  await ensureIssuerCusipMappings(cik);
 
   const supabase = createSupabaseClient();
   const finra = getFinraClient();

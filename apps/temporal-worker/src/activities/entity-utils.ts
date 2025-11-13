@@ -145,27 +145,30 @@ export async function ensureEntity(
   };
 }
 
-export interface EnsureCusipMappingResult {
+export interface EnsureIssuerCusipMappingsResult {
   cusipsAdded: number;
   source: 'existing' | 'submissions_api' | 'provided';
 }
 
 /**
- * Ensure CUSIP mappings exist for a given CIK.
+ * Ensure CUSIP-to-issuer mappings exist for a given issuer CIK.
+ *
+ * This populates the cusip_issuer_map table which maps CUSIP identifiers
+ * (or ticker symbols for FINRA lookups) to issuer CIKs.
  *
  * Priority order:
  * 1. Use provided CUSIPs if given
  * 2. Check if mappings already exist in DB
- * 3. Fetch from SEC submissions API (tickers as fallback)
+ * 3. Fetch from SEC submissions API (real CUSIPs or tickers as fallback)
  *
  * @param cik - The issuer CIK
  * @param providedCusips - Optional array of CUSIPs/tickers to seed
  * @returns Info about what was added
  */
-export async function ensureCusipMappings(
+export async function ensureIssuerCusipMappings(
   cik: string,
   providedCusips?: string[]
-): Promise<EnsureCusipMappingResult> {
+): Promise<EnsureIssuerCusipMappingsResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
 
@@ -220,7 +223,7 @@ export async function ensureCusipMappings(
   }
 
   if (cusipsToAdd.length === 0) {
-    console.warn(`[ensureCusipMappings] No CUSIPs found for CIK ${normalizedCik}`);
+    console.warn(`[ensureIssuerCusipMappings] No CUSIPs found for issuer CIK ${normalizedCik}`);
     return {
       cusipsAdded: 0,
       source: 'submissions_api',
@@ -244,7 +247,7 @@ export async function ensureCusipMappings(
 
   const added = count ?? records.length;
   console.log(
-    `[ensureCusipMappings] Added ${added} CUSIP mapping(s) for CIK ${normalizedCik} (source: ${source})`
+    `[ensureIssuerCusipMappings] Added ${added} CUSIP mapping(s) for issuer CIK ${normalizedCik} (source: ${source})`
   );
 
   return {
@@ -269,10 +272,10 @@ export async function ensureEntityAndCusips(
   }
 ): Promise<{
   entity: EnsureEntityResult;
-  cusips: EnsureCusipMappingResult;
+  cusips: EnsureIssuerCusipMappingsResult;
 }> {
   const entity = await ensureEntity(cik, options?.preferredKind);
-  const cusips = await ensureCusipMappings(cik, options?.providedCusips);
+  const cusips = await ensureIssuerCusipMappings(cik, options?.providedCusips);
 
   return { entity, cusips };
 }
