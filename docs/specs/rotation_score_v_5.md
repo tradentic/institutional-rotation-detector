@@ -1,7 +1,18 @@
-# RotationScore v5.0 — Full Specification (2025‑11‑08)
+# RotationScore v5.0 — Target Specification (Roadmap)
 
-> **Purpose**  
+> **⚠️ STATUS: 🔮 TARGET SPECIFICATION (NOT FULLY IMPLEMENTED)**
+> **Current Implementation:** v4.1+ (Transitional) — See `/docs/specs/CURRENT_VERSION.md`
+> **Target Version:** v5.0 Full Compliance
+> **Implementation Plan:** `/docs/specs/V5_IMPLEMENTATION_PLAN.md`
+> **Last Updated:** 2025-11-13
+
+> **Purpose**
 > Detect and score **institutional rotation clusters** where a large holder **dumps** and other whales **absorb** in the **same filing window** (primary) or the **next window** (down‑weighted), with an **End‑of‑Window (EOW) override** when the dump lands in the final 5 business days before a 13F period end. Outputs are reproducible, auditable, and provenance‑linked to accession IDs.
+
+> **What's Implemented vs. Target:**
+> - ✅ **Implemented:** 30% dump threshold, DumpZ (median/MAD), EOW multipliers, AI analysis, microstructure, options, insider transactions
+> - ⏳ **Partial:** Provenance tracking, passive share calculation
+> - ❌ **Not Implemented:** Float-based dump detection, buyer sufficiency gates, complete v5 test suite
 
 ---
 

@@ -13,16 +13,24 @@
 -- Drop vector search function (no longer used)
 DROP FUNCTION IF EXISTS match_filing_chunks(vector(1536), float, int, text[]);
 
--- Drop vector index (improves write performance, saves storage)
-DROP INDEX IF EXISTS filing_chunks_embedding_idx;
+-- Drop vector search function for cluster summaries (no longer used)
+DROP FUNCTION IF EXISTS search_clusters_by_similarity(vector(1536), float, int);
 
--- Drop embedding column (saves significant storage)
+-- Drop vector indexes (improves write performance, saves storage)
+DROP INDEX IF EXISTS filing_chunks_embedding_idx;
+DROP INDEX IF EXISTS idx_cluster_summaries_embedding;
+
+-- Drop embedding column from filing_chunks (saves significant storage)
 -- Note: This preserves the text content, only removes embeddings
 ALTER TABLE filing_chunks DROP COLUMN IF EXISTS embedding;
 
--- Drop cluster_summaries table if it exists (was for embedding-based search)
-DROP TABLE IF EXISTS cluster_summaries;
+-- Drop embedding column from cluster_summaries but KEEP the table
+-- (summaries are still useful for GraphRAG, just without embeddings)
+ALTER TABLE cluster_summaries DROP COLUMN IF EXISTS embedding;
 
--- Update table comment to reflect new architecture
+-- Update table comments to reflect new architecture
 COMMENT ON TABLE filing_chunks IS
   'Stores filing text chunks for long context synthesis. Uses graph structure + 128K context windows instead of vector embeddings.';
+
+COMMENT ON TABLE cluster_summaries IS
+  'LLM-generated narrative summaries of rotation clusters. Uses GraphRAG (graph structure + long context) instead of vector search.';
