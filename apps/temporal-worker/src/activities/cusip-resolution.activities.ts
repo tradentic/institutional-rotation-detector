@@ -172,7 +172,7 @@ async function resolveCusipFromSecApi(
   ticker: string,
   cik?: string
 ): Promise<CusipResolutionResult | null> {
-  const apiKey = process.env.SEC_API_KEY;
+  const apiKey = process.env.SEC_API_IO;
 
   if (!apiKey) {
     console.log(`[sec-api.io] Skipping - SEC_API_KEY not configured`);
