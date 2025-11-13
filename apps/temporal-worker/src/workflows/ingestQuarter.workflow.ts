@@ -28,6 +28,37 @@ export interface IngestQuarterInput {
   entityKind?: 'issuer' | 'manager' | 'fund' | 'etf';
 }
 
+/**
+ * Generate FINRA settlement dates (15th and month-end) between from and to dates
+ */
+function generateSettlementDates(from: string, to: string): string[] {
+  const start = new Date(from);
+  const end = new Date(to);
+  const settlements: string[] = [];
+
+  let current = new Date(start.getFullYear(), start.getMonth(), 1);
+
+  while (current <= end) {
+    // Mid-month (15th)
+    const midMonth = new Date(current.getFullYear(), current.getMonth(), 15);
+    if (midMonth >= start && midMonth <= end) {
+      settlements.push(midMonth.toISOString().slice(0, 10));
+    }
+
+    // Month-end
+    const monthEnd = new Date(current.getFullYear(), current.getMonth() + 1, 0);
+    if (monthEnd >= start && monthEnd <= end) {
+      settlements.push(monthEnd.toISOString().slice(0, 10));
+    }
+
+    // Move to next month
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  return settlements;
+}
+
+
 export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   const bounds = {
     start: input.quarterStart,
@@ -82,7 +113,11 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
   }
 
   await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? [...DEFAULT_ETF_UNIVERSE], input.cik);
-  await activities.fetchShortInterest(input.cik, [bounds.start]);
+
+  // Generate all FINRA settlement dates (15th and month-end) for the quarter
+  const settlementDates = generateSettlementDates(bounds.start, bounds.end);
+  await activities.fetchShortInterest(input.cik, settlementDates);
+
   await activities.fetchATSWeekly(input.cik, [bounds.end]);
 
   const child = await startChild('rotationDetectWorkflow', {
