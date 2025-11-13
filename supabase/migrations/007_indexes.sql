@@ -14,6 +14,10 @@ create index if not exists idx_filings_expected_publish_pending on filings (expe
   where published_at is null;
 create index if not exists idx_filings_published_at on filings (published_at);
 create index if not exists idx_filings_amendment_of_accession on filings (amendment_of_accession);
+create index if not exists idx_filings_amendment_of on filings(amendment_of_accession)
+  where amendment_of_accession is not null;
+create index if not exists idx_filings_is_amendment on filings(is_amendment)
+  where is_amendment = true;
 create index if not exists idx_filings_cik_period
   on filings(cik, period_end)
   include (accession, form, filed_date, is_amendment);
@@ -42,6 +46,15 @@ create index if not exists idx_cusip_issuer_map_issuer
 create index if not exists idx_entities_cik_kind
   on entities(cik, kind)
   where cik is not null;
+create index if not exists idx_entities_ticker
+  on entities(ticker)
+  where ticker is not null;
+create unique index if not exists idx_entities_ticker_kind
+  on entities(ticker, kind)
+  where ticker is not null;
+create index if not exists idx_entities_series_id
+  on entities(series_id)
+  where series_id is not null;
 
 -- Short Interest
 create index if not exists idx_short_interest_cik_date

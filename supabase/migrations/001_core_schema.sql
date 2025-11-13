@@ -146,6 +146,42 @@ create table short_interest (
 comment on table short_interest is 'FINRA short interest data (semi-monthly settlement dates)';
 
 -- ========================================
+-- BENEFICIAL OWNERSHIP SNAPSHOTS
+-- ========================================
+-- Schedule 13D/13G filings (5%+ ownership)
+
+create table bo_snapshots (
+  issuer_cik text not null,
+  holder_cik text not null,
+  event_date date not null,
+  filed_date date not null,
+  pct_of_class numeric,
+  shares_est bigint,
+  accession text references filings(accession),
+  primary key (issuer_cik, holder_cik, event_date, accession)
+);
+
+comment on table bo_snapshots is 'Beneficial ownership snapshots from Schedule 13D/13G filings (5%+ ownership threshold)';
+comment on column bo_snapshots.pct_of_class is 'Percentage of outstanding shares held';
+
+-- ========================================
+-- ATS WEEKLY
+-- ========================================
+-- FINRA ATS (Alternative Trading System) weekly data
+
+create table ats_weekly (
+  week_end date not null,
+  cik text not null,
+  venue text not null,
+  shares bigint not null,
+  trades bigint,
+  primary key (week_end, cik, venue)
+);
+
+comment on table ats_weekly is 'FINRA ATS (Alternative Trading System) weekly trading volume by venue';
+comment on column ats_weekly.venue is 'ATS venue code (e.g., SIGMA, UBSA, MLIX for dark pools)';
+
+-- ========================================
 -- INDEX REBALANCING WINDOWS
 -- ========================================
 -- S&P and Russell index rebalancing windows for penalty calculation

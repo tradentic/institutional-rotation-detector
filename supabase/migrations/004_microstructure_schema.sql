@@ -202,3 +202,59 @@ create table micro_metrics_daily (
 comment on table micro_metrics_daily is 'Daily microstructure metrics: VPIN, Kyles lambda, spreads, toxicity';
 comment on column micro_metrics_daily.vpin is 'VPIN (0-1): Volume-Synchronized Probability of Informed Trading';
 comment on column micro_metrics_daily.kyles_lambda is 'Price impact per unit volume (bps per $1M)';
+
+-- ========================================
+-- BROKER MASTER LIST
+-- ========================================
+-- Reference table of known broker-dealers
+
+create table micro_broker_master (
+  broker_mpid text primary key,
+  broker_name text not null,
+  broker_cik text,
+  broker_type text check (
+    broker_type in ('WIREHOUSE', 'PRIME_BROKER', 'RETAIL', 'HFT', 'MARKET_MAKER', 'DARK_POOL', 'OTHER')
+  ),
+  parent_company text,
+  is_active boolean default true,
+  notes text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index micro_broker_master_name_idx
+  on micro_broker_master(broker_name);
+create index micro_broker_master_type_idx
+  on micro_broker_master(broker_type);
+
+comment on table micro_broker_master is
+  'Master reference table of broker-dealer MPIDs and metadata';
+
+-- Seed with common broker MPIDs
+insert into micro_broker_master (broker_mpid, broker_name, broker_type) values
+  ('MSCO', 'Morgan Stanley & Co.', 'PRIME_BROKER'),
+  ('GSCO', 'Goldman Sachs & Co.', 'PRIME_BROKER'),
+  ('JPMS', 'J.P. Morgan Securities', 'PRIME_BROKER'),
+  ('UBSS', 'UBS Securities', 'PRIME_BROKER'),
+  ('DBAB', 'Deutsche Bank Securities', 'PRIME_BROKER'),
+  ('CSFB', 'Credit Suisse Securities', 'PRIME_BROKER'),
+  ('BAML', 'Bank of America Merrill Lynch', 'PRIME_BROKER'),
+  ('BTIG', 'BTIG LLC', 'PRIME_BROKER'),
+  ('FBCO', 'Credit Suisse Securities (USA)', 'PRIME_BROKER'),
+  ('VANG', 'Vanguard Brokerage Services', 'WIREHOUSE'),
+  ('ETRD', 'E*TRADE Securities', 'RETAIL'),
+  ('SCHW', 'Charles Schwab & Co.', 'RETAIL'),
+  ('IBKR', 'Interactive Brokers', 'RETAIL'),
+  ('CITD', 'Citadel Securities', 'MARKET_MAKER'),
+  ('VIRT', 'Virtu Americas', 'MARKET_MAKER'),
+  ('JNEY', 'Jane Street Capital', 'MARKET_MAKER'),
+  ('TWOS', 'Two Sigma Securities', 'MARKET_MAKER'),
+  ('SIGMA', 'Goldman Sachs SIGMA X (Dark Pool)', 'DARK_POOL'),
+  ('UBSA', 'UBS ATS', 'DARK_POOL'),
+  ('MLIX', 'Morgan Stanley MSPOOL', 'DARK_POOL'),
+  ('JPMX', 'J.P. Morgan JPM-X', 'DARK_POOL'),
+  ('BARX', 'Barclays LX', 'DARK_POOL'),
+  ('CROS', 'CrossFinder (Credit Suisse)', 'DARK_POOL'),
+  ('LATS', 'Liquidnet ATS', 'DARK_POOL'),
+  ('ITGP', 'ITG POSIT', 'DARK_POOL')
+on conflict (broker_mpid) do nothing;
