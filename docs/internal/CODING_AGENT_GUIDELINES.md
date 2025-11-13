@@ -281,19 +281,204 @@ const seriesId = await resolveSeriesId('0001067839', 'QQQ');
 // Returns: 'S000006218' or null
 ```
 
+### 🚨 CRITICAL: CUSIP Resolution - NO TICKER FALLBACKS
+
+**MOST IMPORTANT RULE:** Never use ticker symbols as CUSIP fallbacks. They cause silent data collection failures.
+
+#### The Problem with Ticker Fallbacks
+
+**❌ WRONG - Ticker symbol fallback (REMOVED):**
+```typescript
+// OLD CODE - DO NOT USE
+if (normalizedCusips.length === 0) {
+  cusipsToReturn = [ticker]; // e.g., "AAPL" instead of "037833100"
+}
+```
+
+**Why this is catastrophic:**
+1. **Silent Failures** - Workflow appears to succeed but collects NO data
+   ```
+   [upsertCusipMapping] Added 1 CUSIP mappings for CIK 0000320193
+   ```
+   ✅ Logs say success, but stored "AAPL" not "037833100"
+
+2. **Cascading Data Collection Failures**:
+   - ❌ ETF holdings queries fail (require real 9-char CUSIPs)
+   - ❌ FINRA short interest fails (requires real CUSIPs)
+   - ❌ 13F institutional holdings fail
+
+3. **No Visibility** - Impossible to detect without diagnostic tools
+4. **SEC API Limitation** - Common for major stocks (AAPL, MSFT, GOOGL)
+
+#### The Solution: Self-Healing CUSIP Resolution
+
+**✅ CORRECT - Use automatic fallback chain:**
+```typescript
+import { getCusipForTicker } from './cusip-resolution.activities';
+
+export async function resolveCIK(ticker: string) {
+  const cik = /* ... resolve from SEC ... */;
+
+  // Extract CUSIPs from SEC submissions
+  const secCusips = normalizeCusips(securities.map(s => s.cusip));
+
+  // Self-healing CUSIP resolution with automatic fallback
+  // Tries: 1) SEC submissions, 2) OpenFIGI API, 3) SEC filings XML
+  const cusips = await getCusipForTicker(ticker, cik, secCusips);
+  // Returns real 9-character CUSIPs or throws clear error
+
+  await upsertEntity(cik, 'issuer');
+  await upsertCusipMapping(cik, cusips);
+
+  return { cik, cusips };
+}
+```
+
+#### Automatic Fallback Chain
+
+The system tries multiple authoritative sources in order:
+
+```
+1. SEC Submissions API (already called)
+   ↓ If securities array empty...
+2. OpenFIGI API (free Bloomberg service)
+   ✓ 99%+ success rate
+   ✓ Returns: CUSIP, ISIN, FIGI
+   ✓ No API key needed (optional for higher rate limits)
+   ↓ If OpenFIGI fails...
+3. SEC EDGAR Filings XML
+   ✓ Parse recent 10-K, 10-Q, 8-K for CUSIP
+   ✓ Searches common field names
+   ↓ If all sources fail...
+4. EXPLICIT FAILURE with clear error message
+   ✗ Tells user exactly what to do
+   ✗ NO SILENT TICKER FALLBACK
+```
+
+#### CUSIP Resolution Functions
+
+**`getCusipForTicker(ticker, cik, secCusips?)`** - Main entry point
+```typescript
+import { getCusipForTicker } from './cusip-resolution.activities';
+
+// Automatic resolution with fallbacks
+const cusips = await getCusipForTicker('AAPL', '0000320193');
+// Returns: ["037833100"] or throws error
+
+// With SEC submissions CUSIPs
+const cusips = await getCusipForTicker('AAPL', '0000320193', ['037833100']);
+// Uses provided CUSIPs if available
+```
+
+**`resolveCusipWithFallback(ticker, cik, secCusips?)`** - Detailed result
+```typescript
+import { resolveCusipWithFallback } from './cusip-resolution.activities';
+
+const result = await resolveCusipWithFallback('AAPL', '0000320193');
+// Returns:
+// {
+//   cusips: ["037833100"],
+//   source: "openfigi",
+//   confidence: "high",
+//   metadata: {
+//     isin: "US0378331005",
+//     figi: "BBG000B9XRY4",
+//     securityType: "Common Stock"
+//   }
+// }
+```
+
+#### OpenFIGI Integration
+
+**Free Bloomberg API** for security identifier mapping:
+- Endpoint: `https://api.openfigi.com/v3/mapping`
+- Rate limit: 25 req/min without key, 250/min with free key
+- Coverage: Global stocks, bonds, ETFs, derivatives
+- Returns: CUSIP, ISIN, FIGI, security metadata
+
+**Get free API key:** https://www.openfigi.com/api
+```bash
+export OPENFIGI_API_KEY="your-key-here"
+```
+
+#### Error Handling
+
+**When all sources fail:**
+```
+Error: Failed to resolve CUSIP for XYZ (CIK 0000123456) from all sources.
+Tried: (1) SEC submissions API, (2) OpenFIGI API, (3) SEC filings parsing.
+Manual intervention required. See scripts/fix-xyz-cusip.sql for template.
+```
+
+**This is GOOD!** We prefer:
+- ✅ Explicit failure with clear remediation steps
+- ❌ NOT silent success with broken data collection
+
+#### Manual Fix Process
+
+If automatic resolution fails:
+
+1. **Find real CUSIP** from:
+   - SEC EDGAR filings (10-K, 10-Q)
+   - OpenFIGI website
+   - Bloomberg Terminal
+   - Company investor relations
+
+2. **Run SQL fix** (use template):
+   ```sql
+   -- Template in scripts/fix-{ticker}-cusip.sql
+   UPDATE cusip_issuer_map
+   SET cusip = '037833100'  -- Real 9-char CUSIP
+   WHERE issuer_cik = '0000320193'
+     AND cusip = 'AAPL';    -- Ticker fallback
+   ```
+
+3. **Validate with QA tool**:
+   ```bash
+   temporal workflow start \
+     --type qaReportWorkflow \
+     --input '{"ticker": "AAPL", "from": "2024-01-01", "to": "2024-03-31"}'
+   ```
+
+4. **Re-run workflows** to collect data with correct CUSIP
+
+#### Key Rules
+
+**✅ ALWAYS:**
+- Use `getCusipForTicker()` for CUSIP resolution
+- Let workflows fail explicitly if CUSIPs can't be found
+- Validate CUSIPs are 9 alphanumeric characters: `/^[0-9A-Z]{9}$/`
+- Log the resolution source (submissions/openfigi/filings)
+- Reference `docs/CUSIP_RESOLUTION.md` for details
+
+**❌ NEVER:**
+- Use ticker symbols as CUSIP fallbacks
+- Store non-CUSIP values in `cusip_issuer_map.cusip`
+- Allow workflows to succeed without real CUSIPs
+- Assume SEC submissions API will have CUSIP data
+
+**📚 Documentation:**
+- Technical details: `docs/CUSIP_RESOLUTION.md`
+- Testing guide: `docs/QA_DIAGNOSTIC_TOOL.md`
+- SQL fixes: `scripts/README.md`
+
 ### Real-World Examples
 
-**Example 1: resolveCIK (edgar.activities.ts:198-199)**
+**Example 1: resolveCIK with CUSIP self-healing (edgar.activities.ts:180-186)**
 ```typescript
 export async function resolveCIK(ticker: string) {
   const cik = /* ... resolve from SEC ... */;
-  const cusips = /* ... extract from submissions ... */;
+  const secCusips = /* ... extract from submissions ... */;
+
+  // ✅ Self-healing CUSIP resolution with automatic fallback
+  // Tries: SEC submissions → OpenFIGI → SEC filings → fail explicitly
+  const cusips = await getCusipForTicker(ticker, cik, secCusips);
 
   // ✅ Self-healing: create entity and mappings immediately
   await upsertEntity(cik, 'issuer');
-  await upsertCusipMapping(cik, cusipsToReturn);
+  await upsertCusipMapping(cik, cusips);
 
-  return { cik, cusips: cusipsToReturn };
+  return { cik, cusips };
 }
 ```
 
