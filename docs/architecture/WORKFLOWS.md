@@ -39,16 +39,70 @@ Workflows are durable, fault-tolerant orchestrations that coordinate activities.
 
 ## Workflow Catalog
 
-| Workflow | Purpose | Duration | Complexity | Parent/Child |
-|----------|---------|----------|------------|--------------|
+### Core Ingestion & Analysis Workflows
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
 | `ingestIssuerWorkflow` | Multi-quarter ingestion | 1-4 hours | High | Parent |
 | `ingestQuarterWorkflow` | Single quarter processing | 10-30 min | Medium | Child |
 | `rotationDetectWorkflow` | Rotation detection & scoring | 5-10 min | High | Child |
 | `eventStudyWorkflow` | Market impact analysis | 2-5 min | Low | Child |
+
+### Graph Workflows
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
 | `graphBuildWorkflow` | Knowledge graph construction | 5-15 min | Medium | Standalone |
-| `graphSummarizeWorkflow` | Community detection | 5-10 min | Medium | Standalone |
+| `graphSummarizeWorkflow` | Community detection & summaries | 5-10 min | Medium | Standalone |
 | `graphQueryWorkflow` | Graph traversal & queries | 1-3 min | Medium | Standalone |
-| `testProbeWorkflow` | Search attribute testing | <1 min | Low | Test only |
+| `graphExploreWorkflow` | Multi-turn Q&A with CoT | 3-5 min | Medium | Standalone |
+| `crossCommunityAnalysisWorkflow` | Systemic pattern analysis | 5-10 min | High | Standalone |
+| `clusterEnrichmentWorkflow` | Rotation cluster narrative | 2-5 min | Low | Child |
+
+### Scheduled Data Watchers (Cron Workflows)
+
+| Workflow | Purpose | Schedule | Complexity | Type |
+|----------|---------|----------|------------|------|
+| `edgarSubmissionsPollerWorkflow` | Near-real-time SEC filings | Per CIK | Medium | Cron |
+| `nportMonthlyTimerWorkflow` | N-PORT monthly ingestion | Monthly (M+60) | Low | Cron |
+| `etfDailyCronWorkflow` | Daily ETF holdings | Daily EOD | Low | Cron |
+| `finraShortPublishWorkflow` | FINRA short interest | Semi-monthly | Low | Cron |
+| `form4DailyCronWorkflow` | Form 4 insider transactions | Daily | Low | Cron |
+| `unusualOptionsActivityCronWorkflow` | Unusual options activity | Daily EOD | Low | Cron |
+
+### Microstructure Workflows
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
+| `finraOtcWeeklyIngestWorkflow` | FINRA OTC transparency data | 5-10 min | Medium | Standalone |
+| `iexDailyIngestWorkflow` | IEX exchange volume proxy | 2-5 min | Low | Standalone |
+| `offexRatioComputeWorkflow` | Off-exchange ratio calculation | 3-5 min | Medium | Standalone |
+| `flip50DetectWorkflow` | Detect off-exchange <50% flips | 2-3 min | Low | Standalone |
+| `shortInterestIngestWorkflow` | FINRA short interest ingestion | 2-5 min | Low | Standalone |
+| `microstructureAnalysisWorkflow` | VPIN, Kyle's lambda, attribution | 5-10 min | High | Standalone |
+
+### Options Flow Workflows
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
+| `optionsIngestWorkflow` | Full daily options ingestion | 5-10 min | Medium | Standalone |
+| `optionsMinimalIngestWorkflow` | Minimal 3-endpoint ingestion | 2-3 min | Low | Standalone |
+| `optionsBatchIngestWorkflow` | Batch process multiple tickers | 10-30 min | Medium | Parent |
+| `optionsDeepAnalysisWorkflow` | Deep analysis with full Greeks | 10-20 min | High | Standalone |
+
+### Advanced Analytics Workflows
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
+| `statisticalAnalysisWorkflow` | E2B-powered statistical analysis | 5-10 min | High | Standalone |
+
+### Testing & Utilities
+
+| Workflow | Purpose | Duration | Complexity | Type |
+|----------|---------|----------|------------|------|
+| `testSearchAttributesWorkflow` | Search attribute testing | <1 min | Low | Test only |
+
+**Total Workflows: 29**
 
 ## Ingestion Workflows
 
@@ -503,6 +557,731 @@ interface GraphQueryOutput {
 ```
 
 **Duration:** 1-3 minutes
+
+---
+
+### `graphExploreWorkflow`
+
+**Purpose:** Interactive multi-turn Q&A about the institutional investor graph with Chain of Thought context preservation.
+
+**Approach:** **Graph algorithms + CoT sessions** (saves 60%+ tokens across turns).
+
+**Input:**
+```typescript
+interface GraphExploreWorkflowInput {
+  ticker?: string;
+  cik?: string;
+  periodStart: string;
+  periodEnd: string;
+  questions: string[];
+  runKind?: 'query' | 'analysis';
+}
+```
+
+**Workflow Logic:**
+1. Accept multiple questions in sequence
+2. Use CoT sessions to preserve context across questions
+3. Each question builds on previous answers
+4. Significant token savings (60%+) vs. independent queries
+
+**Example Use Cases:**
+- "Which institutions rotated out of AAPL in Q1 2024?"
+- "Did those same institutions rotate into other tech stocks?"
+- "What was the total dollar value of these flows?"
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type graphExploreWorkflow \
+  --input '{
+    "ticker": "AAPL",
+    "periodStart": "2024-01-01",
+    "periodEnd": "2024-03-31",
+    "questions": [
+      "Which institutions rotated out?",
+      "Where did they rotate to?",
+      "What was the total flow?"
+    ]
+  }'
+```
+
+**Activities Called:**
+- `exploreGraph` - Multi-turn graph exploration with CoT
+
+**Duration:** 3-5 minutes
+
+---
+
+### `crossCommunityAnalysisWorkflow`
+
+**Purpose:** Identifies systemic patterns and trends across multiple communities using GPT-5 with high reasoning effort.
+
+**Input:**
+```typescript
+interface CrossCommunityAnalysisWorkflowInput {
+  periodStart: string;
+  periodEnd: string;
+  minCommunities?: number;
+  runKind?: 'analysis' | 'research';
+}
+```
+
+**Workflow Logic:**
+1. Fetch all communities in the specified period
+2. GPT-5 synthesizes cross-community patterns (high reasoning effort)
+3. Identifies systemic trends
+4. Compares communities
+5. Extracts key insights
+
+**Example Use Cases:**
+- "Are there coordinated rotations across tech sector communities?"
+- "What systemic patterns emerged during Q1 2024?"
+- "Are communities showing correlated buying/selling patterns?"
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type crossCommunityAnalysisWorkflow \
+  --input '{
+    "periodStart": "2024-01-01",
+    "periodEnd": "2024-03-31",
+    "minCommunities": 3
+  }'
+```
+
+**Activities Called:**
+- `analyzeCrossCommunityPatterns` - GPT-5 synthesis with high reasoning effort
+
+**Duration:** 5-10 minutes
+
+---
+
+### `clusterEnrichmentWorkflow`
+
+**Purpose:** Enriches a rotation cluster with narrative explanation using graph structure + long context synthesis.
+
+**Input:**
+```typescript
+interface ClusterEnrichmentInput {
+  clusterId: string;
+  issuerCik: string;
+  runKind: 'backfill' | 'daily';
+}
+```
+
+**Workflow Logic:**
+1. Fetch cluster details (sellers, buyers, flows)
+2. Generate narrative summary using LLM
+3. No vector embeddings (direct long context)
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type clusterEnrichmentWorkflow \
+  --input '{
+    "clusterId": "cluster-uuid-123",
+    "issuerCik": "0000320193",
+    "runKind": "daily"
+  }'
+```
+
+**Activities Called:**
+- `createClusterSummary` - LLM-powered narrative generation
+
+**Output:**
+```typescript
+interface ClusterEnrichmentOutput {
+  summary: string;
+}
+```
+
+**Duration:** 2-5 minutes
+
+---
+
+## Microstructure Workflows
+
+### `finraOtcWeeklyIngestWorkflow`
+
+**Purpose:** Ingests FINRA OTC Transparency weekly data (ATS + non-ATS venue-level volumes).
+
+**Input:**
+```typescript
+interface FinraOtcWeeklyIngestInput {
+  symbols?: string[];
+  fromWeek?: string; // YYYY-MM-DD (week end date)
+  toWeek?: string;   // YYYY-MM-DD (week end date)
+  runKind?: 'backfill' | 'daily';
+}
+```
+
+**Workflow Logic:**
+1. For each week in range:
+   - Fetch ATS venue-level data
+   - Fetch non-ATS venue-level data
+   - Aggregate to symbol-level weekly totals
+2. Store with provenance (file IDs, SHA-256 hashes)
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type finraOtcWeeklyIngestWorkflow \
+  --input '{
+    "symbols": ["AAPL", "MSFT"],
+    "fromWeek": "2024-01-05",
+    "toWeek": "2024-01-26",
+    "runKind": "backfill"
+  }'
+```
+
+**Activities Called:**
+- `fetchOtcWeeklyVenue` - Download ATS/non-ATS data
+- `aggregateOtcSymbolWeek` - Symbol-level aggregation
+
+**Duration:** 5-10 minutes
+
+---
+
+### `iexDailyIngestWorkflow`
+
+**Purpose:** Ingests IEX HIST daily matched volume data (T+1 availability, free on-exchange proxy).
+
+**Input:**
+```typescript
+interface IexDailyIngestInput {
+  symbols?: string[];
+  from?: string; // YYYY-MM-DD
+  to?: string;   // YYYY-MM-DD
+  runKind?: 'backfill' | 'daily';
+}
+```
+
+**Workflow Logic:**
+1. For each trading day in range:
+   - Download IEX HIST matched volume
+   - Store with provenance (file ID, SHA-256)
+2. Used as on-exchange volume proxy for off-exchange ratio calculations
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type iexDailyIngestWorkflow \
+  --input '{
+    "from": "2024-01-01",
+    "to": "2024-01-31",
+    "runKind": "daily"
+  }'
+```
+
+**Activities Called:**
+- `downloadIexDaily` - Download and parse IEX HIST data
+- `listIexHistDates` - Generate date range
+
+**Duration:** 2-5 minutes
+
+---
+
+### `offexRatioComputeWorkflow`
+
+**Purpose:** Computes off-exchange percentage ratios from FINRA OTC weekly data and daily volume sources.
+
+**Input:**
+```typescript
+interface OffexRatioComputeInput {
+  symbols: string[];
+  from?: string; // week end date
+  to?: string;   // week end date
+}
+```
+
+**Workflow Logic:**
+1. For each symbol and week:
+   - Compute weekly official ratio (if consolidated data available)
+   - Compute daily approximations (apportioned from weekly total)
+2. Quality flags: 'official', 'official_partial', 'approx', 'iex_proxy'
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type offexRatioComputeWorkflow \
+  --input '{
+    "symbols": ["AAPL", "MSFT"],
+    "from": "2024-01-05",
+    "to": "2024-01-26"
+  }'
+```
+
+**Activities Called:**
+- `computeWeeklyOfficial` - Weekly ratio calculation
+- `computeDailyApprox` - Daily approximation
+
+**Duration:** 3-5 minutes
+
+---
+
+### `flip50DetectWorkflow`
+
+**Purpose:** Detects "Flip50" events where off-exchange percentage crosses below 50% after being above 50% for N consecutive days.
+
+**Input:**
+```typescript
+interface Flip50DetectInput {
+  symbol: string;
+  lookbackDays?: number;         // default 90
+  consecutiveDaysThreshold?: number; // default 20
+  triggerEventStudy?: boolean;   // default true
+}
+```
+
+**Event Definition:**
+- First day: offex_pct < 0.50
+- Preceded by: ≥N consecutive trading days with offex_pct ≥ 0.50
+
+**Workflow Logic:**
+1. Detect Flip50 events in lookback window
+2. Store event with pre-period statistics
+3. Optionally trigger event study for CAR analysis
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type flip50DetectWorkflow \
+  --input '{
+    "symbol": "AAPL",
+    "lookbackDays": 90,
+    "consecutiveDaysThreshold": 20
+  }'
+```
+
+**Activities Called:**
+- `detectFlip50` - Event detection algorithm
+
+**Duration:** 2-3 minutes
+
+---
+
+### `shortInterestIngestWorkflow`
+
+**Purpose:** Ingests FINRA short interest data (semi-monthly settlement dates: 15th and month-end).
+
+**Input:**
+```typescript
+interface ShortInterestIngestInput {
+  symbols?: string[];
+  fromDate?: string;
+  toDate?: string;
+  runKind?: 'backfill' | 'daily';
+}
+```
+
+**Workflow Logic:**
+1. Fetch FINRA short interest for settlement dates
+2. Publication timing: T+2 business days after settlement
+3. Store with provenance
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type shortInterestIngestWorkflow \
+  --input '{
+    "symbols": ["AAPL"],
+    "fromDate": "2024-01-01",
+    "toDate": "2024-01-31",
+    "runKind": "daily"
+  }'
+```
+
+**Duration:** 2-5 minutes
+
+---
+
+### `microstructureAnalysisWorkflow`
+
+**Purpose:** Comprehensive microstructure analysis including VPIN (toxicity), Kyle's lambda (price impact), broker attribution, and institutional flow detection.
+
+**Input:**
+```typescript
+interface MicrostructureAnalysisWorkflowInput {
+  symbol: string;
+  fromDate: string;
+  toDate: string;
+  buildMapping?: boolean;    // Build broker-dealer mappings
+  minConfidence?: number;    // Min attribution confidence (default 0.7)
+}
+```
+
+**Workflow Logic:**
+1. Optionally build broker-dealer → institution mappings
+2. Compute daily microstructure metrics:
+   - **VPIN** (toxicity) - probability of informed trading
+   - **Kyle's lambda** - price impact per unit volume
+   - **Order imbalance** - buy/sell pressure
+   - **Block trades** - institutional footprint
+3. Attribute flows to specific institutions
+4. Generate microstructure signals for rotation scoring
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type microstructureAnalysisWorkflow \
+  --input '{
+    "symbol": "AAPL",
+    "fromDate": "2024-01-01",
+    "toDate": "2024-01-31",
+    "buildMapping": false,
+    "minConfidence": 0.7
+  }'
+```
+
+**Activities Called:**
+- `buildBrokerMapping` - Map ATS venues to institutions
+- `getMicrostructureSignals` - Compute VPIN, lambda, etc.
+- `attributeInstitutionalFlows` - Flow attribution
+
+**Output:**
+```typescript
+interface MicrostructureSignals {
+  vpinAvg: number;              // Average toxicity level
+  vpinSpike: boolean;           // Extreme event detected
+  lambdaAvg: number;            // Price impact (bps/$1M)
+  orderImbalanceAvg: number;    // Sell pressure
+  blockRatioAvg: number;        // % institutional blocks
+  flowAttributionScore: number;
+  microConfidence: number;
+}
+```
+
+**Duration:** 5-10 minutes
+
+---
+
+## Options Flow Workflows
+
+### `optionsIngestWorkflow`
+
+**Purpose:** Full daily options data ingestion using UnusualWhales API (Tier 1 + Tier 2 endpoints).
+
+**Input:**
+```typescript
+interface OptionsIngestParams {
+  ticker: string;
+  date?: string;
+  includeContracts?: boolean;    // Volume + OI + IV (Tier 1)
+  includeFlow?: boolean;          // Aggregated flow (Tier 1)
+  includeAlerts?: boolean;        // Unusual activity (Tier 1)
+  includeGEX?: boolean;           // Greek exposure trends (Tier 2)
+  includeGEXByExpiry?: boolean;  // GEX by expiration (Tier 3)
+  includeGreeks?: boolean;        // Full greeks per expiration (Tier 2, expensive!)
+  includeBaselines?: boolean;     // Historical baselines
+  calculateMetrics?: boolean;     // Calculate all documented metrics
+}
+```
+
+**Workflow Logic:**
+1. **Tier 1 (MUST HAVE)**: 3 API calls
+   - Fetch option contracts (volume + OI + IV)
+   - Fetch aggregated flow by expiration
+   - Fetch unusual activity alerts
+2. **Tier 2 (OPTIONAL)**: Enhanced data
+   - Greek exposure trends
+   - Full Greeks per expiration (expensive!)
+3. **Computation**:
+   - Compute daily summary
+   - Calculate P/C ratios, IV skew, Vol/OI ratios
+   - Optionally compute baselines
+
+**Meets All 4 Original Requirements:**
+- ✅ Daily options volume (by strike/expiry)
+- ✅ Open Interest (by strike/expiry)
+- ✅ Put/Call ratio (volume AND OI)
+- ✅ Unusual activity (Volume/OI ratio >3x)
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type optionsIngestWorkflow \
+  --input '{
+    "ticker": "AAPL",
+    "includeContracts": true,
+    "includeFlow": true,
+    "includeAlerts": true,
+    "includeGEX": false,
+    "calculateMetrics": true
+  }'
+```
+
+**Activities Called:**
+- `fetchOptionContracts` - Volume + OI + IV
+- `fetchOptionsFlowByExpiry` - Aggregated flow
+- `fetchFlowAlerts` - Unusual activity
+- `fetchGreekExposure` - GEX trends (optional)
+- `computeOptionsSummary` - Daily summary
+
+**API Calls:** 3 (Tier 1) to 7+ (with Tier 2/3)
+
+**Duration:** 5-10 minutes
+
+---
+
+### `optionsMinimalIngestWorkflow`
+
+**Purpose:** Minimal daily options ingestion using only 3 API calls (meets all requirements).
+
+**Input:**
+```typescript
+interface OptionsMinimalIngestParams {
+  ticker: string;
+  date?: string;
+}
+```
+
+**Workflow Logic:**
+- Uses only Tier 1 endpoints (3 API calls total)
+- Optimized for cost and speed
+- Meets all 4 original requirements
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type optionsMinimalIngestWorkflow \
+  --input '{"ticker": "AAPL"}'
+```
+
+**API Calls:** Exactly 3
+
+**Duration:** 2-3 minutes
+
+---
+
+### `optionsBatchIngestWorkflow`
+
+**Purpose:** Batch process options ingestion for multiple tickers.
+
+**Input:**
+```typescript
+interface OptionsBatchIngestParams {
+  tickers: string[];
+  date?: string;
+  includeContracts?: boolean;
+  includeFlow?: boolean;
+  includeAlerts?: boolean;
+}
+```
+
+**Workflow Logic:**
+1. Launch child `optionsIngestWorkflow` for each ticker
+2. Process in parallel (respects rate limits)
+3. Aggregate results
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type optionsBatchIngestWorkflow \
+  --input '{
+    "tickers": ["AAPL", "MSFT", "GOOGL"],
+    "includeContracts": true,
+    "includeFlow": true,
+    "includeAlerts": true
+  }'
+```
+
+**Duration:** 10-30 minutes (depends on ticker count)
+
+---
+
+### `optionsDeepAnalysisWorkflow`
+
+**Purpose:** Deep options analysis with full Greeks per expiration (expensive, comprehensive).
+
+**Input:**
+```typescript
+interface OptionsDeepAnalysisParams {
+  ticker: string;
+  date?: string;
+  maxExpirations?: number; // Limit to N nearest expirations
+}
+```
+
+**Workflow Logic:**
+1. Fetch all Tier 1 + Tier 2 data
+2. Fetch full Greeks for each expiration (expensive!)
+3. Compute advanced metrics (GEX trends, gamma flips, IV surface)
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type optionsDeepAnalysisWorkflow \
+  --input '{
+    "ticker": "AAPL",
+    "maxExpirations": 3
+  }'
+```
+
+**API Calls:** 7+ (expensive)
+
+**Duration:** 10-20 minutes
+
+---
+
+## Scheduled Data Watchers
+
+### `form4DailyCronWorkflow`
+
+**Purpose:** Daily scheduled ingestion of Form 4 insider transactions (2-day reporting lag).
+
+**Input:**
+```typescript
+interface Form4DailyCronInput {
+  lookbackDays?: number; // Default 3
+}
+```
+
+**Schedule:** Daily at market close
+
+**Workflow Logic:**
+1. Fetch Form 4 filings from last N days
+2. Parse insider transactions (buys/sells)
+3. Store in database for rotation validation
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type form4DailyCronWorkflow \
+  --input '{"lookbackDays": 3}'
+```
+
+**Duration:** <5 minutes
+
+---
+
+### `unusualOptionsActivityCronWorkflow`
+
+**Purpose:** Daily scheduled detection of unusual options activity.
+
+**Input:**
+```typescript
+interface UnusualOptionsActivityCronInput {
+  tickers?: string[]; // Default: all tracked tickers
+  minPremium?: number; // Default $50k
+}
+```
+
+**Schedule:** Daily EOD
+
+**Workflow Logic:**
+1. Fetch flow alerts from UnusualWhales
+2. Filter by minimum premium
+3. Store unusual activity events
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type unusualOptionsActivityCronWorkflow \
+  --input '{"minPremium": 100000}'
+```
+
+**Duration:** <5 minutes
+
+---
+
+## Advanced Analytics Workflows
+
+### `statisticalAnalysisWorkflow`
+
+**Purpose:** E2B-powered statistical analysis on rotation data using GPT-5 + Python code execution.
+
+**Input:**
+```typescript
+interface StatisticalAnalysisWorkflowInput {
+  analysisType: 'correlation' | 'regression' | 'anomaly' | 'custom';
+  dataQuery: {
+    table: 'rotation_events' | 'rotation_edges' | 'graph_edges';
+    filters?: Record<string, any>;
+    periodStart?: string;
+    periodEnd?: string;
+    limit?: number;
+  };
+  question: string;
+  customCode?: string;
+  runKind?: 'analysis' | 'research';
+}
+```
+
+**Workflow Logic:**
+1. Fetch data from database
+2. GPT-5 plans statistical approach (CoT)
+3. Generates Python code
+4. Executes code in E2B sandbox
+5. Analyzes results (CoT preserved)
+6. Draws conclusions (CoT preserved)
+
+**Example Use Cases:**
+1. **Correlation Analysis**: "Is there correlation between dump Z-score and cumulative abnormal returns?"
+2. **Anomaly Detection**: "Find outliers in rotation events using isolation forest"
+3. **Regression Analysis**: "Does uptake predict CAR? Run linear regression with significance tests"
+4. **Custom Analysis**: Provide your own Python code for complex statistical tests
+
+**Example:**
+```bash
+temporal workflow start \
+  --namespace ird \
+  --task-queue rotation-detector \
+  --type statisticalAnalysisWorkflow \
+  --input '{
+    "analysisType": "regression",
+    "dataQuery": {
+      "table": "rotation_events",
+      "periodStart": "2024-01-01",
+      "periodEnd": "2024-03-31"
+    },
+    "question": "Does uptake same quarter predict CAR? Run linear regression."
+  }'
+```
+
+**Activities Called:**
+- `performStatisticalAnalysis` - GPT-5 + E2B code execution
+
+**Output:**
+```typescript
+interface StatisticalAnalysisResult {
+  analysis: string;      // GPT-5 analysis with CoT
+  code: string;          // Generated Python code
+  results: any;          // Execution results
+  plots?: string[];      // Base64-encoded plots
+}
+```
+
+**Duration:** 5-10 minutes
 
 ---
 
