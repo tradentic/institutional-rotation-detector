@@ -1,17 +1,16 @@
 import { continueAsNew, proxyActivities, sleep } from '@temporalio/workflow';
-import { upsertWorkflowSearchAttributes } from './utils';
+import { DEFAULT_ETF_UNIVERSE, upsertWorkflowSearchAttributes } from './utils';
 import { incrementIteration, DEFAULT_MAX_ITERATIONS } from './continueAsNewHelper';
 import type {
   EtfDailyPlanInput,
   EtfDailyPlanResult,
 } from '../activities/etf.activities';
 
-const DEFAULT_FUNDS = ['IWB', 'IWM', 'IWN', 'IWC'];
 const DEFAULT_CADENCE_MS = 24 * 60 * 60 * 1000; // daily
 
 const activities = proxyActivities<{
   planEtfDailySnapshots: (input: EtfDailyPlanInput) => Promise<EtfDailyPlanResult>;
-  fetchDailyHoldings: (cusips: string[], funds: string[]) => Promise<number>;
+  fetchDailyHoldings: (cusips: string[], funds: string[], cik?: string) => Promise<number>;
 }>({
   startToCloseTimeout: '10 minutes',
 });
@@ -38,7 +37,7 @@ function nextDay(dateStr: string): string {
 
 export async function etfDailyCronWorkflow(input: EtfDailyCronInput = {}) {
   const cadenceMs = input.cadenceMs ?? DEFAULT_CADENCE_MS;
-  const funds = input.funds && input.funds.length > 0 ? input.funds : DEFAULT_FUNDS;
+  const funds = input.funds && input.funds.length > 0 ? input.funds : [...DEFAULT_ETF_UNIVERSE];
   const maxIterations = input.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const iterationCount = incrementIteration(input.iterationCount, maxIterations);
 

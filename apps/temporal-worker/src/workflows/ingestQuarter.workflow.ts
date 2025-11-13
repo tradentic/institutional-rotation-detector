@@ -1,5 +1,5 @@
 import { proxyActivities, startChild } from '@temporalio/workflow';
-import { quarterBounds, upsertWorkflowSearchAttributes } from './utils';
+import { DEFAULT_ETF_UNIVERSE, quarterBounds, upsertWorkflowSearchAttributes } from './utils';
 import type { RotationDetectInput } from './rotationDetect.workflow';
 
 const activities = proxyActivities<{
@@ -81,7 +81,7 @@ export async function ingestQuarterWorkflow(input: IngestQuarterInput) {
     await activities.fetchMonthly(input.cik, months);
   }
 
-  await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? ['IWB', 'IWM', 'IWN', 'IWC'], input.cik);
+  await activities.fetchDailyHoldings(input.cusips, input.etfUniverse ?? [...DEFAULT_ETF_UNIVERSE], input.cik);
   await activities.fetchShortInterest(input.cik, [bounds.start]);
   await activities.fetchATSWeekly(input.cik, [bounds.end]);
 
