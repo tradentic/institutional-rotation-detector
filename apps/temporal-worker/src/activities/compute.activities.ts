@@ -462,14 +462,33 @@ export async function optionsOverlay(cik: string, quarter: QuarterBounds) {
 export async function shortReliefV2(cik: string, quarter: QuarterBounds) {
   const context = await computeDumpContext(cik, quarter);
   const supabase = getSupabaseClient();
+
+  // Get all CUSIPs for this CIK (may be multiple for multi-series ETFs)
+  const cusips = await loadCusips(supabase, cik);
+  if (cusips.length === 0) {
+    console.log(`[shortReliefV2] No CUSIPs found for CIK ${cik}`);
+    return 0;
+  }
+
+  // Fetch short interest data for all CUSIPs
   const { data: rows, error } = await supabase
     .from('short_interest')
-    .select('settle_date,short_shares')
-    .eq('cik', cik)
+    .select('settle_date,cusip,short_shares')
+    .in('cusip', cusips)
     .gte('settle_date', context.prevQuarterEnd)
     .lte('settle_date', context.nextQuarterEnd);
   if (error) throw error;
-  const sorted = [...(rows ?? [])].sort((a, b) => a.settle_date.localeCompare(b.settle_date));
+
+  // Aggregate short shares by settle_date (sum across all CUSIPs for this issuer)
+  const dateMap = new Map<string, number>();
+  for (const row of rows ?? []) {
+    const existing = dateMap.get(row.settle_date) ?? 0;
+    dateMap.set(row.settle_date, existing + toNumber(row.short_shares));
+  }
+
+  const sorted = Array.from(dateMap.entries())
+    .map(([settle_date, short_shares]) => ({ settle_date, short_shares }))
+    .sort((a, b) => a.settle_date.localeCompare(b.settle_date));
   const anchorDate = quarter.end;
   let before: any | null = null;
   let after: any | null = null;

@@ -166,7 +166,7 @@ export interface UpsertCusipMappingResult {
  * Upsert CUSIP-to-issuer mappings for a given issuer CIK.
  *
  * This populates the cusip_issuer_map table which maps CUSIP identifiers
- * (or ticker symbols for FINRA lookups) to issuer CIKs.
+ * (or ticker symbols for FINRA lookups) to issuer CIKs and series_ids.
  *
  * Priority order:
  * 1. Use provided CUSIPs if given
@@ -175,11 +175,13 @@ export interface UpsertCusipMappingResult {
  *
  * @param cik - The issuer CIK
  * @param providedCusips - Optional array of CUSIPs/tickers to seed
+ * @param seriesId - Optional series_id for ETFs/funds to support multi-series trusts
  * @returns Info about what was added
  */
 export async function upsertCusipMapping(
   cik: string,
-  providedCusips?: string[]
+  providedCusips?: string[],
+  seriesId?: string
 ): Promise<UpsertCusipMappingResult> {
   const supabase = createSupabaseClient();
   const normalizedCik = normalizeCik(cik);
@@ -242,10 +244,11 @@ export async function upsertCusipMapping(
     };
   }
 
-  // Insert CUSIP mappings
+  // Insert CUSIP mappings (with series_id for ETFs/funds)
   const mappings = cusipsToAdd.map((cusip) => ({
     cusip,
     issuer_cik: normalizedCik,
+    series_id: seriesId ?? null,
   }));
 
   const { error: insertError } = await supabase
