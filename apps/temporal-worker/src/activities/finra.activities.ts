@@ -188,7 +188,7 @@ function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
   });
 }
 
-export async function fetchShortInterest(cik: string, settleDates: string[]): Promise<number> {
+export async function fetchShortInterest(cik: string, dateRange: { start: string; end: string }): Promise<number> {
   // Ensure CUSIP mappings exist before attempting to fetch
   await upsertCusipMapping(cik);
 
@@ -202,27 +202,45 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
     return 0;
   }
 
-  let upserts = 0;
-  for (const date of settleDates) {
-    const dataset = await finra.fetchShortInterest(date);
-    const rows = normalizeRows(dataset);
-    const relevantData: Array<{ cusip: string; shares: number }> = [];
-    for (const row of rows) {
-      const cusip = extractCusip(row) ?? extractSymbol(row);
-      if (!cusip || !cusips.has(cusip)) continue;
-      const shares = extractShortShares(row);
-      if (shares === null) {
-        throw new Error(`Missing short interest value for CUSIP ${cusip} on ${date}`);
-      }
-      relevantData.push({ cusip, shares });
-    }
+  console.log(`[fetchShortInterest] Fetching short interest for CIK ${cik} from ${dateRange.start} to ${dateRange.end}`);
 
-    // If no matching data found, skip this date (issuer may not have reportable short interest)
-    if (relevantData.length === 0) {
-      console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} on ${date}`);
+  // Fetch entire date range at once instead of querying individual dates
+  const dataset = await finra.fetchShortInterestRange(dateRange.start, dateRange.end);
+  const rows = normalizeRows(dataset);
+
+  // Group by settlement date and CUSIP
+  const dataByDate = new Map<string, Array<{ cusip: string; shares: number }>>();
+
+  for (const row of rows) {
+    const cusip = extractCusip(row) ?? extractSymbol(row);
+    if (!cusip || !cusips.has(cusip)) continue;
+
+    const settleDateValue = row['settlementDate'] || row['settlementdate'] || row['settle_date'];
+    const settleDate = settleDateValue instanceof Date
+      ? settleDateValue.toISOString().slice(0, 10)
+      : String(settleDateValue);
+
+    const shares = extractShortShares(row);
+    if (shares === null) {
+      console.warn(`[fetchShortInterest] Missing short interest value for CUSIP ${cusip} on ${settleDate}, skipping`);
       continue;
     }
 
+    if (!dataByDate.has(settleDate)) {
+      dataByDate.set(settleDate, []);
+    }
+    dataByDate.get(settleDate)!.push({ cusip, shares });
+  }
+
+  if (dataByDate.size === 0) {
+    console.log(`[fetchShortInterest] No FINRA short interest data found for CIK ${cik} in range ${dateRange.start} to ${dateRange.end}`);
+    return 0;
+  }
+
+  console.log(`[fetchShortInterest] Found ${dataByDate.size} settlement dates with data for CIK ${cik}`);
+
+  let upserts = 0;
+  for (const [date, relevantData] of dataByDate) {
     // Store per-CUSIP data (not aggregated by CIK) to support multi-series ETFs
     const payload = relevantData.map(({ cusip, shares }) => ({
       settle_date: date,
@@ -248,7 +266,7 @@ export async function fetchShortInterest(cik: string, settleDates: string[]): Pr
 
 export async function fetchATSWeekly(
   cik: string,
-  weeks: string[]
+  dateRange: { start: string; end: string }
 ): Promise<number> {
   // Ensure CUSIP mappings exist before attempting to fetch
   await upsertCusipMapping(cik);
@@ -263,39 +281,59 @@ export async function fetchATSWeekly(
     return 0;
   }
 
-  let upserts = 0;
-  for (const week of weeks) {
-    const dataset = await finra.fetchATSWeekly(week);
-    const rows = normalizeRows(dataset);
-    // Map by (cusip, venue) to support per-CUSIP granularity for multi-series ETFs
-    const cusipVenueTotals = new Map<string, { shares: number; trades: number | null }>();
-    for (const row of rows) {
-      const cusip = extractCusip(row) ?? extractSymbol(row);
-      if (!cusip || !cusips.has(cusip)) continue;
-      const shares = extractAtsShares(row);
-      if (shares === null) {
-        throw new Error(`Missing ATS share quantity for ${cusip} on week ${week}`);
-      }
-      const trades = extractAtsTrades(row);
-      const venue = extractVenue(row);
-      const key = `${cusip}:${venue}`;
-      const entry = cusipVenueTotals.get(key);
-      if (entry) {
-        entry.shares += shares;
-        if (trades !== null) {
-          entry.trades = (entry.trades ?? 0) + trades;
-        }
-      } else {
-        cusipVenueTotals.set(key, { shares, trades });
-      }
-    }
+  console.log(`[fetchATSWeekly] Fetching ATS data for CIK ${cik} from ${dateRange.start} to ${dateRange.end}`);
 
-    // If no matching data found, skip this week (issuer may not have reportable ATS activity)
-    if (cusipVenueTotals.size === 0) {
-      console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} on week ${week}`);
+  // Fetch entire date range at once instead of querying individual weeks
+  const dataset = await finra.fetchATSWeeklyRange(dateRange.start, dateRange.end);
+  const rows = normalizeRows(dataset);
+
+  // Group by week_end date, then by (cusip, venue)
+  const dataByWeek = new Map<string, Map<string, { shares: number; trades: number | null }>>();
+
+  for (const row of rows) {
+    const cusip = extractCusip(row) ?? extractSymbol(row);
+    if (!cusip || !cusips.has(cusip)) continue;
+
+    const weekEndValue = row['weekEndDate'] || row['weekending'] || row['weekof'] || row['week_end'];
+    const weekEnd = weekEndValue instanceof Date
+      ? weekEndValue.toISOString().slice(0, 10)
+      : String(weekEndValue);
+
+    const shares = extractAtsShares(row);
+    if (shares === null) {
+      console.warn(`[fetchATSWeekly] Missing ATS share quantity for CUSIP ${cusip} on week ${weekEnd}, skipping`);
       continue;
     }
 
+    const trades = extractAtsTrades(row);
+    const venue = extractVenue(row);
+    const key = `${cusip}:${venue}`;
+
+    if (!dataByWeek.has(weekEnd)) {
+      dataByWeek.set(weekEnd, new Map());
+    }
+
+    const weekData = dataByWeek.get(weekEnd)!;
+    const entry = weekData.get(key);
+    if (entry) {
+      entry.shares += shares;
+      if (trades !== null) {
+        entry.trades = (entry.trades ?? 0) + trades;
+      }
+    } else {
+      weekData.set(key, { shares, trades });
+    }
+  }
+
+  if (dataByWeek.size === 0) {
+    console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} in range ${dateRange.start} to ${dateRange.end}`);
+    return 0;
+  }
+
+  console.log(`[fetchATSWeekly] Found ${dataByWeek.size} weeks with data for CIK ${cik}`);
+
+  let upserts = 0;
+  for (const [week, cusipVenueTotals] of dataByWeek) {
     const payload = Array.from(cusipVenueTotals.entries()).map(([key, totals]) => {
       const [cusip, venue] = key.split(':');
       return {

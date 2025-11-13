@@ -90,9 +90,67 @@ export class FinraClient {
     return this.fetchWithFieldFallback('shortSale', 'shortInterest', settlementDate, filters);
   }
 
+  /**
+   * Fetch short interest data for a date range
+   * More efficient than calling fetchShortInterest multiple times
+   */
+  async fetchShortInterestRange(startDate: string, endDate: string): Promise<Record<string, unknown>[]> {
+    // Fetch entire dataset and filter client-side by date range
+    // FINRA API doesn't support range filters well, so this is more reliable
+    const rows = await this.fetchDataset('shortSale', 'shortInterest', {});
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    return rows.filter((row) => {
+      const normalized = normalizeRow(row);
+      const settlementDate =
+        normalized.get('settlementdate') ||
+        normalized.get('settlementDate');
+
+      if (!settlementDate) return false;
+
+      const date = typeof settlementDate === 'string'
+        ? new Date(settlementDate)
+        : settlementDate instanceof Date
+        ? settlementDate
+        : null;
+
+      return date && date >= start && date <= end;
+    });
+  }
+
   async fetchATSWeekly(weekEndDate: string): Promise<Record<string, unknown>[]> {
     const filters = ['weekEndDate', 'weekof', 'weekOf', 'weekending'];
     return this.fetchWithFieldFallback('otcMarket', 'atsSummary', weekEndDate, filters);
+  }
+
+  /**
+   * Fetch ATS weekly data for a date range
+   * More efficient than calling fetchATSWeekly multiple times
+   */
+  async fetchATSWeeklyRange(startDate: string, endDate: string): Promise<Record<string, unknown>[]> {
+    // Fetch entire dataset and filter client-side by date range
+    const rows = await this.fetchDataset('otcMarket', 'atsSummary', {});
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    return rows.filter((row) => {
+      const normalized = normalizeRow(row);
+      const weekEndDate =
+        normalized.get('weekenddate') ||
+        normalized.get('weekending') ||
+        normalized.get('weekof');
+
+      if (!weekEndDate) return false;
+
+      const date = typeof weekEndDate === 'string'
+        ? new Date(weekEndDate)
+        : weekEndDate instanceof Date
+        ? weekEndDate
+        : null;
+
+      return date && date >= start && date <= end;
+    });
   }
 
   private async fetchWithFieldFallback(
