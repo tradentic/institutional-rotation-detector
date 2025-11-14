@@ -32,12 +32,17 @@ export interface TokenResponse {
 // Query API Request Types
 // ============================================================================
 
-export type CompareType = 'equal' | 'greater' | 'lesser';
+/**
+ * Compare types as documented in FINRA Query API.
+ * Must be serialized as UPPERCASE in request payloads.
+ */
+export type CompareType = 'EQUAL' | 'GREATER' | 'LESSER';
 
 export interface CompareFilter {
   compareType: CompareType;
   fieldName: string;
   fieldValue: string | number;
+  description?: string;
 }
 
 export interface DateRangeFilter {
@@ -63,19 +68,45 @@ export interface FinraPostRequest {
 // Weekly Summary Dataset Types
 // ============================================================================
 
+/**
+ * Weekly Summary Record - matches FINRA otcMarket/weeklySummary dataset schema
+ *
+ * This dataset provides OTC Transparency Weekly Summary data. Applies to both
+ * current (weeklySummary) and historical (weeklySummaryHistoric) datasets.
+ */
 export interface WeeklySummaryRecord {
+  /** Symbol identifier assigned by NASDAQ or FINRA */
   issueSymbolIdentifier: string;
-  issueName?: string;
-  tierIdentifier?: string; // T1, T2, T3
-  summaryStartDate: string; // ISO date
-  weekStartDate: string; // ISO date
+  /** Company name associated with the symbol */
+  issueName: string;
+  /** Firm CRD Number */
+  firmCRDNumber: number | null;
+  /** ATS/OTC identifier */
+  MPID: string | null;
+  /** Company name of the ATS/OTC or De Minimis Firm */
+  marketParticipantName: string | null;
+  /** T1, T2, or OTC */
+  tierIdentifier: string;
+  /** NMS Tier 1, NMS Tier 2, or OTCE description */
+  tierDescription: string;
+  /** Report Start Date (Monday) - yyyy-MM-dd */
+  summaryStartDate: string;
+  /** Aggregate weekly total number of trades */
+  totalWeeklyTradeCount: number;
+  /** Aggregate weekly total number of shares */
   totalWeeklyShareQuantity: number;
-  totalTradeCountSum: number;
-  productTypeCode?: string;
-  summaryTypeCode: string; // ATS_W_SMBL, OTC_W_SMBL, etc.
-  marketParticipantQuantity?: number;
-  lastUpdateDate?: string;
-  [key: string]: unknown; // Allow additional fields
+  /** Product Type */
+  productTypeCode: string;
+  /** Report Type Identifier (e.g., ATS_W_SMBL, OTC_W_SMBL, OTC_W_SMBL_FIRM) */
+  summaryTypeCode: string;
+  /** Partition Key - the first business day of the week (Monday) - yyyy-MM-dd */
+  weekStartDate: string;
+  /** Most recent date data was updated - yyyy-MM-dd */
+  lastUpdateDate: string;
+  /** The initial publish date - yyyy-MM-dd */
+  initialPublishedDate: string;
+  /** Last time a firm sent an update - yyyy-MM-dd */
+  lastReportedDate: string;
 }
 
 export interface WeeklySummaryParams {
@@ -95,20 +126,41 @@ export interface SymbolWeeklyAtsOtc {
 // Consolidated Short Interest Dataset Types
 // ============================================================================
 
+/**
+ * Consolidated Short Interest Record - matches FINRA otcMarket/consolidatedShortInterest dataset schema
+ *
+ * FINRA Rule 4560 requires member firms to report short positions in all OTC equity securities.
+ * This dataset provides a consolidated view of short interest positions across all exchanges.
+ */
 export interface ConsolidatedShortInterestRecord {
-  settlementDate: string; // ISO date
-  issueSymbolIdentifier?: string;
-  symbolCode?: string; // Alternative symbol field
-  cusip?: string;
-  shortInterestQuantity: number;
-  averageDailyVolumeQuantity?: number;
-  daysToCoverQuantity?: number;
-  revisionFlag?: string;
-  marketClassCode?: string;
-  currentShortPositionQuantity?: number;
-  previousShortPositionQuantity?: number;
-  changePercent?: number;
-  [key: string]: unknown;
+  /** Settlement Date for Shorts Cycle in YYYYMMDD format */
+  accountingYearMonthNumber: number;
+  /** Securities Information Processor Symbol Identifier */
+  symbolCode: string;
+  /** Name of the Issue */
+  issueName: string;
+  /** The issuer's service group exchange code */
+  issuerServicesGroupExchangeCode: string | null;
+  /** The market class code */
+  marketClassCode: string;
+  /** Short Position in the current cycle */
+  currentShortPositionQuantity: number;
+  /** Short Position in the previous cycle */
+  previousShortPositionQuantity: number;
+  /** 'S' if stock split occurred in current cycle, null otherwise */
+  stockSplitFlag: string | null;
+  /** Average Daily Volume Quantity (default 0, excludes non-media trades) */
+  averageDailyVolumeQuantity: number;
+  /** Days to Cover Quantity (default 0) */
+  daysToCoverQuantity: number;
+  /** 'R' if prior cycle short position was revised, null otherwise */
+  revisionFlag: string | null;
+  /** Percent Change in Short Position (rounded to 2 decimal places, 100 if no previous) */
+  changePercent: number;
+  /** Difference between Current and Previous Unadjusted Short Position */
+  changePreviousNumber: number;
+  /** Settlement Date - yyyy-MM-dd */
+  settlementDate: string;
 }
 
 export interface ShortInterestIdentifier {
@@ -134,15 +186,26 @@ export interface ShortInterestRangeParams {
 // Reg SHO Daily Short Sale Volume Dataset Types
 // ============================================================================
 
+/**
+ * Reg SHO Daily Short Sale Volume Record - matches FINRA otcMarket/regShoDaily dataset schema
+ *
+ * Provides aggregate daily short sale and short sale exempt volume for OTC equity securities.
+ */
 export interface RegShoDailyRecord {
-  tradeReportDate: string; // ISO date
-  securitiesInformationProcessorSymbolIdentifier: string; // SIP symbol
+  /** Trade Date - yyyy-MM-dd */
+  tradeReportDate: string;
+  /** Security symbol */
+  securitiesInformationProcessorSymbolIdentifier: string;
+  /** Aggregate reported share volume of executed short sale and short sale exempt trades during regular trading hours */
   shortParQuantity: number;
+  /** Aggregate reported share volume of executed short sale exempt trades during regular trading hours */
   shortExemptParQuantity: number;
+  /** Aggregate reported share volume of all executed trades during regular trading hours */
   totalParQuantity: number;
-  marketCode?: string; // e.g., 'Q' for NASDAQ
-  shortVolumePercent?: number;
-  [key: string]: unknown;
+  /** Market Code */
+  marketCode: string;
+  /** Reporting Facility identifier (N = NYSE TRF, Q = NASDAQ TRF Carteret, B = NASDAQ TRF Chicago, D = ADF) */
+  reportingFacilityCode: string;
 }
 
 export interface RegShoDailyParams {

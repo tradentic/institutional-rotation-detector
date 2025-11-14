@@ -224,6 +224,12 @@ export class FinraClient {
 
   /**
    * Core HTTP request with retry logic and token refresh
+   *
+   * Handles:
+   * - 200 OK: success with content
+   * - 204 No Content: success but no results (treated as empty array by parseResponseRows)
+   * - 401 Unauthorized: token refresh and retry
+   * - 429/5xx: retry with exponential backoff
    */
   private async request(
     url: string,
@@ -233,6 +239,11 @@ export class FinraClient {
   ): Promise<Response> {
     try {
       const response = await fetch(url, init);
+
+      // 204 No Content is a successful response (means no results found)
+      if (response.status === 204) {
+        return response;
+      }
 
       if (!response.ok) {
         const body = await safeReadBody(response);
@@ -300,12 +311,41 @@ export class FinraClient {
   /**
    * Query weekly summary historic dataset (data > 12 months old)
    *
-   * @param request - POST request with filters
+   * **IMPORTANT FILTER RESTRICTIONS for weeklySummaryHistoric:**
+   *
+   * Per FINRA Query API documentation, this dataset only supports filtering on:
+   * - `weekStartDate` (required - must specify exactly one of weekStartDate, historicalWeek, or historicalMonth)
+   * - `historicalWeek` (alternative to weekStartDate)
+   * - `historicalMonth` (alternative to weekStartDate)
+   * - `tierIdentifier` (optional - T1, T2, or OTC)
+   *
+   * **NO other fields may be used in compareFilters for this dataset.**
+   *
+   * To filter by symbol or summaryTypeCode, you must:
+   * 1. Use the allowed filters above in your POST request
+   * 2. Filter the returned results client-side for additional constraints
+   *
+   * @param request - POST request with ONLY allowed filters (see above)
    * @returns Weekly summary records
    */
   async queryWeeklySummaryHistoric(
     request: FinraPostRequest
   ): Promise<WeeklySummaryRecord[]> {
+    // Validate that only allowed fields are used in filters
+    if (request.compareFilters) {
+      const allowedFields = ['weekStartDate', 'historicalWeek', 'historicalMonth', 'tierIdentifier'];
+      const invalidFilters = request.compareFilters.filter(
+        f => !allowedFields.includes(f.fieldName)
+      );
+      if (invalidFilters.length > 0) {
+        console.warn(
+          `[FinraClient] weeklySummaryHistoric only supports filters on: ${allowedFields.join(', ')}. ` +
+          `Invalid filters: ${invalidFilters.map(f => f.fieldName).join(', ')}. ` +
+          `These will be sent but may cause API errors. Consider filtering results client-side instead.`
+        );
+      }
+    }
+
     return this.fetchDatasetPaginated(
       'otcMarket',
       'weeklySummaryHistoric',
@@ -332,7 +372,7 @@ export class FinraClient {
 
     const compareFilters: CompareFilter[] = [
       {
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'issueSymbolIdentifier',
         fieldValue: symbol,
       },
@@ -340,7 +380,7 @@ export class FinraClient {
 
     if (weekStartDate) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'weekStartDate',
         fieldValue: weekStartDate,
       });
@@ -348,7 +388,7 @@ export class FinraClient {
 
     if (tierIdentifier) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'tierIdentifier',
         fieldValue: tierIdentifier,
       });
@@ -391,29 +431,26 @@ export class FinraClient {
 
     const compareFilters: CompareFilter[] = [];
 
-    if (identifiers?.issueSymbolIdentifier) {
+    // Note: symbolCode is the correct field name per FINRA metadata
+    // We support issueSymbolIdentifier as an alias for backwards compatibility
+    if (identifiers?.symbolCode) {
       compareFilters.push({
-        compareType: 'equal',
-        fieldName: 'issueSymbolIdentifier',
-        fieldValue: identifiers.issueSymbolIdentifier,
-      });
-    } else if (identifiers?.symbolCode) {
-      compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'symbolCode',
         fieldValue: identifiers.symbolCode,
       });
-    } else if (identifiers?.cusip) {
+    } else if (identifiers?.issueSymbolIdentifier) {
+      // Backwards compatibility: map issueSymbolIdentifier to symbolCode
       compareFilters.push({
-        compareType: 'equal',
-        fieldName: 'cusip',
-        fieldValue: identifiers.cusip,
+        compareType: 'EQUAL',
+        fieldName: 'symbolCode',
+        fieldValue: identifiers.issueSymbolIdentifier,
       });
     }
 
     if (settlementDate) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'settlementDate',
         fieldValue: settlementDate,
       });
@@ -438,34 +475,31 @@ export class FinraClient {
 
     const compareFilters: CompareFilter[] = [];
 
-    if (identifiers?.issueSymbolIdentifier) {
+    // Note: symbolCode is the correct field name per FINRA metadata
+    // We support issueSymbolIdentifier as an alias for backwards compatibility
+    if (identifiers?.symbolCode) {
       compareFilters.push({
-        compareType: 'equal',
-        fieldName: 'issueSymbolIdentifier',
-        fieldValue: identifiers.issueSymbolIdentifier,
-      });
-    } else if (identifiers?.symbolCode) {
-      compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'symbolCode',
         fieldValue: identifiers.symbolCode,
       });
-    } else if (identifiers?.cusip) {
+    } else if (identifiers?.issueSymbolIdentifier) {
+      // Backwards compatibility: map issueSymbolIdentifier to symbolCode
       compareFilters.push({
-        compareType: 'equal',
-        fieldName: 'cusip',
-        fieldValue: identifiers.cusip,
+        compareType: 'EQUAL',
+        fieldName: 'symbolCode',
+        fieldValue: identifiers.issueSymbolIdentifier,
       });
     }
 
     // Add date range filters
     compareFilters.push({
-      compareType: 'greater',
+      compareType: 'GREATER',
       fieldName: 'settlementDate',
       fieldValue: startDate,
     });
     compareFilters.push({
-      compareType: 'lesser',
+      compareType: 'LESSER',
       fieldName: 'settlementDate',
       fieldValue: endDate,
     });
@@ -493,7 +527,7 @@ export class FinraClient {
 
     if (symbol) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'securitiesInformationProcessorSymbolIdentifier',
         fieldValue: symbol,
       });
@@ -501,7 +535,7 @@ export class FinraClient {
 
     if (tradeReportDate) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'tradeReportDate',
         fieldValue: tradeReportDate,
       });
@@ -509,7 +543,7 @@ export class FinraClient {
 
     if (marketCode) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'marketCode',
         fieldValue: marketCode,
       });
@@ -538,7 +572,7 @@ export class FinraClient {
 
     if (symbol) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'issueSymbolIdentifier',
         fieldValue: symbol,
       });
@@ -546,7 +580,7 @@ export class FinraClient {
 
     if (tradeDate) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'tradeDate',
         fieldValue: tradeDate,
       });
@@ -554,7 +588,7 @@ export class FinraClient {
 
     if (onlyOnThreshold) {
       compareFilters.push({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'regShoThresholdFlag',
         fieldValue: 'Y',
       });
@@ -667,12 +701,12 @@ export class FinraClient {
       return this.queryWeeklySummary({
         compareFilters: [
           {
-            compareType: 'greater',
+            compareType: 'GREATER',
             fieldName: 'weekStartDate',
             fieldValue: startDate,
           },
           {
-            compareType: 'lesser',
+            compareType: 'LESSER',
             fieldName: 'weekStartDate',
             fieldValue: endDate,
           },
@@ -687,17 +721,17 @@ export class FinraClient {
       const rows = await this.queryWeeklySummary({
         compareFilters: [
           {
-            compareType: 'equal',
+            compareType: 'EQUAL',
             fieldName: 'cusip',
             fieldValue: cusip,
           },
           {
-            compareType: 'greater',
+            compareType: 'GREATER',
             fieldName: 'weekStartDate',
             fieldValue: startDate,
           },
           {
-            compareType: 'lesser',
+            compareType: 'LESSER',
             fieldName: 'weekStartDate',
             fieldValue: endDate,
           },
@@ -710,17 +744,17 @@ export class FinraClient {
       const rows = await this.queryWeeklySummary({
         compareFilters: [
           {
-            compareType: 'equal',
+            compareType: 'EQUAL',
             fieldName: 'issueSymbolIdentifier',
             fieldValue: symbol,
           },
           {
-            compareType: 'greater',
+            compareType: 'GREATER',
             fieldName: 'weekStartDate',
             fieldValue: startDate,
           },
           {
-            compareType: 'lesser',
+            compareType: 'LESSER',
             fieldName: 'weekStartDate',
             fieldValue: endDate,
           },
@@ -757,7 +791,22 @@ function normalizeRow(row: Record<string, unknown>): Map<string, unknown> {
   return map;
 }
 
+/**
+ * Parse FINRA API response into dataset records
+ *
+ * Handles:
+ * - 204 No Content: returns empty array (per FINRA Query API docs)
+ * - JSON arrays: direct array of records
+ * - JSON objects: with `data` property containing array
+ * - CSV: parsed into array of record objects
+ * - Empty body: returns empty array
+ */
 async function parseResponseRows(response: Response): Promise<DatasetRecord[]> {
+  // Handle 204 No Content - FINRA returns this when no results found
+  if (response.status === 204) {
+    return [];
+  }
+
   const contentType = response.headers.get('content-type') ?? '';
   const body = await response.text();
 

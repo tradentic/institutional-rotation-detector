@@ -257,12 +257,12 @@ describe('FinraClient', () => {
 
       const body = JSON.parse(postCall[1].body);
       expect(body.compareFilters).toContainEqual({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'issueSymbolIdentifier',
         fieldValue: 'IRBT',
       });
       expect(body.compareFilters).toContainEqual({
-        compareType: 'equal',
+        compareType: 'EQUAL',
         fieldName: 'weekStartDate',
         fieldValue: '2024-01-08',
       });
@@ -280,10 +280,37 @@ describe('FinraClient', () => {
           JSON.stringify([
             {
               settlementDate: '2024-01-15',
-              issueSymbolIdentifier: 'IRBT',
-              shortInterestQuantity: 5000000,
+              symbolCode: 'IRBT',
+              currentShortPositionQuantity: 5000000,
             },
           ]),
+      });
+
+      await client.getConsolidatedShortInterest({
+        identifiers: { symbolCode: 'IRBT' },
+        settlementDate: '2024-01-15',
+      });
+
+      const postCall = mockFetch.mock.calls[1];
+      const body = JSON.parse(postCall[1].body);
+
+      expect(body.compareFilters).toContainEqual({
+        compareType: 'EQUAL',
+        fieldName: 'symbolCode',
+        fieldValue: 'IRBT',
+      });
+      expect(body.compareFilters).toContainEqual({
+        compareType: 'EQUAL',
+        fieldName: 'settlementDate',
+        fieldValue: '2024-01-15',
+      });
+    });
+
+    it('should support issueSymbolIdentifier for backwards compatibility', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
       });
 
       await client.getConsolidatedShortInterest({
@@ -294,15 +321,11 @@ describe('FinraClient', () => {
       const postCall = mockFetch.mock.calls[1];
       const body = JSON.parse(postCall[1].body);
 
+      // Should map issueSymbolIdentifier to symbolCode field
       expect(body.compareFilters).toContainEqual({
-        compareType: 'equal',
-        fieldName: 'issueSymbolIdentifier',
+        compareType: 'EQUAL',
+        fieldName: 'symbolCode',
         fieldValue: 'IRBT',
-      });
-      expect(body.compareFilters).toContainEqual({
-        compareType: 'equal',
-        fieldName: 'settlementDate',
-        fieldValue: '2024-01-15',
       });
     });
 
@@ -314,7 +337,7 @@ describe('FinraClient', () => {
       });
 
       await client.getConsolidatedShortInterestRange({
-        identifiers: { cusip: '123456789' },
+        identifiers: { symbolCode: 'IRBT' },
         startDate: '2024-01-01',
         endDate: '2024-01-31',
       });
@@ -323,17 +346,17 @@ describe('FinraClient', () => {
       const body = JSON.parse(postCall[1].body);
 
       expect(body.compareFilters).toContainEqual({
-        compareType: 'equal',
-        fieldName: 'cusip',
-        fieldValue: '123456789',
+        compareType: 'EQUAL',
+        fieldName: 'symbolCode',
+        fieldValue: 'IRBT',
       });
       expect(body.compareFilters).toContainEqual({
-        compareType: 'greater',
+        compareType: 'GREATER',
         fieldName: 'settlementDate',
         fieldValue: '2024-01-01',
       });
       expect(body.compareFilters).toContainEqual({
-        compareType: 'lesser',
+        compareType: 'LESSER',
         fieldName: 'settlementDate',
         fieldValue: '2024-01-31',
       });
@@ -365,6 +388,311 @@ AAPL,50000,2024-01-15`,
 
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual({ symbol: 'IRBT', shares: '100000', date: '2024-01-15' });
+    });
+  });
+
+  describe('HTTP 204 No Content Handling', () => {
+    beforeEach(() => {
+      // Mock token for all tests
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'test-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      });
+    });
+
+    it('should return empty array for 204 response', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        headers: { get: () => null },
+        text: async () => '',
+      });
+
+      const result = await (client as any).getDataset('otcMarket', 'test', {});
+      expect(result).toEqual([]);
+    });
+
+    it('should handle 204 in POST requests', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        headers: { get: () => null },
+        text: async () => '',
+      });
+
+      const result = await client.queryWeeklySummary({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'issueSymbolIdentifier',
+            fieldValue: 'NONEXISTENT',
+          },
+        ],
+      });
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('Type Conformance', () => {
+    beforeEach(() => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'test-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      });
+    });
+
+    it('should parse consolidated short interest records correctly', async () => {
+      const mockRecord = {
+        accountingYearMonthNumber: 20240115,
+        symbolCode: 'IRBT',
+        issueName: 'iRobot Corporation',
+        issuerServicesGroupExchangeCode: 'Q',
+        marketClassCode: 'Q',
+        currentShortPositionQuantity: 5000000,
+        previousShortPositionQuantity: 4800000,
+        stockSplitFlag: null,
+        averageDailyVolumeQuantity: 250000,
+        daysToCoverQuantity: 20,
+        revisionFlag: null,
+        changePercent: 4.17,
+        changePreviousNumber: 200000,
+        settlementDate: '2024-01-15',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify([mockRecord]),
+      });
+
+      const result = await client.getConsolidatedShortInterest({
+        identifiers: { symbolCode: 'IRBT' },
+        settlementDate: '2024-01-15',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject(mockRecord);
+      expect(typeof result[0].currentShortPositionQuantity).toBe('number');
+      expect(typeof result[0].symbolCode).toBe('string');
+    });
+
+    it('should parse reg SHO daily records correctly', async () => {
+      const mockRecord = {
+        tradeReportDate: '2024-01-15',
+        securitiesInformationProcessorSymbolIdentifier: 'IRBT',
+        shortParQuantity: 100000,
+        shortExemptParQuantity: 5000,
+        totalParQuantity: 500000,
+        marketCode: 'Q',
+        reportingFacilityCode: 'N',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify([mockRecord]),
+      });
+
+      const result = await client.getRegShoDaily({
+        symbol: 'IRBT',
+        tradeReportDate: '2024-01-15',
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject(mockRecord);
+      expect(typeof result[0].shortParQuantity).toBe('number');
+      expect(typeof result[0].reportingFacilityCode).toBe('string');
+    });
+
+    it('should parse weekly summary records correctly', async () => {
+      const mockRecord = {
+        issueSymbolIdentifier: 'IRBT',
+        issueName: 'iRobot Corporation',
+        firmCRDNumber: 12345,
+        MPID: 'TEST',
+        marketParticipantName: 'Test Market Maker',
+        tierIdentifier: 'T2',
+        tierDescription: 'NMS Tier 2',
+        summaryStartDate: '2024-01-08',
+        totalWeeklyTradeCount: 150,
+        totalWeeklyShareQuantity: 500000,
+        productTypeCode: 'EQ',
+        summaryTypeCode: 'ATS_W_SMBL',
+        weekStartDate: '2024-01-08',
+        lastUpdateDate: '2024-01-15',
+        initialPublishedDate: '2024-01-15',
+        lastReportedDate: '2024-01-15',
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify([mockRecord]),
+      });
+
+      const result = await client.queryWeeklySummary({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'issueSymbolIdentifier',
+            fieldValue: 'IRBT',
+          },
+        ],
+      });
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject(mockRecord);
+      expect(typeof result[0].totalWeeklyTradeCount).toBe('number');
+      expect(typeof result[0].summaryTypeCode).toBe('string');
+    });
+  });
+
+  describe('Weekly Summary Historic Filter Validation', () => {
+    beforeEach(() => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'test-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      });
+    });
+
+    it('should warn when invalid filters are used for weeklySummaryHistoric', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.queryWeeklySummaryHistoric({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'weekStartDate',
+            fieldValue: '2023-01-01',
+          },
+          {
+            compareType: 'EQUAL',
+            fieldName: 'issueSymbolIdentifier', // Invalid for historic
+            fieldValue: 'IRBT',
+          },
+        ],
+      });
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('weeklySummaryHistoric only supports filters on')
+      );
+      expect(consoleWarnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('issueSymbolIdentifier')
+      );
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should not warn when only valid filters are used for weeklySummaryHistoric', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.queryWeeklySummaryHistoric({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'weekStartDate',
+            fieldValue: '2023-01-01',
+          },
+          {
+            compareType: 'EQUAL',
+            fieldName: 'tierIdentifier',
+            fieldValue: 'T2',
+          },
+        ],
+      });
+
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+
+      consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe('CompareType Uppercase Verification', () => {
+    beforeEach(() => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          access_token: 'test-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }),
+      });
+    });
+
+    it('should send compareType as uppercase in POST body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.queryWeeklySummary({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'issueSymbolIdentifier',
+            fieldValue: 'IRBT',
+          },
+        ],
+      });
+
+      const postCall = mockFetch.mock.calls[1];
+      const body = JSON.parse(postCall[1].body);
+
+      expect(body.compareFilters[0].compareType).toBe('EQUAL');
+      expect(body.compareFilters[0].compareType).not.toBe('equal');
+    });
+
+    it('should use uppercase GREATER and LESSER for range queries', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.getConsolidatedShortInterestRange({
+        identifiers: { symbolCode: 'IRBT' },
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+      });
+
+      const postCall = mockFetch.mock.calls[1];
+      const body = JSON.parse(postCall[1].body);
+
+      const greaterFilter = body.compareFilters.find(
+        (f: any) => f.compareType === 'GREATER'
+      );
+      const lesserFilter = body.compareFilters.find(
+        (f: any) => f.compareType === 'LESSER'
+      );
+
+      expect(greaterFilter).toBeDefined();
+      expect(lesserFilter).toBeDefined();
     });
   });
 });
