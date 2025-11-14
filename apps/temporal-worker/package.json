@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.1",
+    "@libs/finra-client": "workspace:*",
     "@libs/openai-client": "workspace:*",
     "@supabase/supabase-js": "^2.81.1",
     "@temporalio/activity": "^1.13.2",

@@ -1,0 +1,36 @@
+{
+  "name": "@libs/finra-client",
+  "version": "1.0.0",
+  "description": "Shared FINRA API client library with Query API support for ATS, short interest, and Reg SHO datasets",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "finra",
+    "ats",
+    "short-interest",
+    "reg-sho",
+    "otc-market",
+    "trading-data"
+  ],
+  "author": "Tradentic",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
+  }
+}
