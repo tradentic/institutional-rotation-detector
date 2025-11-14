@@ -166,6 +166,12 @@ export class FinraClient {
       group
     )}/name/${encodeURIComponent(dataset)}`;
 
+    // Normalize compareFilters to uppercase for FINRA API
+    const normalizedBody = {
+      ...body,
+      compareFilters: normalizeCompareFilters(body.compareFilters),
+    };
+
     const accessToken = await this.getAccessToken();
     const response = await this.request(url, {
       method: 'POST',
@@ -174,7 +180,7 @@ export class FinraClient {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(normalizedBody),
     });
 
     return parseResponseRows(response);
@@ -754,6 +760,24 @@ export class FinraClient {
 // ============================================================================
 // Utility Functions
 // ============================================================================
+
+/**
+ * Normalize compareFilters to use uppercase compareType values
+ *
+ * FINRA's historical datasets require uppercase compareType (EQUAL, GREATER, LESSER).
+ * This function ensures backwards compatibility by accepting both lowercase and uppercase,
+ * but always sends uppercase to the API.
+ *
+ * @param filters - CompareFilter array (may be undefined)
+ * @returns Normalized filters with uppercase compareType, or undefined if input was undefined
+ */
+function normalizeCompareFilters(filters?: CompareFilter[]): CompareFilter[] | undefined {
+  if (!filters) return undefined;
+  return filters.map((f) => ({
+    ...f,
+    compareType: f.compareType.toUpperCase() as CompareType,
+  }));
+}
 
 function shouldRetry(status: number): boolean {
   return status === 429 || status >= 500;

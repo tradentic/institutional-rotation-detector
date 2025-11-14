@@ -34,9 +34,14 @@ export interface TokenResponse {
 
 /**
  * Compare types as documented in FINRA Query API.
- * Must be serialized as UPPERCASE in request payloads.
+ *
+ * Accepts both lowercase and uppercase for backwards compatibility,
+ * but will be normalized to UPPERCASE in request payloads.
+ * FINRA's historical datasets require uppercase compareType values.
  */
-export type CompareType = 'EQUAL' | 'GREATER' | 'LESSER';
+export type CompareType =
+  | 'equal' | 'greater' | 'lesser'
+  | 'EQUAL' | 'GREATER' | 'LESSER';
 
 export interface CompareFilter {
   compareType: CompareType;
@@ -112,7 +117,8 @@ export interface WeeklySummaryRecord {
 export interface WeeklySummaryParams {
   symbol?: string;
   weekStartDate?: string; // 'YYYY-MM-DD'
-  tierIdentifier?: 'T1' | 'T2' | 'T3';
+  /** NMS Tier 1 (T1), NMS Tier 2 (T2), or OTC equity securities (OTC/OTCE) */
+  tierIdentifier?: 'T1' | 'T2' | 'OTC';
   summaryTypeCode?: string; // e.g., 'ATS_W_SMBL', 'OTC_W_SMBL'
   limit?: number;
 }

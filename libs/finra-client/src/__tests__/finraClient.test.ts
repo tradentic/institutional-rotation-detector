@@ -645,6 +645,52 @@ AAPL,50000,2024-01-15`,
       expect(body.compareFilters[0].compareType).not.toBe('equal');
     });
 
+    it('should normalize lowercase compareType to uppercase', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.queryWeeklySummary({
+        compareFilters: [
+          {
+            compareType: 'equal' as any,
+            fieldName: 'tierIdentifier',
+            fieldValue: 'T1',
+          },
+        ],
+      });
+
+      const postCall = mockFetch.mock.calls[1];
+      const body = JSON.parse(postCall[1].body);
+
+      // Should normalize 'equal' to 'EQUAL' in the request
+      expect(body.compareFilters[0].compareType).toBe('EQUAL');
+    });
+
+    it('should normalize mixed case compareTypes to uppercase', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => 'application/json' },
+        text: async () => '[]',
+      });
+
+      await client.getConsolidatedShortInterestRange({
+        identifiers: { symbolCode: 'IRBT' },
+        startDate: '2024-01-01',
+        endDate: '2024-01-31',
+      });
+
+      const postCall = mockFetch.mock.calls[1];
+      const body = JSON.parse(postCall[1].body);
+
+      // All compareTypes should be uppercase
+      body.compareFilters.forEach((f: any) => {
+        expect(['EQUAL', 'GREATER', 'LESSER']).toContain(f.compareType);
+      });
+    });
+
     it('should use uppercase GREATER and LESSER for range queries', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -670,6 +716,29 @@ AAPL,50000,2024-01-15`,
 
       expect(greaterFilter).toBeDefined();
       expect(lesserFilter).toBeDefined();
+    });
+  });
+
+  describe('WeeklySummaryParams tierIdentifier', () => {
+    it('should accept OTC as a valid tierIdentifier', () => {
+      const params: import('../types').WeeklySummaryParams = {
+        symbol: 'IRBT',
+        tierIdentifier: 'OTC',
+      };
+
+      expect(params.tierIdentifier).toBe('OTC');
+    });
+
+    it('should accept T1 and T2 as valid tierIdentifiers', () => {
+      const params1: import('../types').WeeklySummaryParams = {
+        tierIdentifier: 'T1',
+      };
+      const params2: import('../types').WeeklySummaryParams = {
+        tierIdentifier: 'T2',
+      };
+
+      expect(params1.tierIdentifier).toBe('T1');
+      expect(params2.tierIdentifier).toBe('T2');
     });
   });
 });
