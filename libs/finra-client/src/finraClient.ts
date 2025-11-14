@@ -432,19 +432,11 @@ export class FinraClient {
     const compareFilters: CompareFilter[] = [];
 
     // Note: symbolCode is the correct field name per FINRA metadata
-    // We support issueSymbolIdentifier as an alias for backwards compatibility
     if (identifiers?.symbolCode) {
       compareFilters.push({
         compareType: 'EQUAL',
         fieldName: 'symbolCode',
         fieldValue: identifiers.symbolCode,
-      });
-    } else if (identifiers?.issueSymbolIdentifier) {
-      // Backwards compatibility: map issueSymbolIdentifier to symbolCode
-      compareFilters.push({
-        compareType: 'EQUAL',
-        fieldName: 'symbolCode',
-        fieldValue: identifiers.issueSymbolIdentifier,
       });
     }
 
@@ -476,19 +468,11 @@ export class FinraClient {
     const compareFilters: CompareFilter[] = [];
 
     // Note: symbolCode is the correct field name per FINRA metadata
-    // We support issueSymbolIdentifier as an alias for backwards compatibility
     if (identifiers?.symbolCode) {
       compareFilters.push({
         compareType: 'EQUAL',
         fieldName: 'symbolCode',
         fieldValue: identifiers.symbolCode,
-      });
-    } else if (identifiers?.issueSymbolIdentifier) {
-      // Backwards compatibility: map issueSymbolIdentifier to symbolCode
-      compareFilters.push({
-        compareType: 'EQUAL',
-        fieldName: 'symbolCode',
-        fieldValue: identifiers.issueSymbolIdentifier,
       });
     }
 

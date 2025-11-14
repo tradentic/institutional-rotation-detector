@@ -306,29 +306,6 @@ describe('FinraClient', () => {
       });
     });
 
-    it('should support issueSymbolIdentifier for backwards compatibility', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        headers: { get: () => 'application/json' },
-        text: async () => '[]',
-      });
-
-      await client.getConsolidatedShortInterest({
-        identifiers: { issueSymbolIdentifier: 'IRBT' },
-        settlementDate: '2024-01-15',
-      });
-
-      const postCall = mockFetch.mock.calls[1];
-      const body = JSON.parse(postCall[1].body);
-
-      // Should map issueSymbolIdentifier to symbolCode field
-      expect(body.compareFilters).toContainEqual({
-        compareType: 'EQUAL',
-        fieldName: 'symbolCode',
-        fieldValue: 'IRBT',
-      });
-    });
-
     it('should build date range filters for getConsolidatedShortInterestRange', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

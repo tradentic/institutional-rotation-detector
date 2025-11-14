@@ -1,8 +1,11 @@
 import { createSupabaseClient } from '../lib/supabase';
-import { createFinraClient, FinraClient, type NormalizedRow } from '../lib/finraClient';
+import { createFinraClient, FinraClient, createNormalizedRow } from '@libs/finra-client';
 import crypto from 'crypto';
 import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
 import { upsertCusipMapping } from './entity-utils';
+
+// Type alias for normalized row (lowercase keys)
+type NormalizedRow = Map<string, unknown>;
 
 let cachedClient: FinraClient | null = null;
 
@@ -67,7 +70,8 @@ function extractCusip(row: NormalizedRow): string | null {
 function extractSymbol(row: NormalizedRow): string | null {
   const value = getField(
     row,
-    'issuesymbolidentifier',
+    'issuesymbolidentifier',  // Weekly summary field
+    'symbolcode',              // Short interest field (FINRA name)
     'symbol',
     'ticker',
     'securitysymbol',
@@ -79,6 +83,7 @@ function extractSymbol(row: NormalizedRow): string | null {
 function extractShortShares(row: NormalizedRow): number | null {
   const value = getField(
     row,
+    'currentshortpositionquantity',  // FINRA field name
     'shortinterest',
     'currentshortinterestquantity',
     'currentshortinterest',
@@ -220,13 +225,19 @@ export async function fetchShortInterest(cik: string, dateRange: { start: string
 
   console.log(`[fetchShortInterest] Fetching short interest for CIK ${cik} (ticker: ${ticker}, CUSIPs: ${Array.from(cusips).join(', ')}) from ${dateRange.start} to ${dateRange.end}`);
 
-  // Fetch date range using CUSIPs (more precise) with ticker as fallback
-  const queryIdentifiers = {
-    cusips: Array.from(cusips),
-    symbols: ticker ? [ticker.toUpperCase()] : []
-  };
-  const dataset = await finra.fetchShortInterestRange(dateRange.start, dateRange.end, queryIdentifiers);
-  const rows = normalizeRows(dataset);
+  // Fetch date range using ticker (symbolCode per FINRA API)
+  // Note: FINRA consolidatedShortInterest uses symbolCode, not CUSIP
+  const dataset: unknown[] = [];
+  if (ticker) {
+    const records = await finra.getConsolidatedShortInterestRange({
+      identifiers: { symbolCode: ticker.toUpperCase() },
+      startDate: dateRange.start,
+      endDate: dateRange.end,
+    });
+    dataset.push(...records);
+  }
+
+  const rows = normalizeRows(dataset as Record<string, unknown>[]);
 
   console.log(`[fetchShortInterest] Retrieved ${rows.length} total short interest records from FINRA`);
 
@@ -318,13 +329,32 @@ export async function fetchATSWeekly(
 
   console.log(`[fetchATSWeekly] Fetching ATS data for CIK ${cik} (ticker: ${ticker}, CUSIPs: ${Array.from(cusips).join(', ')}) from ${dateRange.start} to ${dateRange.end}`);
 
-  // Fetch date range using CUSIPs (more precise) with ticker as fallback
-  const queryIdentifiers = {
-    cusips: Array.from(cusips),
-    symbols: ticker ? [ticker.toUpperCase()] : []
-  };
-  const dataset = await finra.fetchATSWeeklyRange(dateRange.start, dateRange.end, queryIdentifiers);
-  const rows = normalizeRows(dataset);
+  // Fetch date range using ticker (issueSymbolIdentifier per FINRA API)
+  const dataset: unknown[] = [];
+  if (ticker) {
+    const records = await finra.queryWeeklySummary({
+      compareFilters: [
+        {
+          compareType: 'EQUAL',
+          fieldName: 'issueSymbolIdentifier',
+          fieldValue: ticker.toUpperCase(),
+        },
+        {
+          compareType: 'GREATER',
+          fieldName: 'weekStartDate',
+          fieldValue: dateRange.start,
+        },
+        {
+          compareType: 'LESSER',
+          fieldName: 'weekStartDate',
+          fieldValue: dateRange.end,
+        },
+      ],
+    });
+    dataset.push(...records);
+  }
+
+  const rows = normalizeRows(dataset as Record<string, unknown>[]);
 
   console.log(`[fetchATSWeekly] Retrieved ${rows.length} total ATS weekly records from FINRA`);
 
@@ -573,9 +603,23 @@ export async function fetchOtcWeeklyVenue(input: FinraOtcWeeklyInput): Promise<F
   const finra = getFinraClient();
 
   // Fetch dataset from FINRA
-  // Note: FINRA OTC Transparency has separate datasets for ATS and non-ATS
-  const datasetName = input.source === 'ATS' ? 'atsWeeklyData' : 'otcWeeklyData';
-  const dataset = await finra.fetchATSWeekly(input.weekEnd); // Reuse existing method or create new one
+  // Note: FINRA OTC Transparency uses weeklySummary dataset
+  // Filter by summaryTypeCode: ATS_W_SMBL for ATS, OTC_W_SMBL for OTC
+  const summaryTypeCode = input.source === 'ATS' ? 'ATS_W_SMBL' : 'OTC_W_SMBL';
+  const dataset = await finra.queryWeeklySummary({
+    compareFilters: [
+      {
+        compareType: 'EQUAL',
+        fieldName: 'weekStartDate',
+        fieldValue: input.weekEnd,
+      },
+      {
+        compareType: 'EQUAL',
+        fieldName: 'summaryTypeCode',
+        fieldValue: summaryTypeCode,
+      },
+    ],
+  });
 
   // Generate file provenance
   const fileId = `FINRA_OTC_${input.source}_${input.weekEnd.replace(/-/g, '')}`;

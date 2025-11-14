@@ -164,8 +164,7 @@ export interface ConsolidatedShortInterestRecord {
 }
 
 export interface ShortInterestIdentifier {
-  issueSymbolIdentifier?: string;
-  cusip?: string;
+  /** Symbol code (FINRA field name: symbolCode) */
   symbolCode?: string;
 }
 
