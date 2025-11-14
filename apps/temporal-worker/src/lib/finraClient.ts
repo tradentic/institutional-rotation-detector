@@ -226,7 +226,7 @@ export class FinraClient {
       const response = await this.request(url, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/json, text/csv',
+          'Accept': 'application/json',
         },
       });
       const rows = await parseResponseRows(response);
