@@ -77,6 +77,14 @@ export type {
   // Core config
   FinraClientConfig,
   TokenResponse,
+  RateLimiter,
+  Cache,
+  CircuitBreaker,
+  Logger,
+  MetricsSink,
+  HttpTransport,
+  QueryParams,
+  RequestOptions,
   // Query API types
   CompareType,
   CompareFilter,
@@ -101,8 +109,5 @@ export type {
   DatasetRecord,
 } from './types';
 
-// ============================================================================
-// Error Exports
-// ============================================================================
+export { ApiRequestError, FinraRequestError, NoopRateLimiter, InMemoryCache } from './types';
 
-export { FinraRequestError } from './types';

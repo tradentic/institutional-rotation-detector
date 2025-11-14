@@ -11,7 +11,7 @@
  * - Anomaly detection with ML models
  */
 
-import { createClient, createCodeSession } from '@libs/openai-client';
+import { createClient, createCodeSession } from '../lib/openaiClient';
 import { createSupabaseClient } from '../lib/supabase';
 
 export interface StatisticalAnalysisInput {

@@ -17,6 +17,8 @@ export type GPT5Model =
 /**
  * GPT-5 specific configuration
  */
+import type { OpenAiClient, OpenAiClientConfig } from '../../openaiClient';
+
 export interface GPT5Config {
   /**
    * GPT-5 model variant
@@ -27,4 +29,14 @@ export interface GPT5Config {
    * API key (falls back to OPENAI_API_KEY env var)
    */
   apiKey?: string;
+
+  /**
+   * Optional shared OpenAI HTTP client
+   */
+  httpClient?: OpenAiClient;
+
+  /**
+   * Overrides applied when constructing the HTTP client internally
+   */
+  httpClientConfig?: Partial<Omit<OpenAiClientConfig, 'apiKey'>>;
 }

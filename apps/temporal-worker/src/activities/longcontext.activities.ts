@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createSupabaseClient } from '../lib/supabase';
-import { createClient } from '@libs/openai-client';
+import { createClient } from '../lib/openaiClient';
 
 export interface BundleForSynthesisInput {
   edgeIds: string[];

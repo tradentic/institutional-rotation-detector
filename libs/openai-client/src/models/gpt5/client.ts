@@ -8,7 +8,6 @@
  * This file only contains GPT-5-specific API calls and configurations.
  */
 
-import OpenAI from 'openai';
 import type {
   AIClient,
   ModelConfig,
@@ -16,6 +15,8 @@ import type {
   ResponseResult,
   ResponseItem,
 } from '../../core/types';
+import type { OpenAiClient, OpenAiResponsesRequest, OpenAiResponsesResult } from '../../openaiClient';
+import { OpenAiClient as DefaultOpenAiClient } from '../../openaiClient';
 import type { GPT5Model, GPT5Config } from './types';
 
 /**
@@ -24,21 +25,24 @@ import type { GPT5Model, GPT5Config } from './types';
  * Implements the model-agnostic AIClient interface using GPT-5's Responses API.
  */
 export class GPT5Client implements AIClient {
-  private openai: OpenAI;
+  private readonly http: OpenAiClient;
   private model: GPT5Model;
   private config: ModelConfig;
 
   constructor(config: GPT5Config) {
     const apiKey = config.apiKey ?? process.env.OPENAI_API_KEY;
-    if (!apiKey) {
+    if (!config.httpClient && !apiKey) {
       throw new Error('OPENAI_API_KEY missing');
     }
 
-    this.openai = new OpenAI({ apiKey });
+    this.http = config.httpClient ?? new DefaultOpenAiClient({
+      apiKey: apiKey!,
+      ...config.httpClientConfig,
+    });
     this.model = config.model;
     this.config = {
       version: config.model,
-      apiKey,
+      apiKey: apiKey ?? '[external-http-client]',
     };
   }
 
@@ -64,7 +68,7 @@ export class GPT5Client implements AIClient {
     this.validateParams(params);
 
     // Build request body for GPT-5 Responses API
-    const requestBody: any = {
+    const requestBody: OpenAiResponsesRequest = {
       model: this.model,
       input: params.input,
     };
@@ -103,19 +107,14 @@ export class GPT5Client implements AIClient {
       });
     }
 
-    // Call GPT-5 Responses API
-    const response = await this.openai.post('/v1/responses', {
-      body: requestBody,
-    }) as Response;
-
-    const data = await response.json() as any;
+    const data = await this.http.createResponse(requestBody) as OpenAiResponsesResult;
 
     // Parse items
-    const items: ResponseItem[] = (data.items || []).map((item: any) => {
+    const items: ResponseItem[] = (data.items || []).map((item: Record<string, any>) => {
       if (item.type === 'reasoning') {
         return { type: 'reasoning', reasoning: item.content };
-      } else if (item.type === 'function_call') {
-        // Function calls have JSON-encoded arguments
+      }
+      if (item.type === 'function_call') {
         return {
           type: 'function_call',
           function_call: {
@@ -125,8 +124,8 @@ export class GPT5Client implements AIClient {
             arguments: item.arguments,
           },
         };
-      } else if (item.type === 'custom_tool_call') {
-        // Custom tool calls have plain text input
+      }
+      if (item.type === 'custom_tool_call') {
         return {
           type: 'custom_tool_call',
           custom_tool_call: {
@@ -136,9 +135,8 @@ export class GPT5Client implements AIClient {
             input: item.input,
           },
         };
-      } else {
-        return { type: 'message', content: item.content };
       }
+      return { type: 'message', content: item.content };
     });
 
     // Extract output text
@@ -178,8 +176,17 @@ export class GPT5Client implements AIClient {
 /**
  * Helper function to create a GPT-5 client
  */
-export function createGPT5Client(model: GPT5Model = 'gpt-5-mini', apiKey?: string): GPT5Client {
-  return new GPT5Client({ model, apiKey });
+export function createGPT5Client(
+  model: GPT5Model = 'gpt-5-mini',
+  apiKey?: string,
+  options?: { httpClient?: OpenAiClient; httpClientConfig?: GPT5Config['httpClientConfig'] },
+): GPT5Client {
+  return new GPT5Client({
+    model,
+    apiKey,
+    httpClient: options?.httpClient,
+    httpClientConfig: options?.httpClientConfig,
+  });
 }
 
 /**

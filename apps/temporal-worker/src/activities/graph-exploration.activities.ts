@@ -10,7 +10,7 @@
  * Q3: "What's the timeline of these rotations?" (knows context from Q1 & Q2)
  */
 
-import { createClient, createAnalysisSession } from '@libs/openai-client';
+import { createClient, createAnalysisSession } from '../lib/openaiClient';
 import { createSupabaseClient } from '../lib/supabase';
 
 export interface ExploreGraphInput {

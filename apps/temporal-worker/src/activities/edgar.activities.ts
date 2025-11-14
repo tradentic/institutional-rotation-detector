@@ -173,11 +173,19 @@ export async function resolveCIK(ticker: string) {
 
   const cusipValues = securities.map((sec) => sec.cusip);
   const normalizedCusips = normalizeCusips(cusipValues);
+  const fallbackTickers = Array.from(
+    new Set(
+      securities
+        .map((sec) => sec.ticker?.trim().toUpperCase())
+        .filter((value): value is string => Boolean(value))
+    )
+  );
   console.log(`[resolveCIK] Normalized ${normalizedCusips.length} CUSIPs from securities`);
 
   // Self-healing CUSIP resolution with automatic fallback to OpenFIGI and SEC filings
   // This replaces the old ticker symbol fallback which caused silent data collection failures
-  const cusipsToReturn = await getCusipForTicker(ticker, cik, normalizedCusips);
+  const submissionsIdentifiers = normalizedCusips.length > 0 ? normalizedCusips : fallbackTickers;
+  const cusipsToReturn = await getCusipForTicker(ticker, cik, submissionsIdentifiers);
 
   // Ensure entity and CUSIP mappings are created immediately
   await upsertEntity(cik, 'issuer');

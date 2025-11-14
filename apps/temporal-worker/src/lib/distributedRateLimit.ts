@@ -1,4 +1,4 @@
-import { getRedisCache } from './redisClient';
+import { getRedisCache, redisDebugLog } from './redisClient';
 
 /**
  * Distributed rate limiter using Redis for coordination across multiple worker instances.
@@ -42,7 +42,7 @@ export class DistributedRateLimiter {
    * Will never throw an error - always allows requests to proceed.
    */
   async throttle(now = Date.now()): Promise<void> {
-    const redis = (this.cache as any).client;
+    const redis = this.cache.getClient();
 
     // If Redis is not available or not enabled, fall back to in-memory rate limiting
     if (!redis) {
@@ -79,11 +79,11 @@ export class DistributedRateLimiter {
       this.redisFailureTimestamp = now;
 
       if (this.consecutiveRedisFailures >= this.maxConsecutiveFailures) {
-        console.warn(
+        redisDebugLog(
           `[DistributedRateLimiter] Redis circuit breaker opened after ${this.consecutiveRedisFailures} failures`
         );
       } else {
-        console.warn('[DistributedRateLimiter] Redis error, falling back to in-memory:', err);
+        redisDebugLog('[DistributedRateLimiter] Redis error, falling back to in-memory', err);
       }
 
       return this.throttleInMemory(now);
@@ -101,7 +101,7 @@ export class DistributedRateLimiter {
     const timeSinceFailure = now - this.redisFailureTimestamp;
     if (timeSinceFailure >= this.failureBackoffMs) {
       // Try Redis again after backoff period
-      console.log('[DistributedRateLimiter] Circuit breaker reset, retrying Redis');
+      redisDebugLog('[DistributedRateLimiter] Circuit breaker reset, retrying Redis');
       this.consecutiveRedisFailures = 0;
       return false;
     }
@@ -201,7 +201,7 @@ export class DistributedRateLimiter {
       // Default wait time based on minimum interval
       return this.minIntervalMs;
     } catch (err) {
-      console.warn('[DistributedRateLimiter] Error calculating wait time:', err);
+      redisDebugLog('[DistributedRateLimiter] Error calculating wait time', err);
       return this.minIntervalMs;
     }
   }
@@ -230,7 +230,7 @@ export class DistributedRateLimiter {
       try {
         await redis.del(this.redisKey);
       } catch (err) {
-        console.warn('[DistributedRateLimiter] Error clearing rate limit:', err);
+        redisDebugLog('[DistributedRateLimiter] Error clearing rate limit', err);
       }
     }
     this.lastTs = 0;
@@ -255,7 +255,7 @@ export class DistributedRateLimiter {
 
       return count;
     } catch (err) {
-      console.warn('[DistributedRateLimiter] Error getting current count:', err);
+      redisDebugLog('[DistributedRateLimiter] Error getting current count', err);
       return 0;
     }
   }

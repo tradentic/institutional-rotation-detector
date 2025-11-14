@@ -11,7 +11,7 @@
  * - Pattern recognition beyond formula-based scoring
  */
 
-import { createClient, createAnalysisSession } from '@libs/openai-client';
+import { createClient, createAnalysisSession } from '../lib/openaiClient';
 import { createSupabaseClient } from '../lib/supabase';
 
 export interface AnalyzeRotationEventInput {

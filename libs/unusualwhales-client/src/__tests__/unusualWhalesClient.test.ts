@@ -1,17 +1,19 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  InMemoryCache,
   UnusualWhalesClient,
+  UnusualWhalesRequestError,
   createUnusualWhalesClientFromEnv,
   type RateLimiter,
 } from '../unusualWhalesClient';
 
 const originalEnv = { ...process.env };
 
-const jsonResponse = (data: unknown) => ({
-  ok: true,
-  status: 200,
-  text: async () => JSON.stringify(data),
-});
+const jsonResponse = (data: unknown, init?: ResponseInit) =>
+  new Response(JSON.stringify(data), {
+    status: init?.status ?? 200,
+    headers: { 'content-type': 'application/json', ...(init?.headers as Record<string, string> | undefined) },
+  });
 
 describe('createUnusualWhalesClientFromEnv', () => {
   beforeEach(() => {
@@ -19,7 +21,7 @@ describe('createUnusualWhalesClientFromEnv', () => {
     delete process.env.UNUSUALWHALES_API_KEY;
     delete process.env.UNUSUALWHALES_BASE_URL;
     delete process.env.UNUSUALWHALES_MAX_RETRIES;
-    delete process.env.UNUSUALWHALES_RETRY_DELAY_MS;
+    delete process.env.UNUSUALWHALES_BASE_RETRY_DELAY_MS;
     delete process.env.UNUSUALWHALES_TIMEOUT_MS;
   });
 
@@ -37,13 +39,13 @@ describe('createUnusualWhalesClientFromEnv', () => {
     process.env.UNUSUALWHALES_API_KEY = 'test-key';
     process.env.UNUSUALWHALES_BASE_URL = 'https://env.example.com';
     process.env.UNUSUALWHALES_MAX_RETRIES = '5';
-    process.env.UNUSUALWHALES_RETRY_DELAY_MS = '750';
+    process.env.UNUSUALWHALES_BASE_RETRY_DELAY_MS = '750';
     process.env.UNUSUALWHALES_TIMEOUT_MS = '4000';
 
     const client = createUnusualWhalesClientFromEnv({
       baseUrl: 'https://override.example.com',
       maxRetries: 2,
-      retryDelayMs: 100,
+      baseRetryDelayMs: 100,
       timeoutMs: 1234,
     });
 
@@ -51,7 +53,7 @@ describe('createUnusualWhalesClientFromEnv', () => {
     expect(internalConfig.apiKey).toBe('test-key');
     expect(internalConfig.baseUrl).toBe('https://override.example.com');
     expect(internalConfig.maxRetries).toBe(2);
-    expect(internalConfig.retryDelayMs).toBe(100);
+    expect(internalConfig.baseRetryDelayMs).toBe(100);
     expect(internalConfig.timeoutMs).toBe(1234);
   });
 });
@@ -86,6 +88,27 @@ describe('UnusualWhalesClient helpers', () => {
     const parsed = new URL(url as string);
     expect(parsed.searchParams.get('limit')).toBe('100');
     expect(parsed.searchParams.get('date')).toBe('2024-01-01');
+  });
+
+  it('retries on 500 and 502 responses', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('err', { status: 502 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const client = new UnusualWhalesClient({
+      apiKey: 'abc',
+      baseUrl: 'https://api.test',
+      transport,
+      maxRetries: 3,
+    });
+
+    const parseJson = (response: Response) => response.json();
+
+    await (client as any).requestWithRetries('/api/test', { method: 'GET', headers: {} }, parseJson);
+
+    expect(transport).toHaveBeenCalledTimes(3);
   });
 
   it('invokes rate limiter before requests', async () => {
@@ -207,5 +230,94 @@ describe('UnusualWhalesClient helpers', () => {
     expect(parsed.searchParams.get('order')).toBe('avg_change');
     expect(parsed.searchParams.get('order_direction')).toBe('desc');
     expect(parsed.searchParams.get('limit')).toBe('20');
+  });
+
+  it('uses cache for GET helpers when cache TTL provided', async () => {
+    const transport = vi.fn().mockResolvedValue(jsonResponse({ data: [{ value: 1 }] }));
+    const client = new UnusualWhalesClient({
+      apiKey: 'abc',
+      baseUrl: 'https://api.test',
+      cache: new InMemoryCache(),
+      transport,
+    });
+
+    await client.getShortData('MSFT', { cacheTtlMs: 1000 });
+    await client.getShortData('MSFT', { cacheTtlMs: 1000 });
+
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  describe('request pipeline instrumentation', () => {
+    const createClient = (overrides: Partial<ConstructorParameters<typeof UnusualWhalesClient>[0]> = {}) =>
+      new UnusualWhalesClient({
+        apiKey: 'abc',
+        baseUrl: 'https://api.test',
+        maxRetries: 1,
+        baseRetryDelayMs: 2,
+        ...overrides,
+      });
+
+    it('honors Retry-After headers on 429 responses', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('rate limited', { status: 429, headers: { 'retry-after': '0.001' } })
+        )
+        .mockResolvedValueOnce(jsonResponse({ data: [] }));
+      const warn = vi.fn();
+      const client = createClient({ transport, logger: { warn } });
+
+      await client.request('/path');
+
+      expect(transport).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 1ms'));
+    });
+
+    it('uses exponential backoff when Retry-After is missing', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+        .mockResolvedValueOnce(jsonResponse({ data: [] }));
+      const warn = vi.fn();
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+      const client = createClient({ transport, logger: { warn }, baseRetryDelayMs: 2 });
+
+      await client.request('/path');
+
+      randomSpy.mockRestore();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 2ms'));
+    });
+
+    it('invokes rate limiter hooks on success and failure', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ data: [] }))
+        .mockResolvedValueOnce(new Response('fail', { status: 503 }));
+      const throttle = vi.fn();
+      const onSuccess = vi.fn();
+      const onError = vi.fn();
+      const rateLimiter: RateLimiter = { throttle, onSuccess, onError };
+      const client = createClient({ transport, rateLimiter, maxRetries: 0 });
+
+      await client.request('/path');
+      await expect(client.request('/path')).rejects.toThrow(UnusualWhalesRequestError);
+
+      expect(throttle).toHaveBeenCalledTimes(2);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+
+    it('serves cached responses when cache TTL is provided', async () => {
+      const transport = vi.fn().mockResolvedValue(jsonResponse({ data: [1] }));
+      const cache = new InMemoryCache();
+      const client = createClient({ transport, cache });
+
+      const first = await client.request('/cacheable', { cacheTtlMs: 100 });
+      const second = await client.request('/cacheable', { cacheTtlMs: 100 });
+
+      expect(first).toEqual({ data: [1] });
+      expect(second).toEqual({ data: [1] });
+      expect(transport).toHaveBeenCalledTimes(1);
+    });
   });
 });

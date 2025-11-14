@@ -2,6 +2,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fetchFilings, resolveCIK } from '../activities/edgar.activities';
 import * as supabaseModule from '../lib/supabase';
 
+const entityUtilsMock = vi.hoisted(() => ({
+  upsertEntity: vi.fn().mockResolvedValue({ entity_id: 'ent', kind: 'issuer', created: false }),
+  upsertCusipMapping: vi.fn().mockResolvedValue({ cusipsAdded: 0, source: 'existing' as const }),
+}));
+
+vi.mock('../activities/entity-utils', () => entityUtilsMock);
+
 const originalFetch = global.fetch;
 
 describe('resolveCIK activity', () => {
@@ -10,6 +17,8 @@ describe('resolveCIK activity', () => {
     process.env.EDGAR_BASE = 'https://www.sec.gov';
     process.env.EDGAR_DATA_API_BASE = 'https://data.sec.gov';
     process.env.MAX_RPS_EDGAR = '8';
+    entityUtilsMock.upsertEntity.mockClear();
+    entityUtilsMock.upsertCusipMapping.mockClear();
   });
 
   afterEach(() => {
