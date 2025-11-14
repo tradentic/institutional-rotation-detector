@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { createSupabaseClient } from '../lib/supabase';
-import { createUnusualWhalesClient } from '../lib/unusualWhalesClient';
+import { createTemporalUnusualWhalesClient } from '../lib/unusualWhalesClient';
 import {
   // Generic helpers
   fetchAndParse,
@@ -180,7 +180,7 @@ const optionContractsSchema = z.object({
 export async function fetchOptionsFlowByExpiry(params: {
   ticker: string;
 }): Promise<{ ticker: string; expirations: number; totalVolume: number }> {
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker } = params;
 
   // Use fetchAndParse helper to reduce duplication
@@ -214,7 +214,7 @@ export async function fetchOptionsFlowByStrike(params: {
   ticker: string;
   date: string;
 }): Promise<{ ticker: string; date: string; strikes: number }> {
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker, date } = params;
 
   const parsed = await fetchAndParse(
@@ -246,7 +246,7 @@ export async function fetchGreeksForExpiration(params: {
   date: string;
 }): Promise<{ ticker: string; expiry: string; date: string; contracts: number }> {
   const supabase = createSupabaseClient();
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker, expiry, date } = params;
 
   const parsed = await fetchAndParse(
@@ -285,7 +285,7 @@ export async function fetchOptionChains(params: {
   ticker: string;
   date: string;
 }): Promise<{ ticker: string; date: string; symbols: number; expirations: string[] }> {
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker, date } = params;
 
   const parsed = await fetchAndParse(
@@ -317,7 +317,7 @@ export async function fetchOptionContracts(params: {
   limit?: number;
 }): Promise<{ ticker: string; contracts: number; totalVolume: number; totalOI: number }> {
   const supabase = createSupabaseClient();
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
 
   const { ticker, expiry, optionType, excludeZeroVol = true, excludeZeroOI = true, limit = 500 } = params;
 
@@ -367,7 +367,7 @@ export async function fetchGreekExposure(params: {
   date?: string;
   timeframe?: '1d' | '5d' | '1m' | '3m' | '6m' | '1y' | '5y';
 }): Promise<{ ticker: string; days: number }> {
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker, date, timeframe = '1m' } = params;
 
   const queryParams = buildQueryParams({ timeframe, date });
@@ -399,7 +399,7 @@ export async function fetchGreekExposureByExpiry(params: {
   ticker: string;
   date?: string;
 }): Promise<{ ticker: string; expirations: number }> {
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
   const { ticker, date } = params;
 
   const queryParams = buildQueryParams({ date });
@@ -451,7 +451,7 @@ export async function fetchFlowAlerts(params: {
   limit?: number;
 }): Promise<{ activities: number }> {
   const supabase = createSupabaseClient();
-  const client = createUnusualWhalesClient();
+  const client = createTemporalUnusualWhalesClient();
 
   const { ticker, minPremium, alertRule, limit = 100 } = params;
 

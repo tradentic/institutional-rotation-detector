@@ -1,54 +1,21 @@
+import type { RateLimiter, UnusualWhalesClient } from '@libs/unusualwhales-client';
+import { createUnusualWhalesClientFromEnv } from '@libs/unusualwhales-client';
 import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
 
-export interface UnusualWhalesConfig {
-  apiKey: string;
-  baseUrl: string;
-  maxRps: number;
-}
+class DistributedRateLimiterAdapter implements RateLimiter {
+  constructor(private readonly limiter: DistributedRateLimiter) {}
 
-export class UnusualWhalesClient {
-  private limiter: DistributedRateLimiter;
-
-  constructor(private readonly config: UnusualWhalesConfig) {
-    // Use distributed rate limiter so all worker instances share the same limit
-    this.limiter = createDistributedRateLimiter('unusualwhales-api', config.maxRps);
-  }
-
-  async get<T = any>(path: string, params?: Record<string, string>): Promise<T> {
+  async throttle(): Promise<void> {
     await this.limiter.throttle();
-
-    const url = new URL(path, this.config.baseUrl);
-    if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        url.searchParams.append(key, value);
-      });
-    }
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${this.config.apiKey}`,
-        'Accept': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`UnusualWhales API request failed ${response.status}: ${errorText}`);
-    }
-
-    return await response.json() as T;
   }
 }
 
-export function createUnusualWhalesClient(): UnusualWhalesClient {
-  const apiKey = process.env.UNUSUALWHALES_API_KEY;
-  const baseUrl = process.env.UNUSUALWHALES_BASE_URL || 'https://api.unusualwhales.com';
+export function createTemporalUnusualWhalesClient(): UnusualWhalesClient {
   const maxRps = Number(process.env.MAX_RPS_UNUSUALWHALES || '10');
+  const limiter = createDistributedRateLimiter('unusualwhales-api', maxRps);
+  const rateLimiter = new DistributedRateLimiterAdapter(limiter);
 
-  if (!apiKey) {
-    throw new Error('UNUSUALWHALES_API_KEY environment variable is required');
-  }
-
-  return new UnusualWhalesClient({ apiKey, baseUrl, maxRps });
+  return createUnusualWhalesClientFromEnv({ rateLimiter });
 }
+
+export type { UnusualWhalesClient } from '@libs/unusualwhales-client';
