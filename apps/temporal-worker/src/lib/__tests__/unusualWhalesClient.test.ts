@@ -17,7 +17,7 @@ vi.mock(
   { virtual: true }
 );
 
-describe('createTemporalUnusualWhalesClient', () => {
+describe('createUnusualWhalesClient', () => {
   beforeEach(() => {
     throttleSpy.mockClear();
     createDistributedRateLimiterMock.mockClear();
@@ -26,9 +26,9 @@ describe('createTemporalUnusualWhalesClient', () => {
   });
 
   it('wires distributed rate limiter into shared client factory', async () => {
-    const { createTemporalUnusualWhalesClient } = await import('../unusualWhalesClient');
+    const { createUnusualWhalesClient } = await import('../unusualWhalesClient');
 
-    createTemporalUnusualWhalesClient();
+    createUnusualWhalesClient();
 
     expect(createDistributedRateLimiterMock).toHaveBeenCalledWith('unusualwhales-api', 15);
     expect(createUnusualWhalesClientFromEnvMock).toHaveBeenCalledTimes(1);

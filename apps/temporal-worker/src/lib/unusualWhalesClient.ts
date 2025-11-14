@@ -10,7 +10,7 @@ class DistributedRateLimiterAdapter implements RateLimiter {
   }
 }
 
-export function createTemporalUnusualWhalesClient(): UnusualWhalesClient {
+export function createUnusualWhalesClient(): UnusualWhalesClient {
   const maxRps = Number(process.env.MAX_RPS_UNUSUALWHALES || '10');
   const limiter = createDistributedRateLimiter('unusualwhales-api', maxRps);
   const rateLimiter = new DistributedRateLimiterAdapter(limiter);
