@@ -87,7 +87,7 @@ export class FinraClient {
 
   async fetchShortInterest(settlementDate: string): Promise<Record<string, unknown>[]> {
     const filters = ['settlementDate', 'settlementdate'];
-    return this.fetchWithFieldFallback('shortSale', 'shortInterest', settlementDate, filters);
+    return this.fetchWithFieldFallback('otcMarket', 'EquityShortInterest', settlementDate, filters);
   }
 
   /**
@@ -97,7 +97,7 @@ export class FinraClient {
   async fetchShortInterestRange(startDate: string, endDate: string): Promise<Record<string, unknown>[]> {
     // Fetch entire dataset and filter client-side by date range
     // FINRA API doesn't support range filters well, so this is more reliable
-    const rows = await this.fetchDataset('shortSale', 'shortInterest', {});
+    const rows = await this.fetchDataset('otcMarket', 'EquityShortInterest', {});
     const start = new Date(startDate);
     const end = new Date(endDate);
 
