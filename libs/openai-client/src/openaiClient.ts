@@ -219,7 +219,7 @@ export class OpenAiClient {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
-    return this.requestWithRetries(
+    return this.requestWithRetries<OpenAiResponsesResult>(
       '/responses',
       {
         method: 'POST',
@@ -231,7 +231,7 @@ export class OpenAiClient {
   }
 
   async listModels(options?: { cacheTtlMs?: number }): Promise<OpenAiModelListResponse> {
-    return this.requestWithRetries(
+    return this.requestWithRetries<OpenAiModelListResponse>(
       '/models',
       {
         method: 'GET',
@@ -284,7 +284,7 @@ export class OpenAiClient {
       ...(options.headers ?? {}),
     };
     if (this.organizationId) {
-      headers['OpenAI-Organization'] = this.organizationId;
+      (headers as Record<string, string>)['OpenAI-Organization'] = this.organizationId;
     }
 
     const { params: _p, cacheTtlMs, timeoutMs, cacheKey: _cacheKey, ...rest } = options;
@@ -474,7 +474,7 @@ export class OpenAiClient {
 export function createOpenAiClientFromEnv(
   overrides: Partial<Omit<OpenAiClientConfig, 'apiKey'>> = {},
 ): OpenAiClient {
-  const apiKey = overrides.apiKey ?? process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY environment variable is required');
   }
