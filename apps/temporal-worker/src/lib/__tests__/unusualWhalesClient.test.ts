@@ -9,13 +9,9 @@ vi.mock('../distributedRateLimit', () => ({
   DistributedRateLimiter: class {},
 }));
 
-vi.mock(
-  '@libs/unusualwhales-client',
-  () => ({
-    createUnusualWhalesClientFromEnv: createUnusualWhalesClientFromEnvMock,
-  }),
-  { virtual: true }
-);
+vi.mock('@libs/unusualwhales-client', () => ({
+  createUnusualWhalesClientFromEnv: createUnusualWhalesClientFromEnvMock,
+}));
 
 describe('createUnusualWhalesClient', () => {
   beforeEach(() => {
