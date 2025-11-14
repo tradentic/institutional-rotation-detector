@@ -91,12 +91,58 @@ export class FinraClient {
   }
 
   /**
-   * Fetch short interest data for a date range
+   * Fetch short interest data for a date range and specific symbols
    * More efficient than calling fetchShortInterest multiple times
    */
-  async fetchShortInterestRange(startDate: string, endDate: string): Promise<Record<string, unknown>[]> {
-    // Fetch entire dataset and filter client-side by date range
-    // FINRA API doesn't support range filters well, so this is more reliable
+  async fetchShortInterestRange(
+    startDate: string,
+    endDate: string,
+    symbols?: string[]
+  ): Promise<Record<string, unknown>[]> {
+    // If symbols provided, query for each symbol (much faster than fetching everything)
+    if (symbols && symbols.length > 0) {
+      const allRows: Record<string, unknown>[] = [];
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      for (const symbol of symbols) {
+        try {
+          // Try to filter by symbol
+          const rows = await this.fetchDataset('otcMarket', 'consolidatedShortInterest', {
+            filter: `symbolCode:${symbol}`
+          });
+
+          // Still filter by date range client-side
+          const filteredRows = rows.filter((row) => {
+            const normalized = normalizeRow(row);
+            const settlementDate = normalized.get('settlementdate') || normalized.get('settlementDate');
+            if (!settlementDate) return false;
+
+            const date = typeof settlementDate === 'string'
+              ? new Date(settlementDate)
+              : settlementDate instanceof Date
+              ? settlementDate
+              : null;
+
+            return date && date >= start && date <= end;
+          });
+
+          allRows.push(...filteredRows);
+        } catch (err) {
+          // If symbol filter fails, log and continue
+          if (err instanceof FinraRequestError && (err.status === 400 || err.status === 404)) {
+            console.warn(`[FinraClient] Symbol filter failed for ${symbol}, skipping`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      return allRows;
+    }
+
+    // Fallback: No symbols provided - this will be slow and may timeout!
+    console.warn('[FinraClient] Fetching entire consolidatedShortInterest dataset - this may timeout!');
     const rows = await this.fetchDataset('otcMarket', 'consolidatedShortInterest', {});
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -125,11 +171,60 @@ export class FinraClient {
   }
 
   /**
-   * Fetch ATS weekly data for a date range
+   * Fetch ATS weekly data for a date range and specific symbols
    * More efficient than calling fetchATSWeekly multiple times
    */
-  async fetchATSWeeklyRange(startDate: string, endDate: string): Promise<Record<string, unknown>[]> {
-    // Fetch entire dataset and filter client-side by date range
+  async fetchATSWeeklyRange(
+    startDate: string,
+    endDate: string,
+    symbols?: string[]
+  ): Promise<Record<string, unknown>[]> {
+    // If symbols provided, query for each symbol (much faster than fetching everything)
+    if (symbols && symbols.length > 0) {
+      const allRows: Record<string, unknown>[] = [];
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      for (const symbol of symbols) {
+        try {
+          // Try to filter by symbol
+          const rows = await this.fetchDataset('otcMarket', 'weeklySummary', {
+            filter: `issueSymbolIdentifier:${symbol}`
+          });
+
+          // Still filter by date range client-side
+          const filteredRows = rows.filter((row) => {
+            const normalized = normalizeRow(row);
+            const weekEndDate = normalized.get('weekenddate') ||
+                               normalized.get('weekending') ||
+                               normalized.get('weekof');
+            if (!weekEndDate) return false;
+
+            const date = typeof weekEndDate === 'string'
+              ? new Date(weekEndDate)
+              : weekEndDate instanceof Date
+              ? weekEndDate
+              : null;
+
+            return date && date >= start && date <= end;
+          });
+
+          allRows.push(...filteredRows);
+        } catch (err) {
+          // If symbol filter fails, log and continue
+          if (err instanceof FinraRequestError && (err.status === 400 || err.status === 404)) {
+            console.warn(`[FinraClient] Symbol filter failed for ${symbol} in ATS weekly, skipping`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      return allRows;
+    }
+
+    // Fallback: No symbols provided - this will be slow and may timeout!
+    console.warn('[FinraClient] Fetching entire weeklySummary dataset - this may timeout!');
     const rows = await this.fetchDataset('otcMarket', 'weeklySummary', {});
     const start = new Date(startDate);
     const end = new Date(endDate);
