@@ -220,9 +220,12 @@ export async function fetchShortInterest(cik: string, dateRange: { start: string
 
   console.log(`[fetchShortInterest] Fetching short interest for CIK ${cik} (ticker: ${ticker}, CUSIPs: ${Array.from(cusips).join(', ')}) from ${dateRange.start} to ${dateRange.end}`);
 
-  // Fetch date range for specific ticker (much faster than fetching all symbols)
-  const symbols = ticker ? [ticker.toUpperCase()] : undefined;
-  const dataset = await finra.fetchShortInterestRange(dateRange.start, dateRange.end, symbols);
+  // Fetch date range using CUSIPs (more precise) with ticker as fallback
+  const queryIdentifiers = {
+    cusips: Array.from(cusips),
+    symbols: ticker ? [ticker.toUpperCase()] : []
+  };
+  const dataset = await finra.fetchShortInterestRange(dateRange.start, dateRange.end, queryIdentifiers);
   const rows = normalizeRows(dataset);
 
   console.log(`[fetchShortInterest] Retrieved ${rows.length} total short interest records from FINRA`);
@@ -315,9 +318,12 @@ export async function fetchATSWeekly(
 
   console.log(`[fetchATSWeekly] Fetching ATS data for CIK ${cik} (ticker: ${ticker}, CUSIPs: ${Array.from(cusips).join(', ')}) from ${dateRange.start} to ${dateRange.end}`);
 
-  // Fetch date range for specific ticker (much faster than fetching all symbols)
-  const symbols = ticker ? [ticker.toUpperCase()] : undefined;
-  const dataset = await finra.fetchATSWeeklyRange(dateRange.start, dateRange.end, symbols);
+  // Fetch date range using CUSIPs (more precise) with ticker as fallback
+  const queryIdentifiers = {
+    cusips: Array.from(cusips),
+    symbols: ticker ? [ticker.toUpperCase()] : []
+  };
+  const dataset = await finra.fetchATSWeeklyRange(dateRange.start, dateRange.end, queryIdentifiers);
   const rows = normalizeRows(dataset);
 
   console.log(`[fetchATSWeekly] Retrieved ${rows.length} total ATS weekly records from FINRA`);
