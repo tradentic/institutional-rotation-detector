@@ -546,7 +546,7 @@ AAPL,50000,2024-01-15`,
     });
 
     it('should warn when invalid filters are used for weeklySummaryHistoric', async () => {
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -580,7 +580,7 @@ AAPL,50000,2024-01-15`,
     });
 
     it('should not warn when only valid filters are used for weeklySummaryHistoric', async () => {
-      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation();
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
