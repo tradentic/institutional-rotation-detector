@@ -4,6 +4,7 @@ import type {
   TokenResponse,
   FinraPostRequest,
   CompareFilter,
+  CompareType,
   WeeklySummaryRecord,
   WeeklySummaryParams,
   SymbolWeeklyAtsOtc,
@@ -104,7 +105,7 @@ export class FinraClient {
    * @param params - Query parameters (limit, offset, fields)
    * @returns Array of records
    */
-  protected async getDataset(
+  protected async getDataset<T extends DatasetRecord = DatasetRecord>(
     group: string,
     dataset: string,
     params?: {
@@ -113,7 +114,7 @@ export class FinraClient {
       fields?: string[];
       [key: string]: unknown;
     }
-  ): Promise<DatasetRecord[]> {
+  ): Promise<T[]> {
     const searchParams = new URLSearchParams();
 
     if (params?.limit !== undefined) {
@@ -146,7 +147,8 @@ export class FinraClient {
       },
     });
 
-    return parseResponseRows(response);
+    const rows = await parseResponseRows(response);
+    return rows as T[];
   }
 
   /**
@@ -157,11 +159,11 @@ export class FinraClient {
    * @param body - POST request body with filters, fields, etc.
    * @returns Array of records
    */
-  protected async postDataset(
+  protected async postDataset<T extends DatasetRecord = DatasetRecord>(
     group: string,
     dataset: string,
     body: FinraPostRequest
-  ): Promise<DatasetRecord[]> {
+  ): Promise<T[]> {
     const url = `${this.baseUrl}/data/group/${encodeURIComponent(
       group
     )}/name/${encodeURIComponent(dataset)}`;
@@ -183,7 +185,8 @@ export class FinraClient {
       body: JSON.stringify(normalizedBody),
     });
 
-    return parseResponseRows(response);
+    const rows = await parseResponseRows(response);
+    return rows as T[];
   }
 
   /**
@@ -195,13 +198,13 @@ export class FinraClient {
    * @param usePost - Use POST instead of GET (default: true for complex queries)
    * @returns Array of all records across pages
    */
-  protected async fetchDatasetPaginated(
+  protected async fetchDatasetPaginated<T extends DatasetRecord = DatasetRecord>(
     group: string,
     dataset: string,
     body: FinraPostRequest,
     usePost = true
-  ): Promise<DatasetRecord[]> {
-    const results: DatasetRecord[] = [];
+  ): Promise<T[]> {
+    const results: T[] = [];
     let offset = 0;
     const limit = body.limit ?? this.pageSize;
 
@@ -209,8 +212,8 @@ export class FinraClient {
       const requestBody = { ...body, limit, offset };
 
       const rows = usePost
-        ? await this.postDataset(group, dataset, requestBody)
-        : await this.getDataset(group, dataset, requestBody as any);
+        ? await this.postDataset<T>(group, dataset, requestBody)
+        : await this.getDataset<T>(group, dataset, requestBody as any);
 
       if (rows.length === 0) {
         break;
@@ -307,11 +310,11 @@ export class FinraClient {
   async queryWeeklySummary(
     request: FinraPostRequest
   ): Promise<WeeklySummaryRecord[]> {
-    return this.fetchDatasetPaginated(
+    return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummary',
       request
-    ) as Promise<WeeklySummaryRecord[]>;
+    );
   }
 
   /**
@@ -352,11 +355,11 @@ export class FinraClient {
       }
     }
 
-    return this.fetchDatasetPaginated(
+    return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummaryHistoric',
       request
-    ) as Promise<WeeklySummaryRecord[]>;
+    );
   }
 
   /**
@@ -454,10 +457,10 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated('otcMarket', 'consolidatedShortInterest', {
+    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>('otcMarket', 'consolidatedShortInterest', {
       compareFilters,
       limit,
-    }) as Promise<ConsolidatedShortInterestRecord[]>;
+    });
   }
 
   /**
@@ -494,10 +497,10 @@ export class FinraClient {
       fieldValue: endDate,
     });
 
-    return this.fetchDatasetPaginated('otcMarket', 'consolidatedShortInterest', {
+    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>('otcMarket', 'consolidatedShortInterest', {
       compareFilters,
       limit: limitPerCall,
-    }) as Promise<ConsolidatedShortInterestRecord[]>;
+    });
   }
 
   // ==========================================================================
@@ -539,10 +542,10 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated('otcMarket', 'regShoDaily', {
+    return this.fetchDatasetPaginated<RegShoDailyRecord>('otcMarket', 'regShoDaily', {
       compareFilters,
       limit,
-    }) as Promise<RegShoDailyRecord[]>;
+    });
   }
 
   // ==========================================================================
@@ -584,10 +587,10 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated('otcMarket', 'thresholdList', {
+    return this.fetchDatasetPaginated<ThresholdListRecord>('otcMarket', 'thresholdList', {
       compareFilters,
       limit,
-    }) as Promise<ThresholdListRecord[]>;
+    });
   }
 
   // ==========================================================================
@@ -599,7 +602,9 @@ export class FinraClient {
    *
    * Fetch short interest for a specific settlement date
    */
-  async fetchShortInterest(settlementDate: string): Promise<Record<string, unknown>[]> {
+  async fetchShortInterest(
+    settlementDate: string
+  ): Promise<ConsolidatedShortInterestRecord[]> {
     return this.getConsolidatedShortInterest({
       settlementDate,
     });
@@ -614,7 +619,7 @@ export class FinraClient {
     startDate: string,
     endDate: string,
     identifiers?: { cusips?: string[]; symbols?: string[] }
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ConsolidatedShortInterestRecord[]> {
     const cusips = identifiers?.cusips || [];
     const symbols = identifiers?.symbols || [];
 
@@ -629,20 +634,17 @@ export class FinraClient {
     }
 
     // Fetch for all identifiers and combine
-    const allRows: Record<string, unknown>[] = [];
-
-    for (const cusip of cusips) {
-      const rows = await this.getConsolidatedShortInterestRange({
-        identifiers: { cusip },
-        startDate,
-        endDate,
-      });
-      allRows.push(...rows);
+    if (cusips.length > 0) {
+      console.warn(
+        '[FinraClient] consolidatedShortInterest does not support CUSIP filtering; provided cusips will be ignored.'
+      );
     }
+
+    const allRows: ConsolidatedShortInterestRecord[] = [];
 
     for (const symbol of symbols) {
       const rows = await this.getConsolidatedShortInterestRange({
-        identifiers: { issueSymbolIdentifier: symbol },
+        identifiers: { symbolCode: symbol },
         startDate,
         endDate,
       });
@@ -657,13 +659,13 @@ export class FinraClient {
    *
    * Fetch ATS weekly data for a specific week end date
    */
-  async fetchATSWeekly(weekEndDate: string): Promise<Record<string, unknown>[]> {
+  async fetchATSWeekly(weekEndDate: string): Promise<WeeklySummaryRecord[]> {
     // Note: Old API used weekEndDate, new API uses weekStartDate
     // This is a best-effort conversion - caller should migrate to new methods
     return this.queryWeeklySummary({
       compareFilters: [
         {
-          compareType: 'equal',
+          compareType: 'EQUAL',
           fieldName: 'weekStartDate',
           fieldValue: weekEndDate,
         },
@@ -680,9 +682,15 @@ export class FinraClient {
     startDate: string,
     endDate: string,
     identifiers?: { cusips?: string[]; symbols?: string[] }
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<WeeklySummaryRecord[]> {
     const cusips = identifiers?.cusips || [];
     const symbols = identifiers?.symbols || [];
+
+    if (cusips.length > 0) {
+      console.warn(
+        '[FinraClient] weeklySummary dataset does not expose CUSIP filters; provided cusips will be ignored.'
+      );
+    }
 
     if (cusips.length === 0 && symbols.length === 0) {
       console.warn(
@@ -705,30 +713,7 @@ export class FinraClient {
     }
 
     // Fetch for all identifiers and combine
-    const allRows: Record<string, unknown>[] = [];
-
-    for (const cusip of cusips) {
-      const rows = await this.queryWeeklySummary({
-        compareFilters: [
-          {
-            compareType: 'EQUAL',
-            fieldName: 'cusip',
-            fieldValue: cusip,
-          },
-          {
-            compareType: 'GREATER',
-            fieldName: 'weekStartDate',
-            fieldValue: startDate,
-          },
-          {
-            compareType: 'LESSER',
-            fieldName: 'weekStartDate',
-            fieldValue: endDate,
-          },
-        ],
-      });
-      allRows.push(...rows);
-    }
+    const allRows: WeeklySummaryRecord[] = [];
 
     for (const symbol of symbols) {
       const rows = await this.queryWeeklySummary({

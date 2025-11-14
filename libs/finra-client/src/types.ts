@@ -56,16 +56,29 @@ export interface DateRangeFilter {
   endDate: string;
 }
 
+export interface DomainFilter {
+  fieldName: string;
+  values: string[];
+}
+
 export interface FinraPostRequest {
   limit?: number;
   offset?: number;
   fields?: string[];
   compareFilters?: CompareFilter[];
   dateRangeFilters?: DateRangeFilter[];
-  domainFilters?: Array<{
-    fieldName: string;
-    values: string[];
-  }>;
+  domainFilters?: DomainFilter[];
+  sortFields?: string[];
+  format?: 'application/json' | 'text/plain';
+  delimiter?: string;
+  quoteValues?: boolean;
+}
+
+// ============================================================================
+// Generic Dataset Base Type
+// ============================================================================
+
+export interface DatasetRecord {
   [key: string]: unknown;
 }
 
@@ -79,7 +92,7 @@ export interface FinraPostRequest {
  * This dataset provides OTC Transparency Weekly Summary data. Applies to both
  * current (weeklySummary) and historical (weeklySummaryHistoric) datasets.
  */
-export interface WeeklySummaryRecord {
+export interface WeeklySummaryRecord extends DatasetRecord {
   /** Symbol identifier assigned by NASDAQ or FINRA */
   issueSymbolIdentifier: string;
   /** Company name associated with the symbol */
@@ -138,7 +151,7 @@ export interface SymbolWeeklyAtsOtc {
  * FINRA Rule 4560 requires member firms to report short positions in all OTC equity securities.
  * This dataset provides a consolidated view of short interest positions across all exchanges.
  */
-export interface ConsolidatedShortInterestRecord {
+export interface ConsolidatedShortInterestRecord extends DatasetRecord {
   /** Settlement Date for Shorts Cycle in YYYYMMDD format */
   accountingYearMonthNumber: number;
   /** Securities Information Processor Symbol Identifier */
@@ -196,7 +209,7 @@ export interface ShortInterestRangeParams {
  *
  * Provides aggregate daily short sale and short sale exempt volume for OTC equity securities.
  */
-export interface RegShoDailyRecord {
+export interface RegShoDailyRecord extends DatasetRecord {
   /** Trade Date - yyyy-MM-dd */
   tradeReportDate: string;
   /** Security symbol */
@@ -224,14 +237,13 @@ export interface RegShoDailyParams {
 // Threshold List Dataset Types
 // ============================================================================
 
-export interface ThresholdListRecord {
+export interface ThresholdListRecord extends DatasetRecord {
   tradeDate: string; // ISO date
   issueSymbolIdentifier: string;
   issueName?: string;
   marketCategoryCode?: string;
   regShoThresholdFlag: string; // 'Y' or 'N'
   ruleListed?: string;
-  [key: string]: unknown;
 }
 
 export interface ThresholdListParams {
@@ -245,12 +257,11 @@ export interface ThresholdListParams {
 // Generic Dataset Types
 // ============================================================================
 
-export type DatasetRecord =
+export type DatasetRecordUnion =
   | WeeklySummaryRecord
   | ConsolidatedShortInterestRecord
   | RegShoDailyRecord
-  | ThresholdListRecord
-  | Record<string, unknown>;
+  | ThresholdListRecord;
 
 // ============================================================================
 // Error Types
