@@ -77,7 +77,7 @@ export type QueryParamValue =
   | Array<string | number | boolean>;
 export type QueryParams = Record<string, QueryParamValue>;
 
-export interface RequestOptions extends Omit<RequestInit, 'body'> {
+export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   method?: string;
   body?: BodyInit | null;
   params?: QueryParams;
@@ -168,7 +168,7 @@ export class UnusualWhalesClient {
           throw new UnusualWhalesRequestError(response.status, bodyText);
         }
 
-        return (await parseJson<T>(response)) as T;
+        return await parseJson<T>(response);
       } catch (error) {
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -601,10 +601,10 @@ export class UnusualWhalesClient {
   }
 }
 
-async function parseJson<T>(response: Response): Promise<T | undefined> {
+async function parseJson<T>(response: Response): Promise<T> {
   const text = await response.text();
   if (!text) {
-    return undefined;
+    return undefined as T;
   }
 
   try {
