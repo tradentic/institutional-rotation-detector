@@ -40,7 +40,7 @@ export interface WorkflowSearchAttributes {
   symbol?: string;
   dataset?: string;
   granularity?: string;
-  weekEnd?: string | Date; // NOTE: Not registered in Temporal (at Datetime limit), will be ignored if set
+  weekEnd?: string | Date;
   tradeDate?: string | Date;
   settlementDate?: string | Date;
   provenance?: string;
@@ -51,9 +51,6 @@ let queryRegistered = false;
 let lastAppliedAttributes: Record<string, string[]> = {};
 
 // NOTE: Only attributes listed here are registered in Temporal.
-// weekEnd is intentionally omitted due to Temporal dev server's 3 Datetime limit.
-// If workflows try to set weekEnd, it will be silently ignored.
-//
 // ⚠️  SYNC REQUIRED: This config must match tools/setup-temporal-attributes.sh
 // When adding/removing/changing attributes, update BOTH files and run 'pnpm test'
 // to verify they're in sync (see search-attributes.test.ts).
@@ -71,7 +68,7 @@ const attributeConfig: Partial<Record<keyof Required<WorkflowSearchAttributes>, 
   symbol: { name: 'Symbol', type: SearchAttributeType.KEYWORD },
   dataset: { name: 'Dataset', type: SearchAttributeType.KEYWORD },
   granularity: { name: 'Granularity', type: SearchAttributeType.KEYWORD },
-  // weekEnd: NOT REGISTERED - at Temporal dev server Datetime limit (3/3 used)
+  weekEnd: { name: 'WeekEnd', type: SearchAttributeType.DATETIME },
   tradeDate: { name: 'TradeDate', type: SearchAttributeType.DATETIME },
   settlementDate: { name: 'SettlementDate', type: SearchAttributeType.DATETIME },
   provenance: { name: 'Provenance', type: SearchAttributeType.TEXT },

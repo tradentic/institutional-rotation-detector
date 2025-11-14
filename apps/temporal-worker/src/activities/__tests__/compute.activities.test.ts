@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   __setSupabaseClientFactory,
   __clearDumpContextCache,
@@ -9,6 +9,17 @@ import {
   uhf,
   uptakeFromFilings,
 } from '../compute.activities';
+import type { UpsertCusipMappingResult } from '../entity-utils';
+
+const { upsertCusipMappingMock } = vi.hoisted(() => ({
+  upsertCusipMappingMock: vi
+    .fn<[], Promise<UpsertCusipMappingResult>>()
+    .mockResolvedValue({ cusipsAdded: 0, source: 'existing' }),
+}));
+
+vi.mock('../entity-utils', () => ({
+  upsertCusipMapping: upsertCusipMappingMock,
+}));
 import { computeRotationScore } from '../../lib/scoring';
 
 type Row = Record<string, any>;
@@ -254,6 +265,7 @@ function resetDatabase() {
 beforeEach(() => {
   resetDatabase();
   __setSupabaseClientFactory(() => createMockSupabaseClient());
+  upsertCusipMappingMock.mockClear();
 });
 
 afterEach(() => {

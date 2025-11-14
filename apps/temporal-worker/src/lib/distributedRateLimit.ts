@@ -42,7 +42,7 @@ export class DistributedRateLimiter {
    * Will never throw an error - always allows requests to proceed.
    */
   async throttle(now = Date.now()): Promise<void> {
-    const redis = (this.cache as any).client;
+    const redis = this.cache.getClient();
 
     // If Redis is not available or not enabled, fall back to in-memory rate limiting
     if (!redis) {

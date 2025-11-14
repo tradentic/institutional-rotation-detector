@@ -143,9 +143,29 @@ export function getQuarterEnd(date: Date): Date {
  */
 export function isQuarterEndEOW(date: Date, tradingDaysThreshold: number = 5): boolean {
   const quarterEnd = getQuarterEnd(date);
-  const tradingDaysUntilEnd = countTradingDays(date, quarterEnd);
+  const lastTradingDay = isTradingDay(quarterEnd) ? quarterEnd : previousTradingDay(quarterEnd);
 
-  return tradingDaysUntilEnd <= tradingDaysThreshold && tradingDaysUntilEnd >= 0;
+  if (date > lastTradingDay) {
+    return false;
+  }
+
+  const tradingDaysUntilEnd = countTradingDays(date, lastTradingDay);
+  const remainingExcludingToday = Math.max(
+    0,
+    tradingDaysUntilEnd - (isTradingDay(date) ? 1 : 0)
+  );
+
+  if (remainingExcludingToday < tradingDaysThreshold) {
+    return true;
+  }
+
+  if (remainingExcludingToday > tradingDaysThreshold) {
+    return false;
+  }
+
+  const nextCalendarDay = new Date(date);
+  nextCalendarDay.setUTCDate(nextCalendarDay.getUTCDate() + 1);
+  return isTradingDay(nextCalendarDay);
 }
 
 /**

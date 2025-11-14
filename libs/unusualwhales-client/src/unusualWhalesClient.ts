@@ -1,4 +1,4 @@
-import { setTimeout as delay } from 'timers/promises';
+import { setTimeout as sleep } from 'timers/promises';
 import type {
   CandleSize,
   DarkPoolRecentParams,
@@ -62,25 +62,100 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.unusualwhales.com';
 const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_RETRY_DELAY_MS = 500;
+const DEFAULT_BASE_RETRY_DELAY_MS = 500;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
-export interface RateLimiter {
-  throttle(): Promise<void>;
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly responseBody?: string,
+    public readonly retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
 }
 
-export type QueryParamValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
-  | Array<string | number | boolean>;
+export interface RateLimiter {
+  throttle(key?: string): Promise<void>;
+  onSuccess?(key?: string): void | Promise<void>;
+  onError?(key: string | undefined, error: ApiRequestError): void | Promise<void>;
+}
+
+export class NoopRateLimiter implements RateLimiter {
+  async throttle(): Promise<void> {}
+  onSuccess?(): void {}
+  onError?(): void {}
+}
+
+export interface Cache {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void>;
+  delete?(key: string): Promise<void>;
+}
+
+export class InMemoryCache implements Cache {
+  private store = new Map<string, { value: unknown; expiresAt?: number }>();
+
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt && entry.expiresAt < Date.now()) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry.value as T;
+  }
+
+  async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
+    const expiresAt = ttlMs ? Date.now() + ttlMs : undefined;
+    this.store.set(key, { value, expiresAt });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+}
+
+export interface CircuitBreaker {
+  beforeRequest(key?: string): Promise<void>;
+  onSuccess(key?: string): void | Promise<void>;
+  onFailure(key: string | undefined, err: ApiRequestError): void | Promise<void>;
+}
+
+export interface Logger {
+  debug?(msg: string, meta?: unknown): void;
+  info?(msg: string, meta?: unknown): void;
+  warn?(msg: string, meta?: unknown): void;
+  error?(msg: string, meta?: unknown): void;
+}
+
+export interface MetricsSink {
+  recordRequest(options: {
+    endpoint: string;
+    method: string;
+    durationMs: number;
+    status: number;
+    retries: number;
+    cacheHit: boolean;
+  }): void | Promise<void>;
+}
+
+export interface HttpTransport {
+  (url: string, init: RequestInit): Promise<Response>;
+}
+
+export type QueryParamValue = string | number | boolean | string[] | number[] | undefined;
 export type QueryParams = Record<string, QueryParamValue>;
 
 export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   method?: string;
   body?: BodyInit | null;
   params?: QueryParams;
+  cacheTtlMs?: number;
   timeoutMs?: number;
 }
 
@@ -88,27 +163,48 @@ export interface UnusualWhalesClientConfig {
   apiKey: string;
   baseUrl?: string;
   maxRetries?: number;
-  retryDelayMs?: number;
   timeoutMs?: number;
   rateLimiter?: RateLimiter;
+  baseRetryDelayMs?: number;
+  cache?: Cache;
+  circuitBreaker?: CircuitBreaker;
+  logger?: Logger;
+  metrics?: MetricsSink;
+  transport?: HttpTransport;
 }
 
-export class UnusualWhalesRequestError extends Error {
-  constructor(public readonly status: number, public readonly body: string) {
-    super(`UnusualWhales API request failed ${status}: ${body}`);
+export class UnusualWhalesRequestError extends ApiRequestError {
+  constructor(message: string, status: number, responseBody?: string, retryAfterMs?: number) {
+    super(message, status, responseBody, retryAfterMs);
     this.name = 'UnusualWhalesRequestError';
   }
 }
 
+type InternalApiError = ApiRequestError & { __handled?: boolean };
+
 export class UnusualWhalesClient {
   private readonly baseUrl: string;
   private readonly maxRetries: number;
-  private readonly retryDelayMs: number;
+  private readonly baseRetryDelayMs: number;
+  private readonly timeoutMs: number;
+  private readonly rateLimiter: RateLimiter;
+  private readonly cache?: Cache;
+  private readonly circuitBreaker?: CircuitBreaker;
+  private readonly logger?: Logger;
+  private readonly metrics?: MetricsSink;
+  private readonly transport: HttpTransport;
 
   constructor(private readonly config: UnusualWhalesClientConfig) {
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.retryDelayMs = config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    this.baseRetryDelayMs = config.baseRetryDelayMs ?? DEFAULT_BASE_RETRY_DELAY_MS;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.rateLimiter = config.rateLimiter ?? new NoopRateLimiter();
+    this.cache = config.cache;
+    this.circuitBreaker = config.circuitBreaker;
+    this.logger = config.logger;
+    this.metrics = config.metrics;
+    this.transport = config.transport ?? ((url, init) => fetch(url, init));
   }
 
   // ---------------------------------------------------------------------------
@@ -116,74 +212,15 @@ export class UnusualWhalesClient {
   // ---------------------------------------------------------------------------
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const url = this.buildUrl(path, options.params);
-    const method = options.method ?? 'GET';
     const headers: HeadersInit = {
       Accept: 'application/json',
       Authorization: `Bearer ${this.config.apiKey}`,
       ...options.headers,
     };
 
-    const timeout = options.timeoutMs ?? this.config.timeoutMs;
-
-    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      await this.config.rateLimiter?.throttle();
-
-      let controller: AbortController | undefined;
-      let timeoutId: NodeJS.Timeout | undefined;
-      let signal = options.signal;
-
-      if (timeout) {
-        controller = new AbortController();
-        if (signal) {
-          if (signal.aborted) {
-            controller.abort();
-          } else {
-            signal.addEventListener('abort', () => controller?.abort(), { once: true });
-          }
-        }
-        signal = controller.signal;
-        timeoutId = setTimeout(() => controller?.abort(), timeout);
-      }
-
-      try {
-        const response = await fetch(url, {
-          method,
-          headers,
-          body: options.body ?? null,
-          signal,
-        });
-
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-
-        if (!response.ok) {
-          const bodyText = await safeReadBody(response);
-          if (this.shouldRetry(response.status) && attempt < this.maxRetries) {
-            await this.waitForRetry(attempt);
-            continue;
-          }
-
-          throw new UnusualWhalesRequestError(response.status, bodyText);
-        }
-
-        return await parseJson<T>(response);
-      } catch (error) {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-
-        if (attempt < this.maxRetries) {
-          await this.waitForRetry(attempt);
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    throw new Error('Failed to execute request after retries');
+    return this.requestWithRetries(path, { ...options, headers }, (response) =>
+      parseJson<T>(response)
+    );
   }
 
   async get<T>(path: string, params?: QueryParams): Promise<T> {
@@ -573,32 +610,250 @@ export class UnusualWhalesClient {
     return Object.keys(query).length ? query : undefined;
   }
 
+  private async requestWithRetries<T>(
+    path: string,
+    options: RequestOptions,
+    parser: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    const method = (options.method ?? 'GET').toUpperCase();
+    const url = this.buildUrl(path, options.params);
+    const endpoint = path;
+    const timeout = options.timeoutMs ?? this.timeoutMs;
+    const effectiveTimeout = timeout && timeout > 0 ? timeout : undefined;
+
+    const cacheEligible = Boolean(
+      method === 'GET' && options.cacheTtlMs && options.cacheTtlMs > 0 && this.cache,
+    );
+    const cacheKey = cacheEligible ? this.computeCacheKey(url) : undefined;
+
+    if (cacheEligible && cacheKey) {
+      const cached = await this.cache!.get<T>(cacheKey);
+      if (cached !== undefined) {
+        await this.metrics?.recordRequest({
+          endpoint,
+          method,
+          durationMs: 0,
+          status: 200,
+          retries: 0,
+          cacheHit: true,
+        });
+        return cached;
+      }
+    }
+
+    const { params: _p, cacheTtlMs, timeoutMs, body, ...rest } = options;
+    const init: RequestInit = {
+      ...rest,
+      method,
+      body: body ?? null,
+    };
+
+    const key = this.buildRequestKey(method, endpoint);
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      const start = Date.now();
+      try {
+        await this.circuitBreaker?.beforeRequest(key);
+        await this.rateLimiter.throttle(key);
+
+        const response = await this.executeHttp(url, init, effectiveTimeout);
+        if (!response.ok) {
+          const retryAfterMs = parseRetryAfter(response);
+          const bodyText = await safeReadBody(response);
+          const error = new UnusualWhalesRequestError(
+            `UnusualWhales request failed with status ${response.status}`,
+            response.status,
+            bodyText,
+            retryAfterMs,
+          );
+          await this.handleFailure(key, error, endpoint, method, start, attempt);
+
+          if (!this.isRetryable(error.status) || attempt === this.maxRetries) {
+            (error as InternalApiError).__handled = true;
+            throw error;
+          }
+
+          await this.waitForRetry(error, attempt, method, endpoint);
+          continue;
+        }
+
+        const data = await parser(response);
+        await this.rateLimiter.onSuccess?.(key);
+        await this.circuitBreaker?.onSuccess?.(key);
+
+        await this.metrics?.recordRequest({
+          endpoint,
+          method,
+          durationMs: Date.now() - start,
+          status: response.status,
+          retries: attempt,
+          cacheHit: false,
+        });
+
+        if (cacheEligible && cacheKey) {
+          await this.cache!.set(cacheKey, data, cacheTtlMs);
+        }
+
+        return data;
+      } catch (err) {
+        const error: InternalApiError = err instanceof ApiRequestError
+          ? (err as InternalApiError)
+          : new UnusualWhalesRequestError(
+              err instanceof Error ? err.message : 'UnusualWhales request failed',
+              0,
+            );
+        if (!error.__handled) {
+          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          error.__handled = true;
+        }
+
+        if (!this.isRetryable(error.status) || attempt === this.maxRetries) {
+          throw error;
+        }
+
+        await this.waitForRetry(error, attempt, method, endpoint);
+      }
+    }
+
+    throw new UnusualWhalesRequestError('UnusualWhales request exceeded retries', 0);
+  }
+
+  private buildRequestKey(method: string, endpoint: string): string {
+    return `${method}:${endpoint}`;
+  }
+
+  private computeCacheKey(url: string): string {
+    return `unusualwhales:${url}`;
+  }
+
+  private isRetryable(status: number): boolean {
+    return status === 0 || status === 429 || status === 503 || status === 504;
+  }
+
+  private async handleFailure(
+    key: string,
+    error: ApiRequestError,
+    endpoint: string,
+    method: string,
+    start: number,
+    attempt: number,
+  ): Promise<void> {
+    await this.rateLimiter.onError?.(key, error);
+    await this.circuitBreaker?.onFailure?.(key, error);
+    await this.metrics?.recordRequest({
+      endpoint,
+      method,
+      durationMs: Date.now() - start,
+      status: error.status,
+      retries: attempt,
+      cacheHit: false,
+    });
+  }
+
+  private async waitForRetry(
+    error: ApiRequestError,
+    attempt: number,
+    method: string,
+    endpoint: string,
+  ): Promise<void> {
+    const delayMs = error.retryAfterMs && error.retryAfterMs > 0
+      ? error.retryAfterMs
+      : computeBackoffWithJitter(this.baseRetryDelayMs, attempt);
+
+    this.logger?.warn?.(
+      `[UnusualWhalesClient] Retrying ${method} ${endpoint} after ${delayMs}ms due to status ${error.status}`,
+    );
+
+    await sleep(delayMs);
+  }
+
+  private async executeHttp(url: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+    if (!timeoutMs) {
+      try {
+        return await this.transport(url, init);
+      } catch (error) {
+        throw new UnusualWhalesRequestError(
+          `UnusualWhales request failed: ${(error as Error)?.message ?? 'network error'}`,
+          0,
+        );
+      }
+    }
+
+    const controller = new AbortController();
+    const originalSignal = init.signal ?? undefined;
+    const abortHandler = () => controller.abort();
+
+    if (originalSignal) {
+      if (originalSignal.aborted) {
+        controller.abort(originalSignal.reason);
+      } else {
+        originalSignal.addEventListener('abort', abortHandler);
+      }
+    }
+
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await this.transport(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      throw new UnusualWhalesRequestError(
+        `UnusualWhales request failed: ${(error as Error)?.message ?? 'network error'}`,
+        0,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      if (originalSignal) {
+        originalSignal.removeEventListener('abort', abortHandler);
+      }
+    }
+  }
+
   private buildUrl(path: string, params?: QueryParams): string {
     const url = new URL(path, this.baseUrl);
     if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        if (value === undefined || value === null) continue;
+      const entries = Object.entries(params).filter(([, value]) => value !== undefined);
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      for (const [key, value] of entries) {
+        if (value === undefined) {
+          continue;
+        }
         if (Array.isArray(value)) {
           for (const item of value) {
             url.searchParams.append(key, String(item));
           }
-          continue;
+        } else {
+          url.searchParams.append(key, String(value));
         }
-        url.searchParams.append(key, String(value));
       }
     }
     return url.toString();
   }
+}
 
-  private shouldRetry(status: number): boolean {
-    return status === 429 || status >= 500;
+function computeBackoffWithJitter(baseMs: number, attempt: number): number {
+  const exp = baseMs * 2 ** attempt;
+  const jitter = Math.random() * baseMs;
+  return exp + jitter;
+}
+
+function parseRetryAfter(res: Response): number | undefined {
+  const header = res.headers.get('retry-after');
+  if (!header) {
+    return undefined;
   }
 
-  private async waitForRetry(attempt: number): Promise<void> {
-    const delayMs = this.retryDelayMs * 2 ** attempt;
-    const jitter = Math.random() * this.retryDelayMs;
-    await delay(delayMs + jitter);
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) {
+    return seconds * 1000;
   }
+
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    const diff = date - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+
+  return undefined;
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -641,10 +896,24 @@ export function createUnusualWhalesClientFromEnv(
   const config: UnusualWhalesClientConfig = {
     apiKey,
     baseUrl: overrides.baseUrl ?? process.env.UNUSUALWHALES_BASE_URL ?? DEFAULT_BASE_URL,
-    maxRetries: overrides.maxRetries ?? parseOptionalNumber(process.env.UNUSUALWHALES_MAX_RETRIES),
-    retryDelayMs: overrides.retryDelayMs ?? parseOptionalNumber(process.env.UNUSUALWHALES_RETRY_DELAY_MS),
-    timeoutMs: overrides.timeoutMs ?? parseOptionalNumber(process.env.UNUSUALWHALES_TIMEOUT_MS),
+    maxRetries:
+      overrides.maxRetries ??
+      parseOptionalNumber(process.env.UNUSUALWHALES_MAX_RETRIES) ??
+      DEFAULT_MAX_RETRIES,
+    baseRetryDelayMs:
+      overrides.baseRetryDelayMs ??
+      parseOptionalNumber(process.env.UNUSUALWHALES_BASE_RETRY_DELAY_MS) ??
+      DEFAULT_BASE_RETRY_DELAY_MS,
+    timeoutMs:
+      overrides.timeoutMs ??
+      parseOptionalNumber(process.env.UNUSUALWHALES_TIMEOUT_MS) ??
+      DEFAULT_TIMEOUT_MS,
     rateLimiter: overrides.rateLimiter,
+    cache: overrides.cache,
+    circuitBreaker: overrides.circuitBreaker,
+    logger: overrides.logger,
+    metrics: overrides.metrics,
+    transport: overrides.transport,
   };
 
   return new UnusualWhalesClient(config);

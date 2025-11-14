@@ -1,20 +1,12 @@
 import { createSupabaseClient } from '../lib/supabase';
-import { createFinraClient, FinraClient, createNormalizedRow } from '@libs/finra-client';
+import { createNormalizedRow } from '@libs/finra-client';
+import { getFinraClient } from '../lib/finraClient';
 import crypto from 'crypto';
 import type { MicroOffExVenueWeeklyRecord, MicroOffExSymbolWeeklyRecord, OffExSource } from '../lib/schema';
 import { upsertCusipMapping } from './entity-utils';
 
 // Type alias for normalized row (lowercase keys)
 type NormalizedRow = Map<string, unknown>;
-
-let cachedClient: FinraClient | null = null;
-
-function getFinraClient(): FinraClient {
-  if (!cachedClient) {
-    cachedClient = createFinraClient();
-  }
-  return cachedClient;
-}
 
 function normalizeIdentifier(value: unknown): string | null {
   if (!value) return null;

@@ -141,6 +141,10 @@ export class RedisCache {
       this.client = null;
     }
   }
+
+  getClient(): Redis | null {
+    return this.client;
+  }
 }
 
 let sharedRedisCache: RedisCache | null = null;

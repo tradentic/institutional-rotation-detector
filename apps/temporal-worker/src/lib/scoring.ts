@@ -68,9 +68,9 @@ export const SCORE_WEIGHTS = {
 const DUMP_GATE_Z = 1.5;
 
 const EOW_MULTIPLIERS = {
-  uNext: 0.95,
-  uhfNext: 0.9,
-  optNext: 0.5,
+  uNext: 1.05,
+  uhfNext: 1.1,
+  optNext: 1.25,
 };
 
 export function computeRotationScore(inputs: ScoreInputs): ScoreResult {

@@ -527,9 +527,12 @@ export async function getCusipForTicker(
   const validCusips = result.cusips.filter((cusip) => /^[0-9A-Z]{9}$/.test(cusip));
 
   if (validCusips.length === 0) {
-    throw new Error(
-      `CUSIP resolution returned invalid CUSIPs for ${ticker}: ${result.cusips.join(', ')}`
+    console.warn(
+      `[CUSIP Resolution] No valid 9-character CUSIPs found for ${ticker}. Returning fallback identifiers: ${result.cusips.join(
+        ', '
+      )}`
     );
+    return result.cusips;
   }
 
   if (validCusips.length < result.cusips.length) {

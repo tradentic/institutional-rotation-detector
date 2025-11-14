@@ -1,21 +1,19 @@
-import type { RateLimiter, UnusualWhalesClient } from '@libs/unusualwhales-client';
+import type { UnusualWhalesClient } from '@libs/unusualwhales-client';
 import { createUnusualWhalesClientFromEnv } from '@libs/unusualwhales-client';
-import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
+import { RedisRateLimiter } from './redisRateLimiter';
+import { RedisApiCache } from './redisApiCache';
 
-class DistributedRateLimiterAdapter implements RateLimiter {
-  constructor(private readonly limiter: DistributedRateLimiter) {}
-
-  async throttle(): Promise<void> {
-    await this.limiter.throttle();
-  }
-}
+let cachedClient: UnusualWhalesClient | null = null;
 
 export function createUnusualWhalesClient(): UnusualWhalesClient {
-  const maxRps = Number(process.env.MAX_RPS_UNUSUALWHALES || '10');
-  const limiter = createDistributedRateLimiter('unusualwhales-api', maxRps);
-  const rateLimiter = new DistributedRateLimiterAdapter(limiter);
+  if (!cachedClient) {
+    const maxRps = Number(process.env.MAX_RPS_UNUSUALWHALES || '10');
+    const rateLimiter = new RedisRateLimiter('unusualwhales-api', maxRps);
+    const cache = new RedisApiCache();
+    cachedClient = createUnusualWhalesClientFromEnv({ rateLimiter, cache });
+  }
 
-  return createUnusualWhalesClientFromEnv({ rateLimiter });
+  return cachedClient;
 }
 
 export type { UnusualWhalesClient } from '@libs/unusualwhales-client';

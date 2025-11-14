@@ -1,4 +1,4 @@
-import { setTimeout as delay } from 'timers/promises';
+import { setTimeout as sleep } from 'timers/promises';
 import type {
   FinraClientConfig,
   TokenResponse,
@@ -16,15 +16,26 @@ import type {
   ThresholdListRecord,
   ThresholdListParams,
   DatasetRecord,
+  RateLimiter,
+  Cache,
+  CircuitBreaker,
+  Logger,
+  MetricsSink,
+  HttpTransport,
+  QueryParams,
+  RequestOptions,
 } from './types';
-import { FinraRequestError } from './types';
+import { ApiRequestError, FinraRequestError, NoopRateLimiter } from './types';
+
+type InternalApiError = ApiRequestError & { __handled?: boolean };
 
 const DEFAULT_BASE_URL = 'https://api.finra.org';
 const DEFAULT_TOKEN_URL =
   'https://ews.fip.finra.org/fip/rest/ews/oauth2/access_token?grant_type=client_credentials';
 const DEFAULT_PAGE_SIZE = 5000;
 const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_RETRY_DELAY_MS = 500;
+const DEFAULT_BASE_RETRY_DELAY_MS = 500;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
  * FINRA API Client
@@ -42,7 +53,14 @@ export class FinraClient {
   private readonly tokenUrl: string;
   private readonly pageSize: number;
   private readonly maxRetries: number;
-  private readonly retryDelayMs: number;
+  private readonly baseRetryDelayMs: number;
+  private readonly timeoutMs: number;
+  private readonly rateLimiter: RateLimiter;
+  private readonly cache?: Cache;
+  private readonly circuitBreaker?: CircuitBreaker;
+  private readonly logger?: Logger;
+  private readonly metrics?: MetricsSink;
+  private readonly transport: HttpTransport;
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
 
@@ -51,7 +69,14 @@ export class FinraClient {
     this.tokenUrl = config.tokenUrl ?? DEFAULT_TOKEN_URL;
     this.pageSize = config.pageSize ?? DEFAULT_PAGE_SIZE;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.retryDelayMs = config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+    this.baseRetryDelayMs = config.baseRetryDelayMs ?? DEFAULT_BASE_RETRY_DELAY_MS;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.rateLimiter = config.rateLimiter ?? new NoopRateLimiter();
+    this.cache = config.cache;
+    this.circuitBreaker = config.circuitBreaker;
+    this.logger = config.logger;
+    this.metrics = config.metrics;
+    this.transport = config.transport ?? ((url, init) => fetch(url, init));
   }
 
   // ==========================================================================
@@ -69,19 +94,27 @@ export class FinraClient {
       `${this.config.clientId}:${this.config.clientSecret}`
     ).toString('base64');
 
-    const response = await fetch(this.tokenUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${credentials}`,
-      },
-    });
+    let response: Response;
+    try {
+      response = await this.transport(this.tokenUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${credentials}`,
+        },
+      });
+    } catch (error) {
+      throw new FinraRequestError(
+        `FINRA token request failed: ${(error as Error)?.message ?? 'unknown error'}`,
+        0,
+      );
+    }
 
     if (!response.ok) {
       const body = await safeReadBody(response);
       throw new FinraRequestError(
         `FINRA token request failed with status ${response.status}`,
         response.status,
-        body
+        body,
       );
     }
 
@@ -115,40 +148,31 @@ export class FinraClient {
       [key: string]: unknown;
     }
   ): Promise<T[]> {
-    const searchParams = new URLSearchParams();
-
+    const query: QueryParams = {};
     if (params?.limit !== undefined) {
-      searchParams.set('limit', String(params.limit));
+      query.limit = params.limit;
     }
     if (params?.offset !== undefined) {
-      searchParams.set('offset', String(params.offset));
+      query.offset = params.offset;
     }
     if (params?.fields && params.fields.length > 0) {
-      searchParams.set('fields', params.fields.join(','));
+      query.fields = params.fields.join(',');
     }
 
-    // Add any additional params
     for (const [key, value] of Object.entries(params ?? {})) {
-      if (key !== 'limit' && key !== 'offset' && key !== 'fields' && value !== undefined) {
-        searchParams.set(key, String(value));
+      if (['limit', 'offset', 'fields'].includes(key)) {
+        continue;
+      }
+      if (value !== undefined) {
+        query[key] = value as string | number | boolean | string[] | number[];
       }
     }
 
-    const url = `${this.baseUrl}/data/group/${encodeURIComponent(
-      group
-    )}/name/${encodeURIComponent(dataset)}?${searchParams.toString()}`;
-
-    const accessToken = await this.getAccessToken();
-    const response = await this.request(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-      },
-    });
-
-    const rows = await parseResponseRows(response);
-    return rows as T[];
+    return this.requestDatasetWithAuth<T[]>(
+      this.buildDatasetPath(group, dataset),
+      { method: 'GET', params: query },
+      parseResponseRows,
+    );
   }
 
   /**
@@ -164,29 +188,47 @@ export class FinraClient {
     dataset: string,
     body: FinraPostRequest
   ): Promise<T[]> {
-    const url = `${this.baseUrl}/data/group/${encodeURIComponent(
-      group
-    )}/name/${encodeURIComponent(dataset)}`;
-
     // Normalize compareFilters to uppercase for FINRA API
     const normalizedBody = {
       ...body,
       compareFilters: normalizeCompareFilters(body.compareFilters),
     };
-
-    const accessToken = await this.getAccessToken();
-    const response = await this.request(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
+    return this.requestDatasetWithAuth<T[]>(
+      this.buildDatasetPath(group, dataset),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(normalizedBody),
       },
-      body: JSON.stringify(normalizedBody),
-    });
+      parseResponseRows,
+    );
+  }
 
-    const rows = await parseResponseRows(response);
-    return rows as T[];
+  private async requestDatasetWithAuth<T>(
+    path: string,
+    options: RequestOptions,
+    parser: (response: Response) => Promise<T>,
+    retriedAfter401 = false,
+  ): Promise<T> {
+    const accessToken = await this.getAccessToken();
+    const headers: HeadersInit = {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      ...options.headers,
+    };
+
+    try {
+      return await this.requestWithRetries(path, { ...options, headers }, parser);
+    } catch (error) {
+      if (error instanceof FinraRequestError && error.status === 401 && !retriedAfter401) {
+        this.accessToken = null;
+        this.tokenExpiry = 0;
+        return this.requestDatasetWithAuth(path, options, parser, true);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -231,70 +273,225 @@ export class FinraClient {
     return results;
   }
 
-  /**
-   * Core HTTP request with retry logic and token refresh
-   *
-   * Handles:
-   * - 200 OK: success with content
-   * - 204 No Content: success but no results (treated as empty array by parseResponseRows)
-   * - 401 Unauthorized: token refresh and retry
-   * - 429/5xx: retry with exponential backoff
-   */
-  private async request(
-    url: string,
-    init: RequestInit,
-    attempt = 0,
-    isRetryAfter401 = false
-  ): Promise<Response> {
-    try {
-      const response = await fetch(url, init);
+  private async requestWithRetries<T>(
+    path: string,
+    options: RequestOptions,
+    parser: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    const method = (options.method ?? 'GET').toUpperCase();
+    const url = this.buildUrl(path, options.params);
+    const endpoint = path;
+    const timeout = options.timeoutMs ?? this.timeoutMs;
+    const effectiveTimeout = timeout > 0 ? timeout : undefined;
 
-      // 204 No Content is a successful response (means no results found)
-      if (response.status === 204) {
-        return response;
+    const cacheEligible = Boolean(
+      method === 'GET' && options.cacheTtlMs && options.cacheTtlMs > 0 && this.cache,
+    );
+    const cacheKey = cacheEligible ? this.computeCacheKey(url) : undefined;
+
+    if (cacheEligible && cacheKey) {
+      const cached = await this.cache!.get<T>(cacheKey);
+      if (cached !== undefined) {
+        await this.metrics?.recordRequest({
+          endpoint,
+          method,
+          durationMs: 0,
+          status: 200,
+          retries: 0,
+          cacheHit: true,
+        });
+        return cached;
       }
+    }
 
-      if (!response.ok) {
-        const body = await safeReadBody(response);
+    const { params: _p, cacheTtlMs, timeoutMs, body, ...rest } = options;
+    const init: RequestInit = {
+      ...rest,
+      method,
+      body: body ?? null,
+    };
 
-        // If 401 Unauthorized, token might be expired - clear it and retry once
-        if (response.status === 401 && !isRetryAfter401) {
-          this.accessToken = null;
-          this.tokenExpiry = 0;
-          const newToken = await this.getAccessToken();
-          const newHeaders = {
-            ...init.headers,
-            Authorization: `Bearer ${newToken}`,
-          };
-          return this.request(url, { ...init, headers: newHeaders }, attempt, true);
+    const key = this.buildRequestKey(method, endpoint);
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      const start = Date.now();
+      try {
+        await this.circuitBreaker?.beforeRequest(key);
+        await this.rateLimiter.throttle(key);
+
+        const response = await this.executeHttp(url, init, effectiveTimeout);
+        if (!response.ok) {
+          const retryAfterMs = parseRetryAfter(response);
+          const body = await safeReadBody(response);
+          const error = new FinraRequestError(
+            `FINRA request failed with status ${response.status}`,
+            response.status,
+            body,
+            retryAfterMs,
+          );
+          await this.handleFailure(key, error, endpoint, method, start, attempt);
+
+          if (!this.shouldRetry(error.status) || attempt === this.maxRetries) {
+            (error as InternalApiError).__handled = true;
+            throw error;
+          }
+
+          await this.waitForRetry(error, attempt, method, endpoint);
+          continue;
         }
 
-        if (shouldRetry(response.status) && attempt < this.maxRetries) {
-          await this.backoff(attempt);
-          return this.request(url, init, attempt + 1, isRetryAfter401);
+        const data = await parser(response);
+        await this.rateLimiter.onSuccess?.(key);
+        await this.circuitBreaker?.onSuccess?.(key);
+
+        await this.metrics?.recordRequest({
+          endpoint,
+          method,
+          durationMs: Date.now() - start,
+          status: response.status,
+          retries: attempt,
+          cacheHit: false,
+        });
+
+        if (cacheEligible && cacheKey) {
+          await this.cache!.set(cacheKey, data, cacheTtlMs);
         }
 
+        return data;
+      } catch (err) {
+        const error: InternalApiError = err instanceof ApiRequestError
+          ? (err as InternalApiError)
+          : new FinraRequestError(
+              err instanceof Error ? err.message : 'FINRA request failed',
+              0,
+            );
+
+        if (!error.__handled) {
+          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          error.__handled = true;
+        }
+
+        if (!this.shouldRetry(error.status) || attempt === this.maxRetries) {
+          throw error;
+        }
+
+        await this.waitForRetry(error, attempt, method, endpoint);
+      }
+    }
+
+    throw new FinraRequestError('FINRA request exceeded retries', 0);
+  }
+
+  private async executeHttp(url: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+    if (!timeoutMs) {
+      try {
+        return await this.transport(url, init);
+      } catch (error) {
         throw new FinraRequestError(
-          `FINRA request failed with status ${response.status}`,
-          response.status,
-          body
+          `FINRA request failed: ${(error as Error)?.message ?? 'network error'}`,
+          0,
         );
       }
+    }
 
-      return response;
-    } catch (err) {
-      if (attempt < this.maxRetries) {
-        await this.backoff(attempt);
-        return this.request(url, init, attempt + 1, isRetryAfter401);
+    const controller = new AbortController();
+    const originalSignal = init.signal ?? undefined;
+    const abortHandler = () => controller.abort();
+
+    if (originalSignal) {
+      if (originalSignal.aborted) {
+        controller.abort(originalSignal.reason);
+      } else {
+        originalSignal.addEventListener('abort', abortHandler);
       }
-      throw err;
+    }
+
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      return await this.transport(url, { ...init, signal: controller.signal });
+    } catch (error) {
+      throw new FinraRequestError(
+        `FINRA request failed: ${(error as Error)?.message ?? 'network error'}`,
+        0,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+      if (originalSignal) {
+        originalSignal.removeEventListener('abort', abortHandler);
+      }
     }
   }
 
-  private async backoff(attempt: number): Promise<void> {
-    const jitter = Math.random() * this.retryDelayMs;
-    const waitMs = this.retryDelayMs * 2 ** attempt + jitter;
-    await delay(waitMs);
+  private buildDatasetPath(group: string, dataset: string): string {
+    return `/data/group/${encodeURIComponent(group)}/name/${encodeURIComponent(dataset)}`;
+  }
+
+  private buildUrl(path: string, params?: QueryParams): string {
+    const url = new URL(path, this.baseUrl);
+    if (params) {
+      const entries = Object.entries(params).filter(([, value]) => value !== undefined);
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      for (const [key, value] of entries) {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            url.searchParams.append(key, String(item));
+          }
+        } else {
+          url.searchParams.append(key, String(value));
+        }
+      }
+    }
+    return url.toString();
+  }
+
+  private computeCacheKey(url: string): string {
+    return `finra:${url}`;
+  }
+
+  private buildRequestKey(method: string, endpoint: string): string {
+    return `${method.toUpperCase()}:${endpoint}`;
+  }
+
+  private shouldRetry(status: number): boolean {
+    return status === 0 || status === 429 || status === 503 || status === 504;
+  }
+
+  private async handleFailure(
+    key: string,
+    error: ApiRequestError,
+    endpoint: string,
+    method: string,
+    start: number,
+    attempt: number,
+  ): Promise<void> {
+    await this.rateLimiter.onError?.(key, error);
+    await this.circuitBreaker?.onFailure?.(key, error);
+    await this.metrics?.recordRequest({
+      endpoint,
+      method,
+      durationMs: Date.now() - start,
+      status: error.status,
+      retries: attempt,
+      cacheHit: false,
+    });
+  }
+
+  private async waitForRetry(
+    error: ApiRequestError,
+    attempt: number,
+    method: string,
+    endpoint: string,
+  ): Promise<void> {
+    const delayMs = error.retryAfterMs && error.retryAfterMs > 0
+      ? error.retryAfterMs
+      : computeBackoffWithJitter(this.baseRetryDelayMs, attempt);
+
+    this.logger?.warn?.(
+      `[FinraClient] Retrying ${method} ${endpoint} after ${delayMs}ms due to status ${error.status}`,
+    );
+
+    await sleep(delayMs);
   }
 
   // ==========================================================================
@@ -764,10 +961,6 @@ function normalizeCompareFilters(filters?: CompareFilter[]): CompareFilter[] | u
   }));
 }
 
-function shouldRetry(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
 async function safeReadBody(response: Response): Promise<string | undefined> {
   try {
     return await response.text();
@@ -794,7 +987,9 @@ function normalizeRow(row: Record<string, unknown>): Map<string, unknown> {
  * - CSV: parsed into array of record objects
  * - Empty body: returns empty array
  */
-async function parseResponseRows(response: Response): Promise<DatasetRecord[]> {
+async function parseResponseRows<T extends DatasetRecord = DatasetRecord>(
+  response: Response
+): Promise<T[]> {
   // Handle 204 No Content - FINRA returns this when no results found
   if (response.status === 204) {
     return [];
@@ -810,10 +1005,10 @@ async function parseResponseRows(response: Response): Promise<DatasetRecord[]> {
   if (contentType.includes('application/json') || isLikelyJson(body)) {
     const parsed = JSON.parse(body);
     if (Array.isArray(parsed)) {
-      return parsed as DatasetRecord[];
+      return parsed as T[];
     }
     if (Array.isArray(parsed?.data)) {
-      return parsed.data as DatasetRecord[];
+      return parsed.data as T[];
     }
     throw new Error('Unexpected FINRA JSON response shape');
   }
@@ -823,7 +1018,7 @@ async function parseResponseRows(response: Response): Promise<DatasetRecord[]> {
     contentType.includes('application/csv') ||
     body.includes(',')
   ) {
-    return parseCsv(body);
+    return parseCsv(body) as T[];
   }
 
   throw new Error('Unsupported FINRA response content type');
@@ -882,6 +1077,32 @@ function parseCsvLine(line: string): string[] {
   return values;
 }
 
+function computeBackoffWithJitter(baseMs: number, attempt: number): number {
+  const exp = baseMs * 2 ** attempt;
+  const jitter = Math.random() * baseMs;
+  return exp + jitter;
+}
+
+function parseRetryAfter(res: Response): number | undefined {
+  const header = res.headers.get('retry-after');
+  if (!header) {
+    return undefined;
+  }
+
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) {
+    return seconds * 1000;
+  }
+
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) {
+    const diff = date - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+
+  return undefined;
+}
+
 /**
  * Create a normalized row map for case-insensitive field lookups
  *
@@ -915,15 +1136,13 @@ export function createFinraClient(
 
   const baseUrl = process.env.FINRA_API_BASE ?? DEFAULT_BASE_URL;
   const tokenUrl = process.env.FINRA_TOKEN_URL ?? DEFAULT_TOKEN_URL;
-  const pageSize = process.env.FINRA_PAGE_SIZE
-    ? Number(process.env.FINRA_PAGE_SIZE)
-    : DEFAULT_PAGE_SIZE;
-  const maxRetries = process.env.FINRA_MAX_RETRIES
-    ? Number(process.env.FINRA_MAX_RETRIES)
-    : DEFAULT_MAX_RETRIES;
-  const retryDelayMs = process.env.FINRA_RETRY_DELAY_MS
-    ? Number(process.env.FINRA_RETRY_DELAY_MS)
-    : DEFAULT_RETRY_DELAY_MS;
+  const pageSize = parseNumberOrDefault(process.env.FINRA_PAGE_SIZE, DEFAULT_PAGE_SIZE);
+  const maxRetries = parseNumberOrDefault(process.env.FINRA_MAX_RETRIES, DEFAULT_MAX_RETRIES);
+  const baseRetryDelayMs = parseNumberOrDefault(
+    process.env.FINRA_BASE_RETRY_DELAY_MS ?? process.env.FINRA_RETRY_DELAY_MS,
+    DEFAULT_BASE_RETRY_DELAY_MS,
+  );
+  const timeoutMs = parseNumberOrDefault(process.env.FINRA_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
 
   return new FinraClient({
     clientId,
@@ -932,10 +1151,19 @@ export function createFinraClient(
     tokenUrl,
     pageSize,
     maxRetries,
-    retryDelayMs,
+    baseRetryDelayMs,
+    timeoutMs,
     ...configOverrides,
   });
 }
 
 // Re-export FinraRequestError for convenience
 export { FinraRequestError };
+
+function parseNumberOrDefault(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}

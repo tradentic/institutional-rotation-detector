@@ -84,7 +84,7 @@ create_search_attribute "Granularity" "Keyword"
 # Datetime attributes (3 total - at limit)
 create_search_attribute "PeriodEnd" "Datetime"
 create_search_attribute "TradeDate" "Datetime"
-# create_search_attribute "WeekEnd" "Datetime"
+create_search_attribute "WeekEnd" "Datetime"
 create_search_attribute "SettlementDate" "Datetime"
 
 # Text attributes (no limit)

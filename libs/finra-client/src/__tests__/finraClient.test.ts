@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { FinraClient, createFinraClient, FinraRequestError } from '../finraClient';
 import type { FinraClientConfig } from '../types';
+import { InMemoryCache } from '../types';
 
 // Mock fetch globally
 global.fetch = vi.fn();
@@ -26,7 +27,7 @@ describe('FinraClient', () => {
       tokenUrl: 'https://auth.finra.test/token',
       pageSize: 100,
       maxRetries: 2,
-      retryDelayMs: 10,
+      baseRetryDelayMs: 10,
     };
 
     client = new FinraClient(config);
@@ -122,6 +123,7 @@ describe('FinraClient', () => {
         ok: false,
         status: 401,
         text: async () => 'Unauthorized',
+        headers: { get: () => null },
       });
 
       // New token
@@ -164,12 +166,14 @@ describe('FinraClient', () => {
         ok: false,
         status: 429,
         text: async () => 'Rate limited',
+        headers: { get: () => null },
       });
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 429,
         text: async () => 'Rate limited',
+        headers: { get: () => null },
       });
 
       // Success on third try
@@ -201,6 +205,7 @@ describe('FinraClient', () => {
         ok: false,
         status: 500,
         text: async () => 'Server error',
+        headers: { get: () => null },
       });
 
       await expect(
@@ -739,6 +744,122 @@ AAPL,50000,2024-01-15`,
 
       expect(params1.tierIdentifier).toBe('T1');
       expect(params2.tierIdentifier).toBe('T2');
+    });
+  });
+
+  describe('request pipeline instrumentation', () => {
+    const parseJson = async (response: Response) => {
+      const text = await response.text();
+      return text ? JSON.parse(text) : undefined;
+    };
+
+    const baseConfig: FinraClientConfig = {
+      clientId: 'pipeline-id',
+      clientSecret: 'pipeline-secret',
+      baseUrl: 'https://api.finra.test',
+      tokenUrl: 'https://auth.finra.test/token',
+      maxRetries: 1,
+      baseRetryDelayMs: 2,
+    };
+
+    it('honors Retry-After headers on 429 responses', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('Rate limited', {
+            status: 429,
+            headers: { 'retry-after': '0.001' },
+          })
+        )
+        .mockResolvedValueOnce(
+          new Response('[]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      const warn = vi.fn();
+      const client = new FinraClient({ ...baseConfig, transport, logger: { warn } });
+
+      await expect(
+        (client as any).requestWithRetries('/data', { method: 'GET', headers: {} }, parseJson)
+      ).resolves.toEqual([]);
+
+      expect(transport).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 1ms'));
+    });
+
+    it('uses exponential backoff when Retry-After is missing', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }))
+        .mockResolvedValueOnce(
+          new Response('[]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      const warn = vi.fn();
+      const client = new FinraClient({ ...baseConfig, transport, logger: { warn }, baseRetryDelayMs: 2 });
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+
+      await (client as any).requestWithRetries('/data', { method: 'GET', headers: {} }, parseJson);
+
+      randomSpy.mockRestore();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 2ms'));
+    });
+
+    it('invokes rate limiter hooks on success and failure', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response('[]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        )
+        .mockResolvedValueOnce(new Response('Boom', { status: 503 }));
+      const throttle = vi.fn();
+      const onSuccess = vi.fn();
+      const onError = vi.fn();
+      const rateLimiter = { throttle, onSuccess, onError };
+      const client = new FinraClient({ ...baseConfig, transport, rateLimiter, maxRetries: 0 });
+
+      await (client as any).requestWithRetries('/data', { method: 'GET', headers: {} }, parseJson);
+      await expect(
+        (client as any).requestWithRetries('/data', { method: 'GET', headers: {} }, parseJson)
+      ).rejects.toBeInstanceOf(FinraRequestError);
+
+      expect(throttle).toHaveBeenCalledTimes(2);
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses cache results for repeated GET requests when TTL provided', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValue(
+          new Response('[{"value":1}]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      const cache = new InMemoryCache();
+      const client = new FinraClient({ ...baseConfig, transport, cache });
+
+      const first = await (client as any).requestWithRetries(
+        '/cached',
+        { method: 'GET', headers: {}, cacheTtlMs: 100 },
+        parseJson
+      );
+      const second = await (client as any).requestWithRetries(
+        '/cached',
+        { method: 'GET', headers: {}, cacheTtlMs: 100 },
+        parseJson
+      );
+
+      expect(first).toEqual([{ value: 1 }]);
+      expect(second).toEqual([{ value: 1 }]);
+      expect(transport).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -8,6 +8,105 @@
 // Core Client Configuration
 // ============================================================================
 
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly responseBody?: string,
+    public readonly retryAfterMs?: number,
+  ) {
+    super(message);
+    this.name = 'ApiRequestError';
+  }
+}
+
+export interface RateLimiter {
+  throttle(key?: string): Promise<void>;
+  onSuccess?(key?: string): void | Promise<void>;
+  onError?(key: string | undefined, error: ApiRequestError): void | Promise<void>;
+}
+
+export class NoopRateLimiter implements RateLimiter {
+  async throttle(): Promise<void> {
+    // no-op
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  onSuccess?(): void {}
+
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  onError?(): void {}
+}
+
+export interface Cache {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void>;
+  delete?(key: string): Promise<void>;
+}
+
+export class InMemoryCache implements Cache {
+  private store = new Map<string, { value: unknown; expiresAt?: number }>();
+
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    const entry = this.store.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt && entry.expiresAt < Date.now()) {
+      this.store.delete(key);
+      return undefined;
+    }
+    return entry.value as T;
+  }
+
+  async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
+    const expiresAt = ttlMs ? Date.now() + ttlMs : undefined;
+    this.store.set(key, { value, expiresAt });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
+}
+
+export interface CircuitBreaker {
+  beforeRequest(key?: string): Promise<void>;
+  onSuccess(key?: string): void | Promise<void>;
+  onFailure(key: string | undefined, err: ApiRequestError): void | Promise<void>;
+}
+
+export interface Logger {
+  debug?(msg: string, meta?: unknown): void;
+  info?(msg: string, meta?: unknown): void;
+  warn?(msg: string, meta?: unknown): void;
+  error?(msg: string, meta?: unknown): void;
+}
+
+export interface MetricsSink {
+  recordRequest(options: {
+    endpoint: string;
+    method: string;
+    durationMs: number;
+    status: number;
+    retries: number;
+    cacheHit: boolean;
+  }): void | Promise<void>;
+}
+
+export interface HttpTransport {
+  (url: string, init: RequestInit): Promise<Response>;
+}
+
+export type QueryParams = Record<string, string | number | boolean | string[] | number[]>;
+
+export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
+  method?: string;
+  body?: BodyInit | null;
+  params?: QueryParams;
+  cacheTtlMs?: number;
+  timeoutMs?: number;
+}
+
 export interface FinraClientConfig {
   clientId: string;
   clientSecret: string;
@@ -15,7 +114,14 @@ export interface FinraClientConfig {
   tokenUrl?: string;
   pageSize?: number;
   maxRetries?: number;
-  retryDelayMs?: number;
+  baseRetryDelayMs?: number;
+  timeoutMs?: number;
+  rateLimiter?: RateLimiter;
+  cache?: Cache;
+  circuitBreaker?: CircuitBreaker;
+  logger?: Logger;
+  metrics?: MetricsSink;
+  transport?: HttpTransport;
 }
 
 // ============================================================================
@@ -26,6 +132,13 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
+}
+
+export class FinraRequestError extends ApiRequestError {
+  constructor(message: string, status: number, responseBody?: string, retryAfterMs?: number) {
+    super(message, status, responseBody, retryAfterMs);
+    this.name = 'FinraRequestError';
+  }
 }
 
 // ============================================================================
@@ -263,17 +376,3 @@ export type DatasetRecordUnion =
   | RegShoDailyRecord
   | ThresholdListRecord;
 
-// ============================================================================
-// Error Types
-// ============================================================================
-
-export class FinraRequestError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly responseBody?: string
-  ) {
-    super(message);
-    this.name = 'FinraRequestError';
-  }
-}
