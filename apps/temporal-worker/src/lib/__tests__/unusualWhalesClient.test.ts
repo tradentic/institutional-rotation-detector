@@ -52,8 +52,13 @@ describe('createUnusualWhalesClient', () => {
 
     createUnusualWhalesClient();
 
-    expect(redisRateLimiterMock).toHaveBeenCalledWith('unusualwhales-api', 15);
-    expect(redisCacheMock).toHaveBeenCalledTimes(1);
+    expect(redisRateLimiterMock).toHaveBeenCalledWith({
+      identifier: 'unusualwhales-api',
+      maxPerSecond: 15,
+      namespace: 'ratelimit',
+      failOpen: true,
+    });
+    expect(redisCacheMock).toHaveBeenCalledWith({ namespace: 'uw', failOpen: true });
     expect(createUnusualWhalesClientFromEnvMock).toHaveBeenCalledTimes(1);
     const args = createUnusualWhalesClientFromEnvMock.mock.calls[0][0];
     expect(args.rateLimiter).toBeDefined();

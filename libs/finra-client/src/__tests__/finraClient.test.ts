@@ -861,6 +861,83 @@ AAPL,50000,2024-01-15`,
       expect(second).toEqual([{ value: 1 }]);
       expect(transport).toHaveBeenCalledTimes(1);
     });
+
+    it('caches POST responses when an explicit cache key is provided', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValue(
+          new Response('[{"value":2}]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      const cache = new InMemoryCache();
+      const client = new FinraClient({ ...baseConfig, transport, cache });
+
+      const execute = () =>
+        (client as any).requestWithRetries(
+          '/cached-post',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ symbol: 'AAPL' }),
+            cacheTtlMs: 250,
+            cacheKey: 'post:cached',
+          },
+          parseJson
+        );
+
+      await execute();
+      await execute();
+
+      expect(transport).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries on 500 and 502 responses before succeeding', async () => {
+      const transport = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('error', { status: 500 }))
+        .mockResolvedValueOnce(new Response('error', { status: 502 }))
+        .mockResolvedValueOnce(
+          new Response('[]', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      const client = new FinraClient({ ...baseConfig, transport, maxRetries: 3 });
+
+      await (client as any).requestWithRetries('/data', { method: 'GET', headers: {} }, parseJson);
+
+      expect(transport).toHaveBeenCalledTimes(3);
+    });
+  });
+});
+
+describe('cache ttl helper options', () => {
+  const baseConfig: FinraClientConfig = {
+    clientId: 'helper',
+    clientSecret: 'helper-secret',
+    baseUrl: 'https://api.finra.test',
+    tokenUrl: 'https://auth.finra.test/token',
+  };
+
+  it('passes cache ttl through helper methods to pagination', async () => {
+    const client = new FinraClient(baseConfig);
+    const spy = vi
+      .spyOn(client as any, 'fetchDatasetPaginated')
+      .mockResolvedValue([]);
+
+    await client.getRegShoDaily({ symbol: 'AAPL' }, { cacheTtlMs: 5000 });
+
+    expect(spy).toHaveBeenCalledWith(
+      'otcMarket',
+      'regShoDaily',
+      expect.objectContaining({ compareFilters: expect.any(Array) }),
+      true,
+      { cacheTtlMs: 5000 },
+    );
+
+    spy.mockRestore();
   });
 });
 

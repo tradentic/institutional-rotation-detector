@@ -24,6 +24,7 @@ import type {
   HttpTransport,
   QueryParams,
   RequestOptions,
+  CacheableHelperOptions,
 } from './types';
 import { ApiRequestError, FinraRequestError, NoopRateLimiter } from './types';
 
@@ -146,7 +147,8 @@ export class FinraClient {
       offset?: number;
       fields?: string[];
       [key: string]: unknown;
-    }
+    },
+    requestOptions?: Pick<RequestOptions, 'cacheTtlMs' | 'cacheKey'>,
   ): Promise<T[]> {
     const query: QueryParams = {};
     if (params?.limit !== undefined) {
@@ -170,7 +172,7 @@ export class FinraClient {
 
     return this.requestDatasetWithAuth<T[]>(
       this.buildDatasetPath(group, dataset),
-      { method: 'GET', params: query },
+      { method: 'GET', params: query, cacheTtlMs: requestOptions?.cacheTtlMs },
       parseResponseRows,
     );
   }
@@ -186,7 +188,8 @@ export class FinraClient {
   protected async postDataset<T extends DatasetRecord = DatasetRecord>(
     group: string,
     dataset: string,
-    body: FinraPostRequest
+    body: FinraPostRequest,
+    requestOptions?: Pick<RequestOptions, 'cacheTtlMs' | 'cacheKey'>,
   ): Promise<T[]> {
     // Normalize compareFilters to uppercase for FINRA API
     const normalizedBody = {
@@ -201,6 +204,8 @@ export class FinraClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(normalizedBody),
+        cacheTtlMs: requestOptions?.cacheTtlMs,
+        cacheKey: requestOptions?.cacheKey,
       },
       parseResponseRows,
     );
@@ -244,7 +249,8 @@ export class FinraClient {
     group: string,
     dataset: string,
     body: FinraPostRequest,
-    usePost = true
+    usePost = true,
+    requestOptions?: CacheableHelperOptions,
   ): Promise<T[]> {
     const results: T[] = [];
     let offset = 0;
@@ -253,9 +259,19 @@ export class FinraClient {
     while (true) {
       const requestBody = { ...body, limit, offset };
 
+      const datasetPath = this.buildDatasetPath(group, dataset);
+      const cacheKey = requestOptions?.cacheTtlMs
+        ? this.computeRequestBodyCacheKey(datasetPath, requestBody)
+        : undefined;
+
       const rows = usePost
-        ? await this.postDataset<T>(group, dataset, requestBody)
-        : await this.getDataset<T>(group, dataset, requestBody as any);
+        ? await this.postDataset<T>(group, dataset, requestBody, {
+            cacheTtlMs: requestOptions?.cacheTtlMs,
+            cacheKey,
+          })
+        : await this.getDataset<T>(group, dataset, requestBody as any, {
+            cacheTtlMs: requestOptions?.cacheTtlMs,
+          });
 
       if (rows.length === 0) {
         break;
@@ -284,10 +300,16 @@ export class FinraClient {
     const timeout = options.timeoutMs ?? this.timeoutMs;
     const effectiveTimeout = timeout > 0 ? timeout : undefined;
 
+    const explicitCacheKey = options.cacheKey;
     const cacheEligible = Boolean(
-      method === 'GET' && options.cacheTtlMs && options.cacheTtlMs > 0 && this.cache,
+      options.cacheTtlMs &&
+        options.cacheTtlMs > 0 &&
+        this.cache &&
+        (method === 'GET' || explicitCacheKey)
     );
-    const cacheKey = cacheEligible ? this.computeCacheKey(url) : undefined;
+    const cacheKey = cacheEligible
+      ? explicitCacheKey ?? this.computeCacheKey(url)
+      : undefined;
 
     if (cacheEligible && cacheKey) {
       const cached = await this.cache!.get<T>(cacheKey);
@@ -304,7 +326,7 @@ export class FinraClient {
       }
     }
 
-    const { params: _p, cacheTtlMs, timeoutMs, body, ...rest } = options;
+    const { params: _p, cacheTtlMs, timeoutMs, body, cacheKey: _cacheKey, ...rest } = options;
     const init: RequestInit = {
       ...rest,
       method,
@@ -449,12 +471,40 @@ export class FinraClient {
     return `finra:${url}`;
   }
 
+  private computeRequestBodyCacheKey(path: string, payload: unknown): string {
+    return `finra:${path}:${this.stableStringify(payload)}`;
+  }
+
+  private stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+      return JSON.stringify(value);
+    }
+
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableStringify(item)).join(',')}]`;
+    }
+
+    const entries = Object.entries(value as Record<string, unknown>).sort((a, b) =>
+      a[0].localeCompare(b[0])
+    );
+
+    return `{${entries
+      .map(([key, val]) => `${JSON.stringify(key)}:${this.stableStringify(val)}`)
+      .join(',')}}`;
+  }
+
   private buildRequestKey(method: string, endpoint: string): string {
     return `${method.toUpperCase()}:${endpoint}`;
   }
 
   private shouldRetry(status: number): boolean {
-    return status === 0 || status === 429 || status === 503 || status === 504;
+    if (status === 0 || status === 429) {
+      return true;
+    }
+    if (status === 500 || status === 502 || status === 503 || status === 504) {
+      return true;
+    }
+    return false;
   }
 
   private async handleFailure(
@@ -505,12 +555,15 @@ export class FinraClient {
    * @returns Weekly summary records
    */
   async queryWeeklySummary(
-    request: FinraPostRequest
+    request: FinraPostRequest,
+    options?: CacheableHelperOptions,
   ): Promise<WeeklySummaryRecord[]> {
     return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummary',
-      request
+      request,
+      true,
+      options,
     );
   }
 
@@ -535,7 +588,8 @@ export class FinraClient {
    * @returns Weekly summary records
    */
   async queryWeeklySummaryHistoric(
-    request: FinraPostRequest
+    request: FinraPostRequest,
+    options?: CacheableHelperOptions,
   ): Promise<WeeklySummaryRecord[]> {
     // Validate that only allowed fields are used in filters
     if (request.compareFilters) {
@@ -555,7 +609,9 @@ export class FinraClient {
     return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummaryHistoric',
-      request
+      request,
+      true,
+      options,
     );
   }
 
@@ -568,7 +624,8 @@ export class FinraClient {
    * @returns Object with separate ATS and OTC records
    */
   async getSymbolWeeklyAtsAndOtc(
-    params: WeeklySummaryParams
+    params: WeeklySummaryParams,
+    options?: CacheableHelperOptions,
   ): Promise<SymbolWeeklyAtsOtc> {
     const { symbol, weekStartDate, tierIdentifier, limit = 100 } = params;
 
@@ -601,10 +658,13 @@ export class FinraClient {
     }
 
     // Fetch all matching records
-    const allRecords = await this.queryWeeklySummary({
-      compareFilters,
-      limit,
-    });
+    const allRecords = await this.queryWeeklySummary(
+      {
+        compareFilters,
+        limit,
+      },
+      options,
+    );
 
     // Separate ATS and OTC records
     const atsRecord = allRecords.find(
@@ -631,7 +691,8 @@ export class FinraClient {
    * @returns Short interest records
    */
   async getConsolidatedShortInterest(
-    params: ShortInterestParams
+    params: ShortInterestParams,
+    options?: CacheableHelperOptions,
   ): Promise<ConsolidatedShortInterestRecord[]> {
     const { identifiers, settlementDate, limit } = params;
 
@@ -654,10 +715,16 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>('otcMarket', 'consolidatedShortInterest', {
-      compareFilters,
-      limit,
-    });
+    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>(
+      'otcMarket',
+      'consolidatedShortInterest',
+      {
+        compareFilters,
+        limit,
+      },
+      true,
+      options,
+    );
   }
 
   /**
@@ -667,7 +734,8 @@ export class FinraClient {
    * @returns Short interest records
    */
   async getConsolidatedShortInterestRange(
-    params: ShortInterestRangeParams
+    params: ShortInterestRangeParams,
+    options?: CacheableHelperOptions,
   ): Promise<ConsolidatedShortInterestRecord[]> {
     const { identifiers, startDate, endDate, limitPerCall } = params;
 
@@ -694,10 +762,16 @@ export class FinraClient {
       fieldValue: endDate,
     });
 
-    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>('otcMarket', 'consolidatedShortInterest', {
-      compareFilters,
-      limit: limitPerCall,
-    });
+    return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>(
+      'otcMarket',
+      'consolidatedShortInterest',
+      {
+        compareFilters,
+        limit: limitPerCall,
+      },
+      true,
+      options,
+    );
   }
 
   // ==========================================================================
@@ -710,7 +784,10 @@ export class FinraClient {
    * @param params - Symbol, trade date, market code filters
    * @returns Reg SHO daily records
    */
-  async getRegShoDaily(params: RegShoDailyParams): Promise<RegShoDailyRecord[]> {
+  async getRegShoDaily(
+    params: RegShoDailyParams,
+    options?: CacheableHelperOptions,
+  ): Promise<RegShoDailyRecord[]> {
     const { symbol, tradeReportDate, marketCode, limit } = params;
 
     const compareFilters: CompareFilter[] = [];
@@ -739,10 +816,16 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated<RegShoDailyRecord>('otcMarket', 'regShoDaily', {
-      compareFilters,
-      limit,
-    });
+    return this.fetchDatasetPaginated<RegShoDailyRecord>(
+      'otcMarket',
+      'regShoDaily',
+      {
+        compareFilters,
+        limit,
+      },
+      true,
+      options,
+    );
   }
 
   // ==========================================================================
@@ -755,7 +838,10 @@ export class FinraClient {
    * @param params - Symbol, trade date, threshold flag filters
    * @returns Threshold list records
    */
-  async getThresholdList(params: ThresholdListParams): Promise<ThresholdListRecord[]> {
+  async getThresholdList(
+    params: ThresholdListParams,
+    options?: CacheableHelperOptions,
+  ): Promise<ThresholdListRecord[]> {
     const { symbol, tradeDate, onlyOnThreshold = true, limit } = params;
 
     const compareFilters: CompareFilter[] = [];
@@ -784,10 +870,16 @@ export class FinraClient {
       });
     }
 
-    return this.fetchDatasetPaginated<ThresholdListRecord>('otcMarket', 'thresholdList', {
-      compareFilters,
-      limit,
-    });
+    return this.fetchDatasetPaginated<ThresholdListRecord>(
+      'otcMarket',
+      'thresholdList',
+      {
+        compareFilters,
+        limit,
+      },
+      true,
+      options,
+    );
   }
 
   // ==========================================================================

@@ -8,8 +8,13 @@ let cachedClient: UnusualWhalesClient | null = null;
 export function createUnusualWhalesClient(): UnusualWhalesClient {
   if (!cachedClient) {
     const maxRps = Number(process.env.MAX_RPS_UNUSUALWHALES || '10');
-    const rateLimiter = new RedisRateLimiter('unusualwhales-api', maxRps);
-    const cache = new RedisApiCache();
+    const rateLimiter = new RedisRateLimiter({
+      identifier: 'unusualwhales-api',
+      maxPerSecond: maxRps,
+      namespace: 'ratelimit',
+      failOpen: true,
+    });
+    const cache = new RedisApiCache({ namespace: 'uw', failOpen: true });
     cachedClient = createUnusualWhalesClientFromEnv({ rateLimiter, cache });
   }
 

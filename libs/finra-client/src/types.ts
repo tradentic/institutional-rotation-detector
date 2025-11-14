@@ -104,7 +104,12 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   body?: BodyInit | null;
   params?: QueryParams;
   cacheTtlMs?: number;
+  cacheKey?: string;
   timeoutMs?: number;
+}
+
+export interface CacheableHelperOptions {
+  cacheTtlMs?: number;
 }
 
 export interface FinraClientConfig {

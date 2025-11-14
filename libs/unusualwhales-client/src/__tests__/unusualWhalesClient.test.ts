@@ -90,6 +90,27 @@ describe('UnusualWhalesClient helpers', () => {
     expect(parsed.searchParams.get('date')).toBe('2024-01-01');
   });
 
+  it('retries on 500 and 502 responses', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('err', { status: 502 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const client = new UnusualWhalesClient({
+      apiKey: 'abc',
+      baseUrl: 'https://api.test',
+      transport,
+      maxRetries: 3,
+    });
+
+    const parseJson = (response: Response) => response.json();
+
+    await (client as any).requestWithRetries('/api/test', { method: 'GET', headers: {} }, parseJson);
+
+    expect(transport).toHaveBeenCalledTimes(3);
+  });
+
   it('invokes rate limiter before requests', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ data: [] }));
     const throttle = vi.fn().mockResolvedValue(undefined);
@@ -209,6 +230,21 @@ describe('UnusualWhalesClient helpers', () => {
     expect(parsed.searchParams.get('order')).toBe('avg_change');
     expect(parsed.searchParams.get('order_direction')).toBe('desc');
     expect(parsed.searchParams.get('limit')).toBe('20');
+  });
+
+  it('uses cache for GET helpers when cache TTL provided', async () => {
+    const transport = vi.fn().mockResolvedValue(jsonResponse({ data: [{ value: 1 }] }));
+    const client = new UnusualWhalesClient({
+      apiKey: 'abc',
+      baseUrl: 'https://api.test',
+      cache: new InMemoryCache(),
+      transport,
+    });
+
+    await client.getShortData('MSFT', { cacheTtlMs: 1000 });
+    await client.getShortData('MSFT', { cacheTtlMs: 1000 });
+
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   describe('request pipeline instrumentation', () => {

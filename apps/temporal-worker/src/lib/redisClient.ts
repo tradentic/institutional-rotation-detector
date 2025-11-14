@@ -1,5 +1,14 @@
 import Redis from 'ioredis';
 
+const REDIS_DEBUG_ENABLED = process.env.REDIS_DEBUG === 'true';
+
+export function redisDebugLog(message: string, meta?: unknown): void {
+  if (REDIS_DEBUG_ENABLED) {
+    // eslint-disable-next-line no-console
+    console.log(message, meta ?? '');
+  }
+}
+
 export interface RedisCacheConfig {
   host: string;
   port: number;
@@ -32,7 +41,7 @@ export class RedisCache {
           retryStrategy: (times: number) => {
             // Retry with exponential backoff up to 3 times
             if (times > 3) {
-              console.warn('[RedisCache] Max retries exceeded, disabling cache');
+              redisDebugLog('[RedisCache] Max retries exceeded, disabling cache');
               return null; // Stop retrying
             }
             return Math.min(times * 50, 2000);
@@ -41,16 +50,16 @@ export class RedisCache {
 
         // Handle connection errors gracefully
         this.client.on('error', (err) => {
-          console.warn('[RedisCache] Redis error:', err.message);
+          redisDebugLog('[RedisCache] Redis error', err.message);
         });
 
         // Connect to Redis
         this.client.connect().catch((err) => {
-          console.warn('[RedisCache] Failed to connect to Redis:', err.message);
+          redisDebugLog('[RedisCache] Failed to connect to Redis', err.message);
           this.client = null;
         });
       } catch (err) {
-        console.warn('[RedisCache] Failed to initialize Redis client:', err);
+        redisDebugLog('[RedisCache] Failed to initialize Redis client', err);
         this.client = null;
       }
     }
@@ -68,14 +77,10 @@ export class RedisCache {
 
     try {
       const value = await this.client.get(key);
-      if (value) {
-        console.log('[RedisCache] Cache HIT:', key);
-      } else {
-        console.log('[RedisCache] Cache MISS:', key);
-      }
+      redisDebugLog(`[RedisCache] Cache ${value ? 'HIT' : 'MISS'}: ${key}`);
       return value;
     } catch (err) {
-      console.warn('[RedisCache] Get error:', err);
+      redisDebugLog('[RedisCache] Get error', err);
       return null;
     }
   }
@@ -93,9 +98,9 @@ export class RedisCache {
 
     try {
       await this.client.setex(key, ttlSeconds, value);
-      console.log('[RedisCache] Cache SET:', key, `(TTL: ${ttlSeconds}s)`);
+      redisDebugLog('[RedisCache] Cache SET', { key, ttlSeconds });
     } catch (err) {
-      console.warn('[RedisCache] Set error:', err);
+      redisDebugLog('[RedisCache] Set error', err);
     }
   }
 
@@ -110,9 +115,9 @@ export class RedisCache {
 
     try {
       await this.client.del(key);
-      console.log('[RedisCache] Cache DELETE:', key);
+      redisDebugLog('[RedisCache] Cache DELETE', key);
     } catch (err) {
-      console.warn('[RedisCache] Delete error:', err);
+      redisDebugLog('[RedisCache] Delete error', err);
     }
   }
 
@@ -126,9 +131,9 @@ export class RedisCache {
 
     try {
       await this.client.flushdb();
-      console.log('[RedisCache] Cache CLEARED');
+      redisDebugLog('[RedisCache] Cache CLEARED');
     } catch (err) {
-      console.warn('[RedisCache] Clear error:', err);
+      redisDebugLog('[RedisCache] Clear error', err);
     }
   }
 
@@ -159,7 +164,7 @@ export function getRedisCache(): RedisCache {
     const password = process.env.REDIS_PASSWORD;
     const enableCaching = process.env.REDIS_ENABLE_CACHING !== 'false';
 
-    console.log('[RedisCache] Configuration:', {
+    redisDebugLog('[RedisCache] Configuration', {
       host,
       port,
       password: password ? '[SET]' : '[NOT SET]',

@@ -41,6 +41,33 @@
 export { createClient, type ClientConfig } from './factory';
 
 // ============================================================================
+// Low-level HTTP client exports
+// ============================================================================
+
+export {
+  OpenAiClient,
+  createOpenAiClientFromEnv,
+  ApiRequestError as OpenAiApiRequestError,
+  OpenAiRequestError,
+  InMemoryCache as OpenAiInMemoryCache,
+  NoopRateLimiter as OpenAiNoopRateLimiter,
+} from './openaiClient';
+
+export type {
+  OpenAiClientConfig,
+  RateLimiter as OpenAiRateLimiter,
+  Cache as OpenAiCache,
+  CircuitBreaker as OpenAiCircuitBreaker,
+  Logger as OpenAiLogger,
+  MetricsSink as OpenAiMetricsSink,
+  HttpTransport as OpenAiHttpTransport,
+  OpenAiResponsesRequest,
+  OpenAiResponsesResult,
+  OpenAiModelListResponse,
+  OpenAiModelDescription,
+} from './openaiClient';
+
+// ============================================================================
 // Core Types (Model-Agnostic)
 // ============================================================================
 

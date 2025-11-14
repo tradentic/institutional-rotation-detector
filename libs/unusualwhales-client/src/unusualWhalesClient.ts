@@ -156,7 +156,12 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   body?: BodyInit | null;
   params?: QueryParams;
   cacheTtlMs?: number;
+  cacheKey?: string;
   timeoutMs?: number;
+}
+
+export interface CacheableHelperOptions {
+  cacheTtlMs?: number;
 }
 
 export interface UnusualWhalesClientConfig {
@@ -223,8 +228,17 @@ export class UnusualWhalesClient {
     );
   }
 
-  async get<T>(path: string, params?: QueryParams): Promise<T> {
-    return this.request<T>(path, { method: 'GET', params });
+  async get<T>(
+    path: string,
+    params?: QueryParams,
+    requestOptions?: Pick<RequestOptions, 'cacheTtlMs' | 'cacheKey'>,
+  ): Promise<T> {
+    return this.request<T>(path, {
+      method: 'GET',
+      params,
+      cacheTtlMs: requestOptions?.cacheTtlMs,
+      cacheKey: requestOptions?.cacheKey,
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -336,8 +350,17 @@ export class UnusualWhalesClient {
     return this.get(`/api/stock/${encodeURIComponent(ticker)}/nope`, params?.date ? { date: params.date } : undefined);
   }
 
-  getOhlc(ticker: string, candleSize: CandleSize, params?: OhlcParams): Promise<UwOhlcResponse> {
-    return this.get(`/api/stock/${encodeURIComponent(ticker)}/ohlc/${candleSize}`, this.buildOhlcParams(params));
+  getOhlc(
+    ticker: string,
+    candleSize: CandleSize,
+    params?: OhlcParams,
+    options?: CacheableHelperOptions,
+  ): Promise<UwOhlcResponse> {
+    return this.get(
+      `/api/stock/${encodeURIComponent(ticker)}/ohlc/${candleSize}`,
+      this.buildOhlcParams(params),
+      options,
+    );
   }
 
   getFlowAlerts(params?: FlowAlertsParams): Promise<UwFlowAlertsResponse> {
@@ -348,16 +371,22 @@ export class UnusualWhalesClient {
   // Short interest
   // ---------------------------------------------------------------------------
 
-  getShortData(ticker: string): Promise<UwShortDataResponse> {
-    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/data`);
+  getShortData(ticker: string, options?: CacheableHelperOptions): Promise<UwShortDataResponse> {
+    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/data`, undefined, options);
   }
 
-  getShortInterestAndFloat(ticker: string): Promise<UwShortInterestAndFloatResponse> {
-    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/interest-float`);
+  getShortInterestAndFloat(
+    ticker: string,
+    options?: CacheableHelperOptions,
+  ): Promise<UwShortInterestAndFloatResponse> {
+    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/interest-float`, undefined, options);
   }
 
-  getShortVolumeAndRatio(ticker: string): Promise<UwShortVolumeResponse> {
-    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/volume-and-ratio`);
+  getShortVolumeAndRatio(
+    ticker: string,
+    options?: CacheableHelperOptions,
+  ): Promise<UwShortVolumeResponse> {
+    return this.get(`/api/shorts/${encodeURIComponent(ticker)}/volume-and-ratio`, undefined, options);
   }
 
   getShortVolumeByExchange(ticker: string): Promise<UwShortVolumeByExchangeResponse> {
@@ -392,16 +421,30 @@ export class UnusualWhalesClient {
     return this.get('/api/seasonality/market');
   }
 
-  getSeasonalityMonthPerformers(month: number | string, params?: SeasonalityMonthPerformersParams): Promise<UwSeasonalityPerformersResponse> {
-    return this.get(`/api/seasonality/${encodeURIComponent(String(month))}/performers`, this.buildSeasonalityPerformersParams(params));
+  getSeasonalityMonthPerformers(
+    month: number | string,
+    params?: SeasonalityMonthPerformersParams,
+    options?: CacheableHelperOptions,
+  ): Promise<UwSeasonalityPerformersResponse> {
+    return this.get(
+      `/api/seasonality/${encodeURIComponent(String(month))}/performers`,
+      this.buildSeasonalityPerformersParams(params),
+      options,
+    );
   }
 
-  getSeasonalityMonthlyForTicker(ticker: string): Promise<UwSeasonalityMonthlyResponse> {
-    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/monthly`);
+  getSeasonalityMonthlyForTicker(
+    ticker: string,
+    options?: CacheableHelperOptions,
+  ): Promise<UwSeasonalityMonthlyResponse> {
+    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/monthly`, undefined, options);
   }
 
-  getSeasonalityYearMonthForTicker(ticker: string): Promise<UwSeasonalityYearMonthResponse> {
-    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/year-month`);
+  getSeasonalityYearMonthForTicker(
+    ticker: string,
+    options?: CacheableHelperOptions,
+  ): Promise<UwSeasonalityYearMonthResponse> {
+    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/year-month`, undefined, options);
   }
 
   getInstitutionHoldings(name: string): Promise<UwInstitutionHoldingsResponse> {
@@ -621,10 +664,16 @@ export class UnusualWhalesClient {
     const timeout = options.timeoutMs ?? this.timeoutMs;
     const effectiveTimeout = timeout && timeout > 0 ? timeout : undefined;
 
+    const explicitCacheKey = options.cacheKey;
     const cacheEligible = Boolean(
-      method === 'GET' && options.cacheTtlMs && options.cacheTtlMs > 0 && this.cache,
+      options.cacheTtlMs &&
+        options.cacheTtlMs > 0 &&
+        this.cache &&
+        (method === 'GET' || explicitCacheKey)
     );
-    const cacheKey = cacheEligible ? this.computeCacheKey(url) : undefined;
+    const cacheKey = cacheEligible
+      ? explicitCacheKey ?? this.computeCacheKey(url)
+      : undefined;
 
     if (cacheEligible && cacheKey) {
       const cached = await this.cache!.get<T>(cacheKey);
@@ -641,7 +690,7 @@ export class UnusualWhalesClient {
       }
     }
 
-    const { params: _p, cacheTtlMs, timeoutMs, body, ...rest } = options;
+    const { params: _p, cacheTtlMs, timeoutMs, body, cacheKey: _cacheKey, ...rest } = options;
     const init: RequestInit = {
       ...rest,
       method,
@@ -727,7 +776,13 @@ export class UnusualWhalesClient {
   }
 
   private isRetryable(status: number): boolean {
-    return status === 0 || status === 429 || status === 503 || status === 504;
+    if (status === 0 || status === 429) {
+      return true;
+    }
+    if (status === 500 || status === 502 || status === 503 || status === 504) {
+      return true;
+    }
+    return false;
   }
 
   private async handleFailure(

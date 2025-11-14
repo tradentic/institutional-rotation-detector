@@ -1,6 +1,6 @@
 import { createSupabaseClient } from '../lib/supabase';
 import { createSecClient } from '../lib/secClient';
-import { createClient } from '@libs/openai-client';
+import { createClient } from '../lib/openaiClient';
 
 /**
  * Chunk a filing into smaller pieces for long context synthesis.
