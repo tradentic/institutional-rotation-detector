@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { UnusualWhalesClient } from '@libs/unusualwhales-client';
 
 // ============================================================================
 // GENERIC API HELPERS
@@ -11,34 +10,17 @@ import type { UnusualWhalesClient } from '@libs/unusualwhales-client';
  * Used by all endpoint groups to reduce duplication
  */
 export async function fetchAndParse<T extends z.ZodTypeAny>(
-  client: UnusualWhalesClient,
-  endpoint: string,
-  params: Record<string, string> | undefined,
+  fetcher: () => Promise<unknown>,
   schema: T,
   context: string
 ): Promise<z.infer<T>> {
   try {
-    const response = await client.get<any>(endpoint, params);
+    const response = await fetcher();
     return schema.parse(response);
   } catch (error) {
     console.error(`Error ${context}:`, error);
     throw error;
   }
-}
-
-/**
- * Build query parameters object from optional values
- */
-export function buildQueryParams(params: Record<string, any>): Record<string, string> {
-  const result: Record<string, string> = {};
-
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null) {
-      result[key] = typeof value === 'string' ? value : value.toString();
-    }
-  }
-
-  return result;
 }
 
 // ============================================================================

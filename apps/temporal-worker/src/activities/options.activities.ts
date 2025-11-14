@@ -4,7 +4,6 @@ import { createUnusualWhalesClient } from '../lib/unusualWhalesClient';
 import {
   // Generic helpers
   fetchAndParse,
-  buildQueryParams,
   upsertRecords,
   insertRecords,
   // Parsing helpers
@@ -185,9 +184,7 @@ export async function fetchOptionsFlowByExpiry(params: {
 
   // Use fetchAndParse helper to reduce duplication
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/flow-per-expiry`,
-    undefined,
+    () => client.getFlowPerExpiry(ticker),
     flowPerExpirySchema,
     `fetching flow by expiry for ${ticker}`
   );
@@ -218,9 +215,7 @@ export async function fetchOptionsFlowByStrike(params: {
   const { ticker, date } = params;
 
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/flow-per-strike`,
-    { date },
+    () => client.getFlowPerStrike(ticker, { date }),
     flowPerStrikeSchema,
     `fetching flow by strike for ${ticker} on ${date}`
   );
@@ -250,9 +245,7 @@ export async function fetchGreeksForExpiration(params: {
   const { ticker, expiry, date } = params;
 
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/greeks`,
-    { expiry, date },
+    () => client.getGreeks(ticker, { expiry, date }),
     greeksSchema,
     `fetching greeks for ${ticker} expiry ${expiry}`
   );
@@ -289,9 +282,7 @@ export async function fetchOptionChains(params: {
   const { ticker, date } = params;
 
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/option-chains`,
-    { date },
+    () => client.getOptionChains(ticker, { date }),
     optionChainsSchema,
     `fetching option chains for ${ticker} on ${date}`
   );
@@ -321,19 +312,15 @@ export async function fetchOptionContracts(params: {
 
   const { ticker, expiry, optionType, excludeZeroVol = true, excludeZeroOI = true, limit = 500 } = params;
 
-  // Use buildQueryParams helper to reduce duplication
-  const queryParams = buildQueryParams({
-    limit,
-    expiry,
-    option_type: optionType,
-    exclude_zero_vol_chains: excludeZeroVol,
-    exclude_zero_oi_chains: excludeZeroOI,
-  });
-
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/option-contracts`,
-    queryParams,
+    () =>
+      client.getOptionContracts(ticker, {
+        limit,
+        expiry,
+        optionType,
+        excludeZeroVolChains: excludeZeroVol,
+        excludeZeroOiChains: excludeZeroOI,
+      }),
     optionContractsSchema,
     `fetching option contracts for ${ticker}`
   );
@@ -370,12 +357,8 @@ export async function fetchGreekExposure(params: {
   const client = createUnusualWhalesClient();
   const { ticker, date, timeframe = '1m' } = params;
 
-  const queryParams = buildQueryParams({ timeframe, date });
-
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/greek-exposure`,
-    queryParams,
+    () => client.getGreekExposure(ticker, { date, timeframe }),
     greekExposureSchema,
     `fetching greek exposure for ${ticker}`
   );
@@ -402,8 +385,6 @@ export async function fetchGreekExposureByExpiry(params: {
   const client = createUnusualWhalesClient();
   const { ticker, date } = params;
 
-  const queryParams = buildQueryParams({ date });
-
   // Schema for greek-exposure/expiry endpoint
   const schema = z.object({
     data: z.array(z.object({
@@ -422,9 +403,7 @@ export async function fetchGreekExposureByExpiry(params: {
   });
 
   const parsed = await fetchAndParse(
-    client,
-    `/api/stock/${ticker}/greek-exposure/expiry`,
-    queryParams,
+    () => client.getGreekExposureByExpiry(ticker, { date }),
     schema,
     `fetching greek exposure by expiry for ${ticker}`
   );
@@ -455,18 +434,14 @@ export async function fetchFlowAlerts(params: {
 
   const { ticker, minPremium, alertRule, limit = 100 } = params;
 
-  // Use buildQueryParams helper
-  const queryParams = buildQueryParams({
-    limit,
-    ticker_symbol: ticker,
-    min_premium: minPremium,
-    alert_rule: alertRule,
-  });
-
   const parsed = await fetchAndParse(
-    client,
-    '/api/option-trades/flow-alerts',
-    queryParams,
+    () =>
+      client.getFlowAlerts({
+        limit,
+        tickerSymbol: ticker,
+        minPremium,
+        ...(alertRule ? { ruleNames: [alertRule] } : undefined),
+      }),
     flowAlertsSchema,
     'fetching flow alerts'
   );
