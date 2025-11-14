@@ -339,8 +339,8 @@ Provide structured analysis with specific evidence from the community data.`;
   const keyInsights =
     insightsText
       .split('\n')
-      .filter((line) => line.trim().match(/^[•\-\d.]/))
-      .map((line) => line.trim().replace(/^[•\-\d.]\s*/, '')) ?? [];
+      .filter((line: string) => line.trim().match(/^[•\-\d.]/))
+      .map((line: string) => line.trim().replace(/^[•\-\d.]\s*/, '')) ?? [];
 
   return {
     systemicPatterns,
