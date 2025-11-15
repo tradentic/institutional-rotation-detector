@@ -216,7 +216,13 @@ describe('HttpClient v0.2', () => {
       expect.objectContaining({ headers: expect.objectContaining({ 'X-Test': 'hooked' }) }),
     );
     expect(afterResponse).toHaveBeenCalledTimes(1);
-    expect(afterResponse).toHaveBeenCalledWith(expect.any(Response), expect.objectContaining({ operation: 'hook.test' }));
+    expect(afterResponse).toHaveBeenCalledWith(
+      expect.any(Response),
+      expect.objectContaining({
+        operation: 'hook.test',
+        headers: expect.objectContaining({ 'X-Test': 'hooked' }),
+      }),
+    );
   });
 
   it('uses operation defaults to override retry behaviour', async () => {
@@ -263,6 +269,40 @@ describe('HttpClient v0.2', () => {
     await client.requestJson({ method: 'GET', path: '/slow', operation: 'slow.op' });
 
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10);
+  });
+
+  it('prefers per-request timeout overrides over defaults', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    const client = createClient({
+      transport,
+      timeoutMs: 1000,
+      operationDefaults: { 'override.op': { timeoutMs: 50 } },
+    });
+
+    await client.requestJson({ method: 'GET', path: '/override', operation: 'override.op', timeoutMs: 5 });
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5);
+  });
+
+  it('honors per-request maxRetries overrides', async () => {
+    vi.useFakeTimers();
+    const transport = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: true }), { status: 500 }));
+    const client = createClient({ transport, maxRetries: 0 });
+
+    const promise = client.requestJson({
+      method: 'GET',
+      path: '/per-request',
+      operation: 'per.request.retry',
+      maxRetries: 2,
+    });
+
+    const assertion = expect(promise).rejects.toBeInstanceOf(HttpError);
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(transport).toHaveBeenCalledTimes(3);
   });
 
   it('uses policy wrapper around attempts', async () => {

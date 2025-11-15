@@ -30,6 +30,8 @@ interface AttemptSuccess<T> {
   response: Response;
 }
 
+type AttemptHttpRequestOptions = HttpRequestOptions & { headers: Record<string, string> };
+
 export class HttpClient {
   private readonly baseUrl?: string;
   private readonly clientName: string;
@@ -132,7 +134,6 @@ export class HttpClient {
   }
 
   private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<T> {
-    const url = this.buildUrl(opts);
     const baseAttempts =
       executeOptions.maxAttemptsOverride ?? opts.budget?.maxAttempts ?? this.getMaxRetries(opts) + 1;
     const maxAttempts = executeOptions.allowRetries ? Math.max(baseAttempts, 1) : 1;
@@ -142,17 +143,16 @@ export class HttpClient {
         ? Date.now() + opts.budget.maxTotalDurationMs
         : undefined;
     let lastError: unknown;
-    const idempotent = this.getIdempotent(opts);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const attemptContext = this.createRateLimiterContext(opts, attempt);
-      const logMeta = { ...this.baseLogMeta(opts), attempt, maxAttempts };
+      const attemptOpts = this.prepareAttemptOptions(opts);
+      const attemptContext = this.createRateLimiterContext(attemptOpts, attempt);
+      const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
       this.logger?.debug('http.request.attempt', logMeta);
 
       const executeAttempt = async () =>
         this.runAttempt<T>({
-          opts,
-          url,
+          opts: attemptOpts,
           attemptContext,
           rateLimitKey,
           deadline,
@@ -163,9 +163,9 @@ export class HttpClient {
         ? () =>
             this.config.policyWrapper!(executeAttempt, {
               client: this.clientName,
-              operation: opts.operation,
-              requestId: opts.requestId,
-              agentContext: opts.agentContext,
+              operation: attemptOpts.operation,
+              requestId: attemptOpts.requestId,
+              agentContext: attemptOpts.agentContext,
             })
         : executeAttempt;
 
@@ -181,18 +181,18 @@ export class HttpClient {
         );
         await this.recordMetrics({
           client: this.clientName,
-          operation: opts.operation,
+          operation: attemptOpts.operation,
           durationMs,
           status: result.status,
           attempt,
-          requestId: opts.requestId,
+          requestId: attemptOpts.requestId,
         });
         this.logger?.info('http.request.success', {
           ...logMeta,
           status: result.status,
           durationMs,
         });
-        await this.config.afterResponse?.(result.response, opts);
+        await this.config.afterResponse?.(result.response, attemptOpts);
         return result.value;
       } catch (error) {
         lastError = error;
@@ -201,11 +201,11 @@ export class HttpClient {
         const category = error instanceof HttpError ? error.category : error instanceof TimeoutError ? 'timeout' : 'network';
         await this.recordMetrics({
           client: this.clientName,
-          operation: opts.operation,
+          operation: attemptOpts.operation,
           durationMs,
           status,
           attempt,
-          requestId: opts.requestId,
+          requestId: attemptOpts.requestId,
           errorCategory: category,
         });
         await this.callOptionalHook('rateLimiter.onError', () =>
@@ -216,7 +216,9 @@ export class HttpClient {
         );
 
         const retryable =
-          executeOptions.allowRetries && attempt < maxAttempts && this.shouldRetry(error, idempotent);
+          executeOptions.allowRetries &&
+          attempt < maxAttempts &&
+          this.shouldRetry(error, this.getIdempotent(attemptOpts));
         const failureMeta = {
           ...logMeta,
           status,
@@ -242,14 +244,13 @@ export class HttpClient {
   }
 
   private async runAttempt<T>(params: {
-    opts: HttpRequestOptions;
-    url: string;
+    opts: AttemptHttpRequestOptions;
     attemptContext: RateLimiterContext;
     rateLimitKey: string;
     deadline?: number;
     parseJson: boolean;
   }): Promise<AttemptSuccess<T>> {
-    const { opts, url, attemptContext, rateLimitKey, deadline, parseJson } = params;
+    const { opts, attemptContext, rateLimitKey, deadline, parseJson } = params;
 
     await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
     await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
@@ -262,7 +263,7 @@ export class HttpClient {
       controller.abort();
     }, timeoutMs);
 
-    const headers = this.buildHeaders(opts);
+    const headers = opts.headers;
     const init: RequestInit = {
       method: opts.method,
       headers,
@@ -274,6 +275,7 @@ export class HttpClient {
     }
 
     try {
+      const url = this.buildUrl(opts);
       const response = await this.transport(url, init);
       const bodyText = parseJson ? await response.clone().text() : undefined;
       const classification = await this.classifyResponse(response, bodyText);
@@ -310,13 +312,13 @@ export class HttpClient {
   }
 
   private buildUrl(opts: HttpRequestOptions): string {
+    const base = this.resolveBaseUrlForRequest(opts);
     if (this.isAbsoluteUrl(opts.path)) {
       const url = new URL(opts.path);
       this.applyQueryParameters(url, opts);
       return url.toString();
     }
 
-    const base = this.resolveBaseUrlForRequest(opts);
     if (!base) {
       throw new Error('No baseUrl provided and request path is not an absolute URL');
     }
@@ -374,18 +376,35 @@ export class HttpClient {
   }
 
   private prepareRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
-    let effective: HttpRequestOptions = {
+    return this.cloneRequestOptions(opts);
+  }
+
+  private cloneRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
+    return {
       ...opts,
       headers: opts.headers ? { ...opts.headers } : undefined,
       query: opts.query ? { ...opts.query } : undefined,
     };
+  }
+
+  private prepareAttemptOptions(opts: HttpRequestOptions): AttemptHttpRequestOptions {
+    const cloned = this.cloneRequestOptions(opts);
+    let attempt: AttemptHttpRequestOptions = {
+      ...cloned,
+      headers: this.buildHeaders(cloned.headers),
+    };
     if (this.config.beforeRequest) {
-      const modified = this.config.beforeRequest(effective);
+      const modified = this.config.beforeRequest(attempt);
       if (modified) {
-        effective = { ...effective, ...modified };
+        attempt = {
+          ...attempt,
+          ...modified,
+          headers: this.buildHeaders((modified.headers ?? attempt.headers) as Record<string, string | undefined>),
+          query: modified.query ?? attempt.query,
+        };
       }
     }
-    return effective;
+    return attempt;
   }
 
   private getOperationDefaults(opts: HttpRequestOptions): OperationDefaults | undefined {
@@ -393,11 +412,13 @@ export class HttpClient {
   }
 
   private getTimeoutMs(opts: HttpRequestOptions): number {
-    return this.getOperationDefaults(opts)?.timeoutMs ?? this.defaultTimeoutMs;
+    const opDefaults = this.getOperationDefaults(opts);
+    return opts.timeoutMs ?? opDefaults?.timeoutMs ?? this.defaultTimeoutMs;
   }
 
   private getMaxRetries(opts: HttpRequestOptions): number {
-    return this.getOperationDefaults(opts)?.maxRetries ?? this.defaultMaxRetries;
+    const opDefaults = this.getOperationDefaults(opts);
+    return opts.maxRetries ?? opDefaults?.maxRetries ?? this.defaultMaxRetries;
   }
 
   private getIdempotent(opts: HttpRequestOptions): boolean {
@@ -411,10 +432,10 @@ export class HttpClient {
     return ['GET', 'HEAD'].includes(opts.method);
   }
 
-  private buildHeaders(opts: HttpRequestOptions): Record<string, string> {
+  private buildHeaders(source?: Record<string, string | undefined>): Record<string, string> {
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (opts.headers) {
-      for (const [key, value] of Object.entries(opts.headers)) {
+    if (source) {
+      for (const [key, value] of Object.entries(source)) {
         if (value !== undefined) {
           headers[key] = value;
         }
