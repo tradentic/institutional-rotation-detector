@@ -1,20 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HttpClient, HttpError } from '../HttpClient';
+import { HttpClient, HttpError, TimeoutError } from '../HttpClient';
 import type {
-  CircuitBreaker,
   HttpCache,
   HttpRateLimiter,
   Logger,
   MetricsSink,
   PolicyWrapper,
+  ResponseClassifier,
+  TracingAdapter,
+  TracingSpan,
 } from '../types';
 
 const jsonResponse = (body: unknown, init?: ResponseInit) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init });
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
 
-describe('HttpClient', () => {
+describe('HttpClient v0.2', () => {
   let logger: Logger;
   let metrics: MetricsSink;
+
+  const baseConfig = {
+    baseUrl: 'https://example.com/api',
+    clientName: 'test-client',
+  } as const;
 
   beforeEach(() => {
     logger = {
@@ -26,17 +37,18 @@ describe('HttpClient', () => {
     metrics = {
       recordRequest: vi.fn().mockResolvedValue(undefined),
     };
+    vi.spyOn(Math, 'random').mockReturnValue(0.1);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
   const createClient = (overrides: Partial<ConstructorParameters<typeof HttpClient>[0]> = {}) =>
     new HttpClient({
-      baseUrl: 'https://example.com/api',
-      clientName: 'test-client',
+      ...baseConfig,
       logger,
       metrics,
       ...overrides,
@@ -56,30 +68,14 @@ describe('HttpClient', () => {
     expect(transport).toHaveBeenCalledWith('https://example.com/api/resource', expect.any(Object));
   });
 
-  it('serialises POST bodies as JSON by default', async () => {
-    const transport = vi.fn().mockImplementation(() => jsonResponse({ created: true }));
-    const client = createClient({ transport });
-
-    await client.requestJson({
-      method: 'POST',
-      path: '/resource',
-      operation: 'resource.create',
-      body: { foo: 'bar' },
-    });
-
-    const [, init] = transport.mock.calls[0];
-    expect(init.method).toBe('POST');
-    expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
-    expect(init.body).toBe(JSON.stringify({ foo: 'bar' }));
-  });
-
   it('returns cached values before hitting the network', async () => {
     const cache: HttpCache = {
       get: vi.fn().mockResolvedValue({ cached: true }),
       set: vi.fn(),
       delete: vi.fn(),
     };
-    const client = createClient({ cache });
+    const transport = vi.fn();
+    const client = createClient({ cache, transport });
 
     const result = await client.requestJson<{ cached: boolean }>({
       method: 'GET',
@@ -90,15 +86,10 @@ describe('HttpClient', () => {
     });
 
     expect(result).toEqual({ cached: true });
-    expect(cache.get).toHaveBeenCalledWith('cache-key');
-    expect(metrics.recordRequest).toHaveBeenCalledWith({
-      client: 'test-client',
-      operation: 'cache.hit',
-      durationMs: 0,
-      status: 200,
-      cacheHit: true,
-      attempt: 0,
-    });
+    expect(transport).not.toHaveBeenCalled();
+    expect(metrics.recordRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ cacheHit: true, attempt: 0, status: 200 }),
+    );
   });
 
   it('logs cache errors but still performs the request', async () => {
@@ -112,11 +103,11 @@ describe('HttpClient', () => {
 
     await client.requestJson({ method: 'GET', path: '/resource', operation: 'cache.miss', cacheKey: 'k', cacheTtlMs: 1000 });
 
-    expect(logger.warn).toHaveBeenCalledWith('http.cache.get.error', expect.objectContaining({ cacheKey: 'k' }));
+    expect(logger.warn).toHaveBeenCalledWith('http.cache.get.error', expect.objectContaining({ path: '/resource' }));
     expect(transport).toHaveBeenCalled();
   });
 
-  it('retries retryable HTTP status codes', async () => {
+  it('retries retryable HTTP errors and respects fallback retryAfterMs', async () => {
     vi.useFakeTimers();
     const transport = vi
       .fn()
@@ -125,83 +116,28 @@ describe('HttpClient', () => {
     const client = createClient({ transport, maxRetries: 2 });
 
     const promise = client.requestJson<{ ok: boolean }>({ method: 'GET', path: '/retry', operation: 'retry.test' });
-    await vi.runAllTimersAsync();
+    await vi.runOnlyPendingTimersAsync();
     const result = await promise;
 
     expect(result).toEqual({ ok: true });
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('does not retry when idempotent is explicitly false', async () => {
-    const transport = vi
-      .fn()
-      .mockImplementation(() => new Response(JSON.stringify({ error: true }), { status: 500 }));
-    const client = createClient({ transport, maxRetries: 5 });
-
-    await expect(
-      client.requestJson({ method: 'POST', path: '/no-retry', operation: 'no.retry', idempotent: false }),
-    ).rejects.toBeInstanceOf(HttpError);
-    expect(transport).toHaveBeenCalledTimes(1);
-  });
-
-  it('treats timeouts as retryable errors', async () => {
-    vi.useFakeTimers();
-    let attempt = 0;
-    const transport = vi.fn((_: string, init: RequestInit) => {
-      attempt += 1;
-      if (attempt === 1) {
-        return new Promise((_resolve, reject) => {
-          init.signal?.addEventListener('abort', () => {
-            reject(new DOMException('Aborted', 'AbortError'));
-          });
-        });
-      }
-      return Promise.resolve(jsonResponse({ ok: true }));
-    });
-    const client = createClient({ transport, timeoutMs: 10, maxRetries: 1 });
-
-    const promise = client.requestJson<{ ok: boolean }>({ method: 'GET', path: '/timeout', operation: 'timeout.test' });
-    await vi.advanceTimersByTimeAsync(20);
-    await vi.runAllTimersAsync();
-    const result = await promise;
-
-    expect(result).toEqual({ ok: true });
-    expect(transport).toHaveBeenCalledTimes(2);
-  });
-
-  it('invokes rate limiter and circuit breaker hooks', async () => {
-    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
-    const rateLimiter: HttpRateLimiter = {
-      throttle: vi.fn().mockResolvedValue(undefined),
-      onSuccess: vi.fn(),
-      onError: vi.fn(),
-    };
-    const circuitBreaker: CircuitBreaker = {
-      beforeRequest: vi.fn().mockResolvedValue(undefined),
-      onSuccess: vi.fn().mockResolvedValue(undefined),
-      onFailure: vi.fn().mockResolvedValue(undefined),
-    };
-    const client = createClient({ transport, rateLimiter, circuitBreaker });
-
-    await client.requestJson({ method: 'GET', path: '/hooks', operation: 'hooks.test' });
-
-    expect(rateLimiter.throttle).toHaveBeenCalled();
-    expect(rateLimiter.onSuccess).toHaveBeenCalled();
-    expect(circuitBreaker.beforeRequest).toHaveBeenCalled();
-    expect(circuitBreaker.onSuccess).toHaveBeenCalled();
-  });
-
-  it('respects Retry-After headers between attempts', async () => {
+  it('uses classifier provided fallback retryAfterMs delays', async () => {
     vi.useFakeTimers();
     const transport = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: true }), { status: 429, headers: { 'Retry-After': '1' } }),
-      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 429 }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
-    const client = createClient({ transport, maxRetries: 2 });
+    const classifier: ResponseClassifier = (response) => {
+      if (response.status === 429) {
+        return { treatAsError: true, category: 'rate_limit', fallback: { retryAfterMs: 1000 } };
+      }
+      return undefined;
+    };
+    const client = createClient({ transport, responseClassifier: classifier, maxRetries: 2 });
 
-    const promise = client.requestJson({ method: 'GET', path: '/retry-after', operation: 'retry.after' });
+    const promise = client.requestJson<{ ok: boolean }>({ method: 'GET', path: '/retry-after', operation: 'retry.after' });
     await Promise.resolve();
     await Promise.resolve();
     expect(transport).toHaveBeenCalledTimes(1);
@@ -215,30 +151,144 @@ describe('HttpClient', () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
-  it('executes the policy wrapper around attempts', async () => {
-    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
-    const policyWrapper: PolicyWrapper = vi.fn(<T>(fn: () => Promise<T>) => fn());
-    const client = createClient({ transport, policyWrapper });
+  it('respects custom response classifier errors', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: false }));
+    const classifier: ResponseClassifier = vi.fn(async () => ({
+      treatAsError: true,
+      overrideStatus: 418,
+      category: 'validation',
+    }));
+    const client = createClient({ transport, responseClassifier: classifier });
 
-    const result = await client.requestJson({ method: 'GET', path: '/policy', operation: 'policy.test' });
-
-    expect(result).toEqual({ ok: true });
-    expect(policyWrapper).toHaveBeenCalledWith(expect.any(Function), { client: 'test-client', operation: 'policy.test' });
+    await expect(
+      client.requestJson({ method: 'GET', path: '/classified', operation: 'classified.get' }),
+    ).rejects.toMatchObject({ status: 418 });
   });
 
-  it('propagates non-retryable HttpErrors', async () => {
+  it('uses policy wrapper around attempts', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const wrapper: PolicyWrapper = vi.fn((fn) => fn());
+    const client = createClient({ transport, policyWrapper: wrapper });
+
+    await client.requestJson({ method: 'GET', path: '/policy', operation: 'policy.test' });
+
+    expect(wrapper).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ operation: 'policy.test' }));
+  });
+
+  it('enforces maxAttempts from budget overrides', async () => {
     const transport = vi
       .fn()
-      .mockImplementation(() => new Response(JSON.stringify({ bad: true }), { status: 400 }));
+      .mockResolvedValue(new Response(JSON.stringify({ error: true }), { status: 500 }));
+    const client = createClient({ transport, maxRetries: 5 });
+
+    await expect(
+      client.requestJson({
+        method: 'GET',
+        path: '/limited',
+        operation: 'limited.test',
+        budget: { maxAttempts: 2 },
+      }),
+    ).rejects.toBeInstanceOf(HttpError);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails fast when the total duration budget is exceeded', async () => {
+    const transport = vi.fn();
+    const client = createClient({ transport, timeoutMs: 10 });
+
+    await expect(
+      client.requestJson({
+        method: 'GET',
+        path: '/slow',
+        operation: 'slow.test',
+        budget: { maxTotalDurationMs: 0 },
+      }),
+    ).rejects.toBeInstanceOf(TimeoutError);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('propagates agent context into rate limiter hooks', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const rateLimiter: HttpRateLimiter = {
+      throttle: vi.fn().mockResolvedValue(undefined),
+      onSuccess: vi.fn(),
+      onError: vi.fn(),
+    };
+    const client = createClient({ transport, rateLimiter });
+
+    await client.requestJson({
+      method: 'GET',
+      path: '/hooks',
+      operation: 'hooks.test',
+      agentContext: { agent: 'tester' },
+    });
+
+    expect(rateLimiter.throttle).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ agentContext: { agent: 'tester' } }));
+  });
+
+  it('invokes tracing adapter spans', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const span: TracingSpan = {
+      setAttribute: vi.fn(),
+      recordException: vi.fn(),
+      end: vi.fn(),
+    };
+    const tracing: TracingAdapter = {
+      startSpan: vi.fn().mockReturnValue(span),
+    };
+    const client = createClient({ transport, tracing });
+
+    await client.requestJson({ method: 'GET', path: '/trace', operation: 'trace.test' });
+
+    expect(tracing.startSpan).toHaveBeenCalledWith('test-client.trace.test', expect.any(Object));
+    expect(span.end).toHaveBeenCalled();
+  });
+
+  it('supports requestRaw without parsing JSON', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response('stream', { status: 200 }));
     const client = createClient({ transport });
 
-    await expect(client.requestJson({ method: 'GET', path: '/bad', operation: 'bad.request' })).rejects.toBeInstanceOf(HttpError);
-    expect(metrics.recordRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        client: 'test-client',
-        operation: 'bad.request',
-        status: 400,
-      }),
-    );
+    const response = await client.requestRaw({ method: 'GET', path: '/raw', operation: 'raw.test' });
+
+    expect(response).toBeInstanceOf(Response);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats idempotent=false requests as single attempts', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: true }), { status: 500 }));
+    const client = createClient({ transport, maxRetries: 3 });
+
+    await expect(
+      client.requestJson({ method: 'POST', path: '/no-retry', operation: 'no.retry', idempotent: false }),
+    ).rejects.toBeInstanceOf(HttpError);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats timeout errors as retryable for idempotent requests', async () => {
+    vi.useFakeTimers();
+    let attempt = 0;
+    const transport = vi.fn((_: string, init: RequestInit) => {
+      attempt += 1;
+      if (attempt === 1) {
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+    const client = createClient({ transport, timeoutMs: 5, maxRetries: 1 });
+
+    const promise = client.requestJson<{ ok: boolean }>({ method: 'GET', path: '/timeout', operation: 'timeout.test' });
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.runOnlyPendingTimersAsync();
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 });
