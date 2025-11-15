@@ -38,6 +38,13 @@ export interface HttpTransport {
   (url: string, init: RequestInit): Promise<Response>;
 }
 
+export interface PolicyContext {
+  client: string;
+  operation: string;
+}
+
+export type PolicyWrapper = <T>(fn: () => Promise<T>, context: PolicyContext) => Promise<T>;
+
 export interface BaseHttpClientConfig {
   baseUrl: string;
   clientName: string;
@@ -48,19 +55,16 @@ export interface BaseHttpClientConfig {
   cache?: HttpCache;
   rateLimiter?: HttpRateLimiter;
   circuitBreaker?: CircuitBreaker;
-  policyWrapper?: <T>(fn: () => Promise<T>, context: {
-    client: string;
-    operation: string;
-  }) => () => Promise<T>;
+  policyWrapper?: PolicyWrapper;
   transport?: HttpTransport;
 }
 
 export interface HttpRequestOptions {
-  method: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   operation: string;
-  query?: Record<string, string | number | boolean | undefined | null>;
-  headers?: Record<string, string>;
+  query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
+  headers?: Record<string, string | undefined>;
   body?: unknown;
   idempotent?: boolean;
   cacheKey?: string;

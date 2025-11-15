@@ -1,14 +1,11 @@
 import { fetchTransport } from './transport/fetchTransport';
-import type {
-  BaseHttpClientConfig,
-  HttpRequestOptions,
-  HttpTransport,
-  Logger,
-} from './types';
+import type { BaseHttpClientConfig, HttpRequestOptions, HttpTransport, Logger } from './types';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const MAX_RETRY_DELAY_MS = 60_000;
+const BASE_BACKOFF_MS = 250;
 
 export class HttpClient {
   private readonly baseUrl: string;
@@ -30,7 +27,7 @@ export class HttpClient {
   }
 
   async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
-    const { cache, metrics, rateLimiter, circuitBreaker } = this.config;
+    const cache = this.config.cache;
     const cacheKey = opts.cacheKey;
     const cacheTtlMs = opts.cacheTtlMs ?? 0;
 
@@ -38,7 +35,7 @@ export class HttpClient {
       try {
         const cached = await cache.get<T>(cacheKey);
         if (cached !== undefined) {
-          await metrics?.recordRequest?.({
+          await this.recordMetrics({
             client: this.clientName,
             operation: opts.operation,
             durationMs: 0,
@@ -53,39 +50,47 @@ export class HttpClient {
           });
           return cached;
         }
-      } catch (err) {
-        this.logger?.warn('http.cache.error', {
+      } catch (error) {
+        this.logger?.warn('http.cache.get.error', {
           client: this.clientName,
           operation: opts.operation,
           cacheKey,
-          error: err instanceof Error ? err.message : err,
+          error: error instanceof Error ? error.message : error,
         });
       }
     }
 
-    const maxAttempts = opts.idempotent === false ? 1 : this.maxRetries + 1;
+    const isIdempotent = opts.idempotent ?? ['GET', 'HEAD'].includes(opts.method);
+    const maxAttempts = isIdempotent ? this.maxRetries + 1 : 1;
     const rateLimitKey = `${this.clientName}:${opts.operation}`;
+    const baseAttemptContext = {
+      method: opts.method,
+      path: opts.path,
+      operation: opts.operation,
+    };
 
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const attemptContext = { attempt };
-      try {
-        await rateLimiter?.throttle(rateLimitKey, attemptContext);
-        await circuitBreaker?.beforeRequest(rateLimitKey);
-      } catch (err) {
-        this.logger?.error('http.preAttemptFailed', {
-          client: this.clientName,
-          operation: opts.operation,
-          attempt,
-          error: err instanceof Error ? err.message : err,
-        });
-        throw err;
-      }
+      const attemptContext = { ...baseAttemptContext, attempt };
+      this.logger?.debug('http.request.attempt', {
+        client: this.clientName,
+        operation: opts.operation,
+        attempt,
+        maxAttempts,
+      });
 
       const executeAttempt = async () => {
+        await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
+        await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
+
         const controller = new AbortController();
-        const timeoutHandle = setTimeout(() => controller.abort(), this.timeoutMs);
+        let didTimeout = false;
+        const timeoutHandle = setTimeout(() => {
+          didTimeout = true;
+          controller.abort();
+        }, this.timeoutMs);
+
         const url = this.buildUrl(opts);
         const headers = this.buildHeaders(opts);
         const init: RequestInit = {
@@ -98,110 +103,115 @@ export class HttpClient {
         }
 
         const start = Date.now();
-        let response: Response;
+        let response: Response | undefined;
+        let parsed: T | undefined;
         try {
           response = await this.transport(url, init);
-        } catch (err) {
-          if (controller.signal.aborted) {
-            await metrics?.recordRequest?.({
-              client: this.clientName,
-              operation: opts.operation,
-              durationMs: Date.now() - start,
-              status: 408,
-              attempt,
+          parsed = (await this.parseResponse<T>(response)) as T;
+
+          if (!response.ok) {
+            throw new HttpError(`HTTP ${response.status}`, {
+              status: response.status,
+              body: parsed,
+              headers: response.headers,
             });
-            throw new TimeoutError('Request timed out');
           }
-          await metrics?.recordRequest?.({
+
+          const durationMs = Date.now() - start;
+          await this.recordMetrics({
             client: this.clientName,
             operation: opts.operation,
-            durationMs: Date.now() - start,
-            status: 0,
+            durationMs,
+            status: response.status,
             attempt,
           });
-          throw err;
+
+          if (cache && cacheKey && cacheTtlMs > 0) {
+            Promise.resolve(cache.set(cacheKey, parsed, cacheTtlMs)).catch((error) =>
+              this.logger?.warn('http.cache.set.error', {
+                client: this.clientName,
+                operation: opts.operation,
+                cacheKey,
+                error: error instanceof Error ? error.message : error,
+              }),
+            );
+          }
+
+          return { parsed: parsed as T, status: response.status, durationMs };
+        } catch (error) {
+          const durationMs = Date.now() - start;
+          const finalError = didTimeout && !(error instanceof TimeoutError)
+            ? new TimeoutError(`Request timed out after ${this.timeoutMs}ms`)
+            : error;
+          const status = finalError instanceof HttpError
+            ? finalError.status
+            : finalError instanceof TimeoutError
+              ? 408
+              : response?.status ?? 0;
+          await this.recordMetrics({
+            client: this.clientName,
+            operation: opts.operation,
+            durationMs,
+            status,
+            attempt,
+          });
+          throw finalError;
         } finally {
           clearTimeout(timeoutHandle);
         }
-        const durationMs = Date.now() - start;
-
-        const status = response.status;
-        let parsed: T;
-        if (response.status === 204) {
-          parsed = undefined as T;
-        } else {
-          const text = await response.text();
-          parsed = text ? (JSON.parse(text) as T) : (undefined as T);
-        }
-
-        await metrics?.recordRequest?.({
-          client: this.clientName,
-          operation: opts.operation,
-          durationMs,
-          status,
-          attempt,
-        });
-
-        if (!response.ok) {
-          throw new HttpError(`HTTP ${status}`, {
-            status,
-            body: parsed,
-            headers: response.headers,
-          });
-        }
-
-        if (cache && cacheKey && cacheTtlMs > 0) {
-        cache
-          .set(cacheKey, parsed, cacheTtlMs)
-          .catch((error) =>
-            this.logger?.warn('http.cache.setError', {
-              client: this.clientName,
-              operation: opts.operation,
-              cacheKey,
-              error: error instanceof Error ? error.message : error,
-            }),
-          );
-        }
-
-        return { parsed, status, durationMs };
       };
 
-      const wrapped = this.config.policyWrapper
-        ? this.config.policyWrapper(executeAttempt, {
+      const runAttempt = this.config.policyWrapper
+        ? () => this.config.policyWrapper!(executeAttempt, {
             client: this.clientName,
             operation: opts.operation,
           })
         : executeAttempt;
 
       try {
-        const result = await wrapped();
-        await rateLimiter?.onSuccess?.(rateLimitKey, attemptContext);
-        await circuitBreaker?.onSuccess(rateLimitKey);
-        return result.parsed;
+        const { parsed, status, durationMs } = await runAttempt();
+        await this.callOptionalHook('rateLimiter.onSuccess', () =>
+          this.config.rateLimiter?.onSuccess?.(rateLimitKey, attemptContext),
+        );
+        await this.callOptionalHook('circuitBreaker.onSuccess', () =>
+          this.config.circuitBreaker?.onSuccess?.(rateLimitKey),
+        );
+        this.logger?.info('http.request.success', {
+          client: this.clientName,
+          operation: opts.operation,
+          attempt,
+          durationMs,
+          status,
+        });
+        return parsed;
       } catch (error) {
         lastError = error;
-        await rateLimiter?.onError?.(rateLimitKey, error, attemptContext);
-        await circuitBreaker?.onFailure(rateLimitKey, error);
-        const retry = this.shouldRetry(error);
-        if (!(error instanceof HttpError)) {
-          await metrics?.recordRequest?.({
-            client: this.clientName,
-            operation: opts.operation,
-            durationMs: 0,
-            status: error instanceof TimeoutError ? 408 : 0,
-            attempt,
-          });
-        }
-        this.logger?.warn('http.request.failed', {
+        await this.callOptionalHook('rateLimiter.onError', () =>
+          this.config.rateLimiter?.onError?.(rateLimitKey, error, attemptContext),
+        );
+        await this.callOptionalHook('circuitBreaker.onFailure', () =>
+          this.config.circuitBreaker?.onFailure?.(rateLimitKey, error),
+        );
+
+        const retryable = isIdempotent && this.shouldRetry(error);
+        const level = retryable && attempt < maxAttempts ? 'warn' : 'error';
+        const logMeta = {
           client: this.clientName,
           operation: opts.operation,
           attempt,
           maxAttempts,
           error: error instanceof Error ? error.message : error,
-        });
-        if (!retry || attempt >= maxAttempts) {
+        };
+        if (level === 'warn') {
+          this.logger?.warn('http.request.retry', logMeta);
+        } else {
+          this.logger?.error('http.request.failed', logMeta);
+        }
+
+        if (!retryable || attempt >= maxAttempts) {
           throw error;
         }
+
         const delay = this.getRetryDelay(error, attempt);
         await this.sleep(delay);
       }
@@ -216,7 +226,13 @@ export class HttpClient {
     const url = new URL(path, base);
     if (opts.query) {
       for (const [key, value] of Object.entries(opts.query)) {
-        if (value === undefined || value === null) continue;
+        if (value === undefined) continue;
+        if (Array.isArray(value)) {
+          for (const entry of value) {
+            url.searchParams.append(key, String(entry));
+          }
+          continue;
+        }
         url.searchParams.append(key, String(value));
       }
     }
@@ -224,27 +240,58 @@ export class HttpClient {
   }
 
   private buildHeaders(opts: HttpRequestOptions): Record<string, string> {
-    const headers: Record<string, string> = {
-      Accept: 'application/json',
-      ...(opts.headers ?? {}),
-    };
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (opts.headers) {
+      for (const [key, value] of Object.entries(opts.headers)) {
+        if (value !== undefined) {
+          headers[key] = value;
+        }
+      }
+    }
     return headers;
   }
 
   private serializeBody(body: unknown, headers: Record<string, string>): BodyInit {
-    if (typeof body === 'string' || body instanceof URLSearchParams || body instanceof Blob || body instanceof FormData) {
+    if (
+      typeof body === 'string' ||
+      body instanceof URLSearchParams ||
+      body instanceof Blob ||
+      body instanceof FormData
+    ) {
       return body;
     }
-    if (body instanceof ArrayBuffer) {
+    if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) {
       return body;
     }
     if (ArrayBuffer.isView(body)) {
       return body.buffer as ArrayBuffer;
     }
-    if (!headers['Content-Type'] && !headers['content-type']) {
+    if (typeof Buffer !== 'undefined' && typeof Buffer.isBuffer === 'function' && Buffer.isBuffer(body)) {
+      return body as unknown as BodyInit;
+    }
+    if (!this.hasHeader(headers, 'content-type')) {
       headers['Content-Type'] = 'application/json';
     }
     return JSON.stringify(body);
+  }
+
+  private async parseResponse<T>(response: Response): Promise<T | undefined> {
+    if (response.status === 204) {
+      return undefined;
+    }
+    const text = await response.clone().text();
+    if (!text) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return text as unknown as T;
+    }
+  }
+
+  private hasHeader(headers: Record<string, string>, name: string): boolean {
+    return Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
   }
 
   private shouldRetry(error: unknown): boolean {
@@ -261,26 +308,57 @@ export class HttpClient {
     if (error instanceof HttpError) {
       const retryAfter = error.headers?.get?.('retry-after');
       if (retryAfter) {
-        const parsed = Number(retryAfter);
-        if (!Number.isNaN(parsed)) {
-          return parsed * 1000;
+        const seconds = Number(retryAfter);
+        if (!Number.isNaN(seconds)) {
+          return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
         }
         const date = Date.parse(retryAfter);
         if (!Number.isNaN(date)) {
           const delay = date - Date.now();
           if (delay > 0) {
-            return delay;
+            return Math.min(delay, MAX_RETRY_DELAY_MS);
           }
         }
       }
     }
-    const baseDelay = 250 * 2 ** (attempt - 1);
-    const jitter = Math.random() * 100;
-    return Math.min(baseDelay + jitter, 10_000);
+    const baseDelay = BASE_BACKOFF_MS * 2 ** (attempt - 1);
+    const jitterFactor = 1 + (Math.random() * 0.4 - 0.2);
+    return Math.min(baseDelay * jitterFactor, MAX_RETRY_DELAY_MS);
+  }
+
+  private async recordMetrics(info: {
+    client: string;
+    operation: string;
+    durationMs: number;
+    status: number;
+    cacheHit?: boolean;
+    attempt?: number;
+  }): Promise<void> {
+    try {
+      await this.config.metrics?.recordRequest?.(info);
+    } catch (error) {
+      this.logger?.warn('http.metrics.error', {
+        client: this.clientName,
+        operation: info.operation,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  }
+
+  private async callOptionalHook(name: string, fn?: () => void | Promise<void>): Promise<void> {
+    if (!fn) return;
+    try {
+      await fn();
+    } catch (error) {
+      this.logger?.warn(`${name}.failed`, {
+        client: this.clientName,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
   }
 
   private async sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
