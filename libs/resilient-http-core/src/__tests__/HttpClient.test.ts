@@ -165,6 +165,106 @@ describe('HttpClient v0.2', () => {
     ).rejects.toMatchObject({ status: 418 });
   });
 
+  it('supports dynamic base URL resolution per request', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const resolveBaseUrl = vi.fn((opts) => (opts.path.startsWith('/alt') ? 'https://alt.example.com' : undefined));
+    const client = createClient({ transport, resolveBaseUrl });
+
+    await client.requestJson({ method: 'GET', path: '/alt/data', operation: 'alt.get' });
+
+    expect(resolveBaseUrl).toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledWith('https://alt.example.com/alt/data', expect.any(Object));
+  });
+
+  it('allows absolute URLs without a configured baseUrl', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const client = createClient({ transport, baseUrl: undefined });
+
+    await client.requestJson({
+      method: 'GET',
+      path: 'https://api.example.com/absolute',
+      operation: 'absolute.get',
+    });
+
+    expect(transport).toHaveBeenCalledWith('https://api.example.com/absolute', expect.any(Object));
+  });
+
+  it('throws when no baseUrl is configured for relative paths', async () => {
+    const client = createClient({ baseUrl: undefined });
+
+    await expect(
+      client.requestJson({ method: 'GET', path: '/relative', operation: 'missing.base' }),
+    ).rejects.toThrow('No baseUrl provided');
+  });
+
+  it('runs beforeRequest and afterResponse hooks', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const afterResponse = vi.fn();
+    const client = createClient({
+      transport,
+      beforeRequest: (request) => ({
+        ...request,
+        headers: { ...(request.headers ?? {}), 'X-Test': 'hooked' },
+      }),
+      afterResponse,
+    });
+
+    await client.requestJson({ method: 'GET', path: '/hook', operation: 'hook.test' });
+
+    expect(transport).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Test': 'hooked' }) }),
+    );
+    expect(afterResponse).toHaveBeenCalledTimes(1);
+    expect(afterResponse).toHaveBeenCalledWith(expect.any(Response), expect.objectContaining({ operation: 'hook.test' }));
+  });
+
+  it('uses operation defaults to override retry behaviour', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = createClient({
+      transport,
+      maxRetries: 0,
+      operationDefaults: { 'needs.retry': { maxRetries: 1 } },
+    });
+
+    const result = await client.requestJson({ method: 'GET', path: '/retry-op', operation: 'needs.retry' });
+
+    expect(result).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('can mark operations as non-idempotent via defaults', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: true }), { status: 500 }));
+    const client = createClient({
+      transport,
+      operationDefaults: { 'non.idempotent': { idempotent: false } },
+    });
+
+    await expect(
+      client.requestJson({ method: 'GET', path: '/non-idem', operation: 'non.idempotent' }),
+    ).rejects.toBeInstanceOf(HttpError);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies operation-specific timeouts when scheduling attempts', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    const client = createClient({
+      transport,
+      timeoutMs: 1000,
+      operationDefaults: { 'slow.op': { timeoutMs: 10 } },
+    });
+
+    await client.requestJson({ method: 'GET', path: '/slow', operation: 'slow.op' });
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10);
+  });
+
   it('uses policy wrapper around attempts', async () => {
     const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
     const wrapper: PolicyWrapper = vi.fn((fn) => fn());

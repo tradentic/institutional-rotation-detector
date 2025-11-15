@@ -115,8 +115,14 @@ export interface PolicyContext {
 
 export type PolicyWrapper = <T>(fn: () => Promise<T>, context: PolicyContext) => Promise<T>;
 
+export interface OperationDefaults {
+  timeoutMs?: number;
+  maxRetries?: number;
+  idempotent?: boolean;
+}
+
 export interface BaseHttpClientConfig {
-  baseUrl: string;
+  baseUrl?: string;
   clientName: string;
   timeoutMs?: number;
   maxRetries?: number;
@@ -129,6 +135,10 @@ export interface BaseHttpClientConfig {
   transport?: HttpTransport;
   tracing?: TracingAdapter;
   responseClassifier?: ResponseClassifier;
+  resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;
+  beforeRequest?: (opts: HttpRequestOptions) => HttpRequestOptions | void;
+  afterResponse?: (response: Response, opts: HttpRequestOptions) => void | Promise<void>;
+  operationDefaults?: Record<string, OperationDefaults>;
 }
 
 export interface HttpRequestOptions {
