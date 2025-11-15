@@ -2,145 +2,216 @@
 
 > Draft document to store under `docs/specs/` as roadmap guidance.
 >
-> Goal: Keep `@tradentic/resilient-http-core` small, boring, and reusable, while outlining a family of **satellite libraries** that handle richer concerns (pagination, policies, telemetry, LLM/agent semantics) via hooks and plugins.
+> Goal: Keep `@tradentic/resilient-http-core` **small, boring, and reusable**, while outlining a family of **satellite libraries** that handle richer concerns (pagination, policies, telemetry, LLM/agent semantics) via hooks and plugins.
+>
+> This document is aligned with **`@tradentic/resilient-http-core` v0.6**.
 
 ---
 
 ## 1. Core Library: `@tradentic/resilient-http-core`
 
-**Status:** Implemented (v0.4+)
+**Status:** Implemented & evolving (v0.6+)
 
-**Responsibility:**
+### 1.1 Responsibility
 
-- Cross-cutting HTTP concerns for all clients in the monorepo:
-  - Transport abstraction (`HttpTransport` – fetch by default, pluggable).
-  - Timeouts, retries, backoff, idempotency.
-  - Rate limiting and circuit breaking via interfaces.
+Cross-cutting HTTP concerns for all clients in the monorepo (and future external users):
+
+- **Transport & abstraction**
+  - `HttpTransport` (fetch by default, pluggable).
+  - `HttpClient` / `HttpRequestOptions` as the main interface.
+
+- **Resilience primitives**
+  - Timeouts, retries, exponential backoff, idempotency hints.
+  - Rate limiting and circuit breaking via *interfaces* (`HttpRateLimiter`, `CircuitBreaker`).
   - Caching via `HttpCache` interface.
-  - Logging, metrics, tracing via `Logger`, `MetricsSink`, `TracingAdapter`.
-  - Policy composition via `policyWrapper` (for external resilience libs).
-  - Pagination-independent: one request at a time.
 
-- Metadata & hooks (v0.3–v0.4):
-  - `resolveBaseUrl`, `beforeRequest`, `afterResponse` hooks.
-  - `operationDefaults` for per-operation policies.
-  - `requestJson`, `requestRaw`, `requestText`, `requestArrayBuffer`.
-  - `AgentContext` for correlation IDs, parent correlation IDs, source label, generic attributes.
-  - `extensions` bag for arbitrary, opaque metadata (LLM/agent plugins, etc.).
+- **Telemetry hooks**
+  - Logging via `Logger`.
+  - Metrics via `MetricsSink` (with `MetricsRequestInfo`).
+  - Tracing via `TracingAdapter`.
 
-**Non-goals:**
+- **v0.6 features** (AI-friendly but provider-agnostic):
+  - `ResilienceProfile` attached to `HttpRequestOptions.resilience` (priority, latency budgets, max attempts, failFast, allowFailover hints).
+  - `ErrorClassifier` interface and `ErrorCategory` + `ClassifiedError` to let higher layers implement provider-aware retry decisions.
+  - `RateLimitFeedback` surfaced on metrics to carry rate-limit headers (requests/tokens + resets).
+  - `RequestOutcome` (ok/status/attempts/duration/errorCategory) for each request.
+  - `HttpRequestInterceptor` chain (`beforeSend`, `afterResponse`, `onError`) to allow external libraries to hook into requests without modifying the core.
 
-- No direct dependency on any specific resilience library (cockatiel, resilience4ts, resilience-typescript).
-- No OpenTelemetry or logging framework dependency baked in.
-- No domain-specific logic (FINRA, UW, SEC, IEX, OpenAI, Anthropic, Gemini, etc.).
-- No conversation / LLM semantics.
+- **Metadata & correlation**
+  - `AgentContext` (v0.5 shape):
+    - `agent?: string`
+    - `runId?: string`
+    - `labels?: Record<string, string>`
+    - `metadata?: Record<string, unknown>`
+  - `requestId`, `correlationId`, `parentCorrelationId` on `HttpRequestOptions` and `MetricsRequestInfo`.
+  - `extensions` bag for arbitrary, opaque metadata (LLM/agent plugins, tenant IDs, etc.).
 
-**Design constraint:** Everything else in this roadmap should plug into the core via its public types and hooks, not by forking or bloating the core itself.
+### 1.2 Non-goals
+
+- **No direct dependency** on any specific resilience library:
+  - No direct references to cockatiel, resilience4ts, resilience-typescript.
+
+- **No telemetry framework baked in**:
+  - No OpenTelemetry, Prometheus, or logging framework dependency.
+
+- **No domain-specific logic**:
+  - No FINRA, Unusual Whales, SEC, IEX, OpenAI, Anthropic, Gemini, etc.
+  - No conversation / LLM semantics (`conversation_id`, `response_id`, etc.).
+
+### 1.3 Design Constraint
+
+Everything else in this roadmap should plug into the core via its **public types and hooks** (interfaces, interceptors, metrics) — *never* by forking or bloating the core.
+
+The philosophy:
+
+> **Core: stable contracts & boring HTTP.  \
+> Satellites: all the interesting, fast-moving stuff.**
 
 ---
 
-## 2. Pagination Helpers
+## 2. Pagination Helpers — `@airnub/resilient-http-pagination`
 
-### 2.1 Package Idea: `@tradentic/resilient-http-pagination`
+**Status:** Spec v0.2 (designed for core v0.6)
 
-**Scope:**
+### 2.1 Scope
 
-- Provide a small, **HTTP-client-agnostic** set of pagination helpers that build on top of `HttpClient` (or its equivalent) and `HttpRequestOptions`.
-- Encapsulate common pagination patterns used across:
+A small, `HttpClient`-based pagination helper library that:
+
+- Builds on top of `@tradentic/resilient-http-core`.
+- Supports common pagination patterns used across:
   - FINRA APIs
   - Unusual Whales APIs
   - SEC Data API endpoints
-  - OpenAI list endpoints
-  - Any paged REST or JSON API
+  - IEX, GitHub, etc.
+  - Any paged REST/JSON API (including LLM dashboards / admin APIs).
+- Treats a pagination **run** as a first-class operation with limits and outcomes.
 
-**Core API:** (already drafted in v0.3 spec, but intended to be separable)
+### 2.2 Core API (v0.2)
 
-- Types:
-  - `PaginationState<TPage>`
-  - `PaginationConfig<TPage, TItem>`
-  - `PaginationResult<TItem>`
-- Functions:
-  - `paginateAll(client, config)` → fetch all items/pages with configurable limits.
-  - `paginateIterator(client, initial, getNextRequest)` → async iterator over pages.
+- **Models & types**
+  - `PaginationModel` (`'offset-limit' | 'cursor' | 'link-header' | 'custom'`).
+  - `Page<TItem>` — single page (items + status + request + optional response/state).
+  - `PaginationResult<TItem>` — run-level result (pages/items/completed/RequestOutcome).
+  - `PageExtractor<TItem>` — parse a `Response` into `PageExtraction<TItem>`.
+  - `PaginationStrategy` — build initial/next `HttpRequestOptions` given state.
+  - `PaginationLimits` — `maxPages`, `maxItems`, `maxEndToEndLatencyMs`.
+  - `PaginationResilience` — per-page `ResilienceProfile` hints.
+  - `PaginationObserver` — `onPage` / `onComplete` callbacks.
 
-**Why separate:**
+- **APIs**
+  - `paginate<TItem>(options: PaginateOptions<TItem>): Promise<PaginationResult<TItem>>`.
+  - `paginateStream<TItem>(options: PaginateOptions<TItem>): AsyncGenerator<Page<TItem>, PaginationResult<TItem>, void>`.
 
-- Keeps `@tradentic/resilient-http-core` focused on single-request resilience.
-- Allows rapid iteration on pagination strategies (page/token/offset/continuation) without touching the core.
-- Optional dependency: clients that don’t need pagination don’t need the package.
+- **Built-in strategies**
+  - `OffsetLimitStrategy` — offset/limit style.
+  - `CursorStrategy` — token/cursor-based pagination.
+  - `LinkHeaderStrategy` — `Link: <...>; rel="next"` style.
 
-**Interaction with core:**
+### 2.3 Why separate from core
 
-- Depends on:
-  - `HttpClient`
-  - `HttpRequestOptions`
-- Uses core resilience features (retries, rate limiting, etc.) transparently via `HttpClient`.
+- Keeps core focused on **single-request** resilience and telemetry.
+- Allows rapid iteration on pagination semantics without touching the core.
+- Optional dependency: clients that don’t page results don’t need to depend on this package.
 
----
+### 2.4 Interaction with core v0.6
 
-## 3. Policy / Resilience Adapters
-
-### 3.1 Package Ideas:
-
-- `@tradentic/resilient-http-policies` (generic policy wiring helper)
-- Optional adapters:
-  - `@tradentic/resilient-http-cockatiel`
-  - `@tradentic/resilient-http-resilience4ts`
-  - `@tradentic/resilient-http-resilience-typescript`
-
-**Scope:**
-
-- Implement pluggable resilience stacks using the `policyWrapper` hook provided by core.
-- Provide ready-made adapters to integrate:
-  - cockatiel policies (retry, circuit breaker, bulkhead, timeout).
-  - resilience4ts or resilience-typescript patterns.
-
-**Responsibilities:**
-
-- Translate `HttpClient` context into whichever interface the resilience library expects.
-- Implement policy composition functions like:
-
-  ```ts
-  export function createCockatielPolicyWrapper(/* config */): BaseHttpClientConfig['policyWrapper'];
-  ```
-
-- Ensure policies are **opt-in** and do not change the default behaviour of `resilient-http-core`.
-
-**Non-goals:**
-
-- Do not bring cockatiel/resilience4ts into the core package.
-- Do not encode domain-specific retry rules (leave that to client configs or higher-level libraries).
-
-**Interaction with core:**
-
-- Depends on:
-  - `BaseHttpClientConfig['policyWrapper']`
-  - `HttpClient` configuration shapes.
-- Purely wraps the `fn: () => Promise<T>` callable passed by the core.
+- Uses `HttpClient` and `HttpRequestOptions` directly.
+- Propagates `AgentContext`, `correlationId`, `parentCorrelationId`, and `extensions` to every page request.
+- Uses `ResilienceProfile` for per-page resilience.
+- Wraps multi-page runs in a **run-level `RequestOutcome`** (aggregated attempts, duration, success flag).
 
 ---
 
-## 4. Telemetry Adapters (OTEL, Logging, Metrics)
+## 3. Policy & Budget Engine — `@airnub/resilient-http-policies`
 
-### 4.1 Package Ideas:
+**Status:** Spec v0.2 (designed for core v0.6)
 
-- `@tradentic/resilient-http-otel`
-- Optional logging helpers:
-  - `@tradentic/resilient-http-logging-pino`
-  - `@tradentic/resilient-http-logging-winston`
+### 3.1 Scope
 
-**Scope:**
+A policy and budget engine that sits **around** `@tradentic/resilient-http-core` and:
 
-- Provide concrete implementations for the core interfaces:
-  - `TracingAdapter` → OpenTelemetry spans.
-  - `Logger` → structured logging (console, pino, winston, etc.).
-  - `MetricsSink` → OTEL metrics or Prometheus-friendly metrics.
+- Applies **per-scope** constraints (client, operation, agent, provider, model, tenant/bucket).
+- Enforces:
+  - Request-based rate limits.
+  - Optional token-based budgets (when provided by the caller).
+  - Concurrency limits.
+  - Different behaviours for `interactive` vs `background` vs `batch` traffic.
+- Influences (but does not own) `ResilienceProfile` for each request.
 
-**Responsibilities:**
+### 3.2 Core concepts & types
 
-- Map `AgentContext` fields (`correlationId`, `parentCorrelationId`, `source`, `attributes`) into OTEL span attributes and log fields.
-- Use `extensions` to tag metrics/traces with higher-level metadata (e.g. `llm.provider`, `conversation_cohort`), without the core knowing about these concepts.
-- Provide simple wiring helpers:
+- `PolicyScope` — derived from `HttpRequestOptions` + `AgentContext` + AI metadata:
+  - `client`, `operation`, `agent`, `agentRunId`, `provider`, `model`, `bucket`.
+- `RequestClass` — `'interactive' | 'background' | 'batch'`.
+- `PolicyRateLimit` — `maxRequestsPerInterval`, `intervalMs`, optional `maxTokensPerInterval`.
+- `PolicyConcurrencyLimit` — `maxConcurrent`.
+- `PolicyResilienceHints` — overrides / guidance for `ResilienceProfile`.
+- `PolicyDefinition` — per-scope policy with `rateLimit`, `concurrency`, `resilience`, `priority`.
+- `PolicyRequestContext` — what the engine sees before a request.
+- `PolicyDecision` — `'allow' | 'delay' | 'deny'` + `delayMs` + `resilienceOverrides`.
+- `PolicyResultContext` — what the engine sees after a request (`RequestOutcome`, `RateLimitFeedback`).
+- `PolicyEngine` — `evaluate()` + `onResult()`.
+
+### 3.3 Integration with core v0.6
+
+The package exposes a **policy-aware interceptor** helper:
+
+```ts
+export function createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRequestInterceptor;
+```
+
+This interceptor:
+
+- In `beforeSend`:
+  - Derives `PolicyScope` from `HttpRequestOptions`, `AgentContext`, and AI-related `extensions` (e.g. `ai.provider`, `ai.model`).
+  - Calls `engine.evaluate()` to get a `PolicyDecision`.
+  - Enforces `allow/delay/deny` and merges `resilienceOverrides` into `opts.resilience`.
+
+- In `afterResponse` / `onError`:
+  - Builds a `PolicyResultContext` with outcome + rate-limit info.
+  - Calls `engine.onResult()` so the engine can update sliding windows/concurrency/error-rate stats.
+
+### 3.4 In-memory engine (first implementation)
+
+- `InMemoryPolicyEngine` for single-process use:
+  - Stores `PolicyDefinition`s.
+  - Maintains per-policy-key sliding-window counters and concurrency counts.
+- Future versions can add Redis/distributed engines while preserving the interface.
+
+### 3.5 Why separate from core
+
+- Policies change quickly; different apps want different configurations.
+- Doesn’t belong in the core because:
+  - It’s opinionated about rate limits, concurrency semantics, and load shedding.
+  - It may pull in additional dependencies (storage, admin APIs) long-term.
+
+---
+
+## 4. Telemetry Adapters — OTEL, Logging, Metrics
+
+**Package ideas (future):**
+
+- `@airnub/resilient-http-otel`
+- `@airnub/resilient-http-logging-pino`
+- `@airnub/resilient-http-logging-winston`
+
+### 4.1 Scope
+
+Provide concrete implementations for the core telemetry interfaces:
+
+- `TracingAdapter` → OpenTelemetry spans.
+- `Logger` → structured logging (console, pino, winston, etc.).
+- `MetricsSink` → OTEL or Prometheus-friendly metrics.
+
+### 4.2 Responsibilities
+
+- Map core metadata into telemetry:
+  - `AgentContext` (`agent`, `runId`, `labels`, `metadata`).
+  - `correlationId`, `parentCorrelationId`.
+  - `extensions` (e.g. `ai.provider`, `ai.model`, `request.class`, `tenant`, etc.).
+  - v0.6-specific fields: `ResilienceProfile`, `RequestOutcome`, `RateLimitFeedback`.
+
+- Provide wiring helpers:
 
   ```ts
   export function createOtelTracingAdapter(/* config */): TracingAdapter;
@@ -148,184 +219,207 @@
   export function createPinoLogger(/* config */): Logger;
   ```
 
-**Non-goals:**
+### 4.3 Non-goals
 
-- No telemetry code in `@tradentic/resilient-http-core` itself.
-- No mandatory OTEL/metrics dependency for core users.
-
-**Interaction with core:**
-
-- Implements:
-  - `Logger`
-  - `MetricsSink`
-  - `TracingAdapter`
-- Consumes:
-  - `AgentContext` (incl. `parentCorrelationId` propagation)
-  - `HttpRequestOptions.extensions`
+- No telemetry-specific code inside `@tradentic/resilient-http-core`.
+- The core **must not** take a hard dependency on OTEL or logging frameworks.
 
 ---
 
-## 5. Agentic / LLM Conversation Core
+## 5. Agentic / LLM Conversation Core — `@airnub/agent-conversation-core`
 
-### 5.1 Package Idea: `@tradentic/agent-conversation-core`
+**Status:** Future satellite library
 
-**Scope:**
+### 5.1 Scope
 
-- Introduce higher-level, domain-specific concepts for LLM/agent workflows:
-  - `Conversation`: app-level logical conversation.
-  - `Turn`: one step/interaction in a conversation.
-  - `ProviderSession`: per-provider, per-conversation context.
+Introduce higher-level, domain-specific concepts for LLM/agent workflows:
 
-- Handle multi-provider quirks:
-  - OpenAI responses: `conversation_id`, `previous_response_id`.
-  - Anthropic messages: stateless API, full history in each call.
-  - Gemini contents/sessions: history arrays, session IDs.
+- `Conversation` — app-level logical conversation.
+- `Turn` — one step/interaction in that conversation.
+- `ProviderSession` — per-provider, per-conversation context.
 
-- Provide a unified abstraction that:
-  - Maintains per-conversation state.
-  - Chooses providers/models.
-  - Orchestrates prompts, tools, and follow-ups.
+Responsibilities:
 
-**Responsibilities:**
+- Manage multi-provider quirks:
+  - OpenAI: conversation/response IDs, streaming vs non-streaming.
+  - Anthropic: stateless API, full-history messages.
+  - Gemini: sessions & contents.
+- Maintain conversation state:
+  - Store history and metadata (in memory, Redis, DB, etc.).
+  - Truncate and compress history for token budgets.
+- Drive provider selection & routing:
+  - Which provider/model to use for a given turn.
+  - When to fail over to a secondary provider (in combination with policies/core resilience).
 
-- Own the **semantic model** of conversations and turns.
-- Decide how to:
-  - Store history (e.g. in memory, Redis, database).
-  - Compress or truncate history (token budgets).
-  - Map conversations/turns to provider-specific API calls.
+### 5.2 Interaction with `resilient-http-core`
 
-**Non-goals:**
+- Uses `@tradentic/resilient-http-core` for all HTTP requests.
+- Sets `AgentContext` and `correlationId` at **conversation/turn** level, e.g.:
 
-- Do not implement HTTP resilience directly (leave that to `resilient-http-core`).
-- Do not couple to any single LLM provider.
+  ```ts
+  agentContext: {
+    agent: 'rotation-score-agent',
+    runId: 'conv-1234:turn-7',
+    labels: { tier: 'experiment' },
+    metadata: { scenario: 'irbt-rotation' },
+  }
+  ```
 
-**Interaction with core:**
+- Uses `extensions` for LLM metadata, without the core understanding it:
 
-- Uses `@tradentic/resilient-http-core` as the HTTP transport and resilience layer.
-- Populates:
-  - `AgentContext` with correlation IDs for conversations and turns **at an infrastructure level**, e.g.:
+  ```ts
+  extensions: {
+    'ai.provider': 'openai',
+    'ai.model': 'gpt-5.1-mini',
+    'ai.request_type': 'chat',
+    'ai.streaming': true,
+  }
+  ```
 
-    ```ts
-    agentContext: {
-      correlationId: 'conv-1234:turn-7',
-      parentCorrelationId: 'conv-1234:turn-6',
-      source: 'rotation-score-agent',
-      attributes: { tier: 'experiment' },
-    }
-    ```
+- Optionally uses `@airnub/resilient-http-policies` to set different budgets for interactive vs background agent work.
 
-  - `extensions` with rich LLM metadata, e.g.:
+### 5.3 Non-goals
 
-    ```ts
-    extensions: {
-      llm: {
-        provider: 'openai',
-        model: 'gpt-5.1-mini',
-        appConversationId: 'conv-1234',
-        providerConversationId: '...',
-        previousResponseId: '...',
-      },
-    }
-    ```
-
-- Agent/LLM logic lives entirely outside the core; the core just transports metadata and performs HTTP.
+- No direct HTTP client logic — always goes through `resilient-http-core`.
+- No requirement for a particular agent framework; it should be compatible with multiple.
 
 ---
 
 ## 6. Provider-Specific LLM HTTP Wrappers
 
-### 6.1 Package Ideas:
+**Package ideas (future):**
 
-- `@tradentic/http-llm-openai`
-- `@tradentic/http-llm-anthropic`
-- `@tradentic/http-llm-gemini`
+- `@airnub/http-llm-openai`
+- `@airnub/http-llm-anthropic`
+- `@airnub/http-llm-gemini`
 
-**Scope:**
+### 6.1 Scope
 
-- Provide thin, strongly-typed HTTP wrappers for specific LLM APIs using `resilient-http-core`:
-  - Typed request/response models for each provider.
-  - Helpers for common operations (chat completions, responses, embeddings, etc.).
-- Play nicely with `@tradentic/agent-conversation-core` but not strictly depend on it.
+Thin, strongly-typed HTTP wrappers for specific LLM APIs using `resilient-http-core`:
 
-**Responsibilities:**
+- Typed request/response models.
+- Helpers for core operations:
+  - Chat/messages.
+  - Responses / tools.
+  - Embeddings / vectors.
+  - Files/batches where relevant.
+- Streaming support using core transport + interceptors.
 
-- Know provider-specific quirks:
-  - Auth headers, base URLs, rate limits.
-  - Endpoint paths, pagination, streaming modes.
-  - Expected error shapes.
+### 6.2 Responsibilities
 
-- Offer factory helpers, e.g.:
+- Know provider-specific details:
+  - Auth headers, base URLs.
+  - Endpoint paths and query/body shapes.
+  - Rate-limit headers and error shapes.
+
+- Expose factory helpers, e.g.:
 
   ```ts
   export function createOpenAiHttpClient(config: OpenAiHttpConfig): OpenAiHttpClient;
   ```
 
-**Non-goals:**
+### 6.3 Interaction with core & satellites
 
-- Do not reimplement conversation logic; that belongs to `agent-conversation-core`.
-- Do not bake in any particular agent framework.
-
-**Interaction with core:**
-
-- Use `HttpClient` internally for all HTTP requests.
-- Use `operationDefaults`, `beforeRequest`, `afterResponse` hooks for provider-specific nuances.
-- Emit metrics/logging/tracing via the core’s interfaces.
+- Use `HttpClient` and `HttpRequestOptions` internally.
+- Configure operation-level defaults (`operation`, timeouts, idempotency hints).
+- Let `@airnub/resilient-http-policies` enforce budgets.
+- Let `@airnub/agent-conversation-core` orchestrate high-level conversations.
 
 ---
 
-## 7. High-Level Roadmap / Phasing
+## 7. Browser & Tool Guardrails (AI Browsers)
 
-### Phase 1 — Core Stabilisation (v0.4+)
+**Package idea (future):** `@airnub/agent-browser-guardrails`
 
-- Finalize and implement v0.4 in `@tradentic/resilient-http-core`:
-  - `OPTIONS` support.
-  - Minimal `AgentContext` with `correlationId`, `parentCorrelationId`, `source`, `attributes`.
-  - `extensions` field on `HttpRequestOptions` and metrics, fully wired to logging/tracing.
-- Refactor existing clients (FINRA, UW, OpenAI, SEC, IEX) to use v0.4 where appropriate.
+### 7.1 Scope
 
-### Phase 2 — Pagination Helper Extraction
+Leverage `HttpRequestInterceptor` to enforce safety and guardrails for AI-driven browsing and tools:
 
-- Move pagination helpers into `@tradentic/resilient-http-pagination` (or keep in core short-term, but design as if they can be split).
-- Standardize pagination usage across clients (optional but recommended).
+- Host allowlists and denylists.
+- Method restrictions (e.g. read-only vs write-endpoints).
+- Payload size limits.
+- Content-type allowlists.
 
-### Phase 3 — Policy & Telemetry Adapters
+### 7.2 Interaction with core
 
-- Implement `@tradentic/resilient-http-policies` with cockatiel or resilience4ts wrappers.
-- Implement `@tradentic/resilient-http-otel` and one logging adapter (`pino` or `winston`).
-- Wire them into selected apps (e.g. Temporal worker) as optional enhancements.
+- Implemented purely as one or more `HttpRequestInterceptor`s.
+- Uses `AgentContext` and `extensions` (e.g. tool IDs) to vary guardrails by agent/tool.
+- May integrate with `@airnub/resilient-http-policies` to tighten policies for risky targets.
 
-### Phase 4 — Agent/LLM Layer
+---
 
-- Design and implement `@tradentic/agent-conversation-core` for multi-provider agent workflows.
-- Implement first provider-specific wrappers (`@tradentic/http-llm-openai`, etc.).
-- Use `resilient-http-core` under the hood for all LLM HTTP traffic.
+## 8. High-Level Roadmap / Phasing
 
-### Phase 5 — Externalisation & Open Source
+### Phase 1 — Core v0.6 Stabilisation (in progress)
 
-- Once stable, consider splitting these packages into separate repositories (e.g. a `tradentic-http` org) while preserving:
-  - Versioned specs in `docs/specs/`.
+- Finalise and implement v0.6 in `@tradentic/resilient-http-core`:
+  - `ResilienceProfile` on requests.
+  - `ErrorClassifier` integration.
+  - `RateLimitFeedback` and `RequestOutcome` on metrics.
+  - `HttpRequestInterceptor` chain.
+  - Confirm `AgentContext`, `correlationId`, `parentCorrelationId`, and `extensions` are properly wired everywhere.
+- Refactor existing clients (FINRA, Unusual Whales, OpenAI, SEC, IEX) to use core v0.6 consistently.
+
+### Phase 2 — Pagination Extraction (`@airnub/resilient-http-pagination` v0.2)
+
+- Implement v0.2 spec for pagination as a separate package.
+- Gradually migrate clients that need pagination to use it.
+- Keep pagination logic out of core.
+
+### Phase 3 — Policies & Budgets (`@airnub/resilient-http-policies` v0.2)
+
+- Implement in-memory `PolicyEngine` + `createPolicyInterceptor`.
+- Integrate into selected apps (e.g. Temporal worker) to enforce:
+  - Per-client/per-provider budgets.
+  - Different classes of traffic (interactive vs background vs batch).
+- Add basic policy configuration for IRD workloads.
+
+### Phase 4 — Telemetry Adapters
+
+- Implement `@airnub/resilient-http-otel` for tracing + metrics.
+- Implement at least one logging adapter (`pino` or `winston`).
+- Wire into IRD services, but keep them optional.
+
+### Phase 5 — Agent & Provider Layers
+
+- Design and implement `@airnub/agent-conversation-core`.
+- Implement first provider wrappers:
+  - `@airnub/http-llm-openai`.
+  - Possibly `@airnub/http-llm-anthropic`.
+- Use `resilient-http-core` under the hood for all AI/LLM HTTP traffic.
+
+### Phase 6 — Externalisation & Open Source
+
+- Once stable, consider:
+  - Splitting core & satellites into their own repos (e.g. an `airnub-http` or `resilient-http` org).
+  - Maintaining versioned specs in each repo’s `docs/specs/`.
   - Cross-repo test harnesses for end-to-end flows.
 
 ---
 
-## 8. Design Guardrails
+## 9. Design Guardrails
 
 To keep the ecosystem maintainable and clean:
 
 1. **Core stays small and agnostic**
-   - No domain-specific logic (no knowledge of FINRA/UW/SEC/LLM providers).
-   - No heavy dependencies (OTEL, big resilience libraries) baked in.
+   - No domain-specific logic (no FINRA, UW, SEC, LLM providers, etc.).
+   - No heavy dependencies baked in (no OTEL, no external resilience libs).
 
 2. **Everything else is opt-in**
-   - Pagination, policies, telemetry, agents, LLM wrappers are all separate layers.
-   - Apps choose which layers they need.
+   - Pagination, policies, telemetry, agents, provider wrappers, and browser guardrails are all separate layers.
+   - Apps explicitly choose which layers they need.
 
-3. **Hooks and contracts are stable**
-   - `HttpClient`, `BaseHttpClientConfig`, `HttpRequestOptions`, `AgentContext`, `extensions`, and core interfaces (Logger, MetricsSink, TracingAdapter, HttpCache, HttpRateLimiter, CircuitBreaker) form the stable surface area.
-   - Satellite libraries build on these contracts; changes should be additive and backwards compatible.
+3. **Contracts are stable and additive**
+   - `HttpClient`, `HttpRequestOptions`, `AgentContext`, `ResilienceProfile`, `ErrorClassifier`, `RateLimitFeedback`, `RequestOutcome`, `HttpRequestInterceptor`, and core telemetry interfaces form the stable surface area.
+   - Satellite libraries build *on* these; changes should be additive and backwards compatible.
 
-4. **No shortcuts in observability**
-   - Always propagate `AgentContext` (correlationId + parentCorrelationId + source + attributes).
-   - Always carry `extensions` through to telemetry so higher layers can observe their semantics.
+4. **Observability is first-class**
+   - Always propagate `requestId`, `correlationId`, `parentCorrelationId`, and `AgentContext`.
+   - Always carry `extensions` through to telemetry so higher layers can apply their own semantics (LLM, agent, tenant, experiment tags).
 
-This roadmap should guide future evolution, ensuring `@tradentic/resilient-http-core` remains a solid foundation while enabling richer ecosystems around resilience, telemetry, and agentic AI.
+5. **AI agents are first-class *users* of the stack, not baked into it**
+   - Core provides the resilience and telemetry substrate.
+   - Satellite libraries and apps encode AI/agent semantics.
+
+This roadmap should guide future evolution, ensuring `@tradentic/resilient-http-core` remains a solid, boring foundation while enabling a rich ecosystem around resilience, telemetry, and agentic AI on top.
+
