@@ -1,0 +1,34 @@
+{
+  "name": "@tradentic/resilient-http-core",
+  "version": "0.1.0",
+  "description": "Transport-agnostic resilient HTTP utilities for Tradentic API clients",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "http",
+    "resilience",
+    "retry",
+    "cache",
+    "rate-limiter"
+  ],
+  "author": "Tradentic",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
+  }
+}
