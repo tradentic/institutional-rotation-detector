@@ -68,6 +68,10 @@ export class HttpClient {
             cacheHit: true,
             attempt: 0,
             requestId: preparedOpts.requestId,
+            correlationId: preparedOpts.correlationId,
+            parentCorrelationId: preparedOpts.parentCorrelationId,
+            agentContext: preparedOpts.agentContext,
+            extensions: preparedOpts.extensions,
           });
           this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
           span?.end();
@@ -149,12 +153,38 @@ export class HttpClient {
   }
 
   private startSpan(opts: HttpRequestOptions) {
-    return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
+    const attributes: Record<string, string | number | boolean | null> = {
       client: this.clientName,
       operation: opts.operation,
       method: opts.method,
       path: opts.path,
       requestId: opts.requestId ?? null,
+    };
+
+    if (opts.correlationId) {
+      attributes['correlation_id'] = opts.correlationId;
+    }
+    if (opts.parentCorrelationId) {
+      attributes['parent_correlation_id'] = opts.parentCorrelationId;
+    }
+
+    const agentContext = opts.agentContext;
+    if (agentContext?.agent) {
+      attributes['agent.name'] = agentContext.agent;
+    }
+    if (agentContext?.runId) {
+      attributes['agent.run_id'] = agentContext.runId;
+    }
+    if (agentContext?.labels) {
+      for (const [key, value] of Object.entries(agentContext.labels)) {
+        attributes[`agent.label.${key}`] = value;
+      }
+    }
+
+    return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
+      attributes,
+      agentContext,
+      extensions: opts.extensions,
     });
   }
 
@@ -190,7 +220,10 @@ export class HttpClient {
               client: this.clientName,
               operation: attemptOpts.operation,
               requestId: attemptOpts.requestId,
+              correlationId: attemptOpts.correlationId,
+              parentCorrelationId: attemptOpts.parentCorrelationId,
               agentContext: attemptOpts.agentContext,
+              extensions: attemptOpts.extensions,
             })
         : executeAttempt;
 
@@ -211,6 +244,10 @@ export class HttpClient {
           status: result.status,
           attempt,
           requestId: attemptOpts.requestId,
+          correlationId: attemptOpts.correlationId,
+          parentCorrelationId: attemptOpts.parentCorrelationId,
+          agentContext: attemptOpts.agentContext,
+          extensions: attemptOpts.extensions,
         });
         this.logger?.info('http.request.success', {
           ...logMeta,
@@ -231,7 +268,11 @@ export class HttpClient {
           status,
           attempt,
           requestId: attemptOpts.requestId,
+          correlationId: attemptOpts.correlationId,
+          parentCorrelationId: attemptOpts.parentCorrelationId,
           errorCategory: category,
+          agentContext: attemptOpts.agentContext,
+          extensions: attemptOpts.extensions,
         });
         await this.callOptionalHook('rateLimiter.onError', () =>
           this.config.rateLimiter?.onError?.(rateLimitKey, error, attemptContext),
@@ -454,7 +495,7 @@ export class HttpClient {
     if (opDefaults?.idempotent !== undefined) {
       return opDefaults.idempotent;
     }
-    return ['GET', 'HEAD'].includes(opts.method);
+    return opts.method === 'GET' || opts.method === 'HEAD' || opts.method === 'OPTIONS';
   }
 
   private buildHeaders(source?: Record<string, string | undefined>): Record<string, string> {
@@ -523,7 +564,10 @@ export class HttpClient {
       operation: opts.operation,
       attempt,
       requestId: opts.requestId,
+      correlationId: opts.correlationId,
+      parentCorrelationId: opts.parentCorrelationId,
       agentContext: opts.agentContext,
+      extensions: opts.extensions,
     };
   }
 
@@ -539,13 +583,22 @@ export class HttpClient {
     }
   }
 
-  private baseLogMeta(opts: Pick<HttpRequestOptions, 'operation' | 'method' | 'path' | 'requestId'>) {
+  private baseLogMeta(
+    opts: Pick<
+      HttpRequestOptions,
+      'operation' | 'method' | 'path' | 'requestId' | 'correlationId' | 'parentCorrelationId' | 'agentContext' | 'extensions'
+    >,
+  ) {
     return {
       client: this.clientName,
       operation: opts.operation,
       method: opts.method,
       path: opts.path,
       requestId: opts.requestId,
+      correlationId: opts.correlationId,
+      parentCorrelationId: opts.parentCorrelationId,
+      agentContext: opts.agentContext,
+      extensions: opts.extensions,
     };
   }
 

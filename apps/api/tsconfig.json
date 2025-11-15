@@ -2,12 +2,16 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "lib": ["ES2022"],
-    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "strict": true,
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tradentic/resilient-http-core": ["../libs/resilient-http-core/src/index.ts"]
+    },
     "outDir": "./dist",
     "declaration": true,
     "declarationMap": true,
