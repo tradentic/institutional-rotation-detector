@@ -68,3 +68,27 @@ During a request the client applies the following precedence:
 
 These hooks keep domain-specific routing and header rules in your client packages while the shared core continues to manage the
 resilience primitives.
+
+### `requestText` and `requestArrayBuffer`
+
+Not every endpoint returns JSON. When you need CSV, NDJSON, or binary payloads, use the built-in helpers instead of reimplementing
+`requestRaw().text()` or `.arrayBuffer()` at every call site:
+
+```ts
+const http = new HttpClient({ clientName: 'sec', baseUrl: 'https://data.sec.gov' });
+
+const csv = await http.requestText({
+  method: 'GET',
+  path: '/submissions/CIK0000320193.csv',
+  operation: 'sec.downloadCsv',
+});
+
+const buffer = await http.requestArrayBuffer({
+  method: 'GET',
+  path: '/files/bulk.gz',
+  operation: 'sec.downloadBulk',
+});
+```
+
+Both helpers delegate to `requestRaw`, so they automatically benefit from the same retries, rate limiting, tracing, metrics, and
+hook executions before decoding the payload.

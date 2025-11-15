@@ -394,6 +394,30 @@ describe('HttpClient v0.2', () => {
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
+  it('returns decoded text bodies via requestText', async () => {
+    const response = new Response('hello world', { status: 200 });
+    const client = createClient({ transport: vi.fn().mockResolvedValue(response) });
+    const spy = vi.spyOn(client, 'requestRaw');
+
+    const text = await client.requestText({ method: 'GET', path: '/text', operation: 'text.test' });
+
+    expect(text).toBe('hello world');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns binary bodies via requestArrayBuffer', async () => {
+    const payload = new Uint8Array([1, 2, 3]).buffer;
+    const response = new Response(payload, { status: 200 });
+    const client = createClient({ transport: vi.fn().mockResolvedValue(response) });
+    const spy = vi.spyOn(client, 'requestRaw');
+
+    const buffer = await client.requestArrayBuffer({ method: 'GET', path: '/bin', operation: 'bin.test' });
+
+    expect(buffer).toBeInstanceOf(ArrayBuffer);
+    expect(new Uint8Array(buffer)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('treats idempotent=false requests as single attempts', async () => {
     const transport = vi
       .fn()
