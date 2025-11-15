@@ -1,11 +1,11 @@
-import { setTimeout as delay } from 'timers/promises';
 import crypto from 'crypto';
+import { HttpClient, HttpError, TimeoutError, type HttpRequestOptions } from '@tradentic/resilient-http-core';
 
 export interface IexClientConfig {
   baseUrl?: string;
   maxRetries?: number;
-  retryDelayMs?: number;
   userAgent?: string;
+  histDownloadTimeoutMs?: number;
 }
 
 export class IexRequestError extends Error {
@@ -21,8 +21,8 @@ export class IexRequestError extends Error {
 
 const DEFAULT_BASE_URL = 'https://www.iexexchange.io';
 const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_RETRY_DELAY_MS = 500;
 const DEFAULT_USER_AGENT = 'InstitutionalRotationDetector/1.0';
+const DEFAULT_HIST_TIMEOUT_MS = 120_000;
 
 /**
  * IEX HIST Client
@@ -35,14 +35,36 @@ const DEFAULT_USER_AGENT = 'InstitutionalRotationDetector/1.0';
 export class IexClient {
   private readonly baseUrl: string;
   private readonly maxRetries: number;
-  private readonly retryDelayMs: number;
   private readonly userAgent: string;
+  private readonly histDownloadTimeoutMs: number;
+  private readonly httpClient: HttpClient;
 
-  constructor(config: IexClientConfig = {}) {
+  constructor(config: IexClientConfig = {}, httpClient?: HttpClient) {
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.retryDelayMs = config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
     this.userAgent = config.userAgent ?? DEFAULT_USER_AGENT;
+    this.histDownloadTimeoutMs = config.histDownloadTimeoutMs ?? DEFAULT_HIST_TIMEOUT_MS;
+    this.httpClient =
+      httpClient ??
+      new HttpClient({
+        clientName: 'iex',
+        baseUrl: this.baseUrl,
+        maxRetries: this.maxRetries,
+        beforeRequest: (opts: HttpRequestOptions) => ({
+          ...opts,
+          headers: {
+            ...opts.headers,
+            'User-Agent': this.userAgent,
+            Accept: 'text/csv, application/octet-stream',
+          },
+        }),
+        operationDefaults: {
+          'hist.downloadDaily': {
+            timeoutMs: this.histDownloadTimeoutMs,
+            idempotent: true,
+          },
+        },
+      });
   }
 
   /**
@@ -63,13 +85,21 @@ export class IexClient {
     // Note: IEX HIST file format and URL structure may need adjustment
     // based on actual IEX historical data distribution method
     // This is a placeholder that should be updated with actual IEX HIST URL pattern
-    const url = `${this.baseUrl}/hist/IEXTP1_TOPS_${dateStr}.pcap.gz`;
+    const path = `/hist/IEXTP1_TOPS_${dateStr}.pcap.gz`;
 
-    const response = await this.request(url);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    try {
+      const arrayBuffer = await this.httpClient.requestArrayBuffer({
+        method: 'GET',
+        path,
+        operation: 'hist.downloadDaily',
+      });
+      const buffer = Buffer.from(arrayBuffer);
+      const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
 
-    return { buffer, fileId, sha256 };
+      return { buffer, fileId, sha256 };
+    } catch (error: unknown) {
+      this.handleHttpError(error);
+    }
   }
 
   /**
@@ -107,45 +137,15 @@ export class IexClient {
     return records.filter((r) => r.symbol && r.matched_shares > 0);
   }
 
-  private async request(url: string, attempt = 0): Promise<Response> {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': this.userAgent,
-          Accept: 'text/csv, application/octet-stream',
-        },
-      });
-
-      if (!response.ok) {
-        const body = await safeReadBody(response);
-        if (shouldRetry(response.status) && attempt < this.maxRetries) {
-          await this.backoff(attempt);
-          return this.request(url, attempt + 1);
-        }
-        throw new IexRequestError(
-          `IEX request failed with status ${response.status}`,
-          response.status,
-          body
-        );
-      }
-
-      return response;
-    } catch (err) {
-      if (err instanceof IexRequestError) {
-        throw err;
-      }
-      if (attempt < this.maxRetries) {
-        await this.backoff(attempt);
-        return this.request(url, attempt + 1);
-      }
-      throw err;
+  private handleHttpError(error: unknown): never {
+    if (error instanceof HttpError) {
+      const body = typeof error.body === 'string' ? error.body : undefined;
+      throw new IexRequestError(`IEX request failed with status ${error.status}`, error.status, body);
     }
-  }
-
-  private async backoff(attempt: number): Promise<void> {
-    const jitter = Math.random() * this.retryDelayMs;
-    const waitMs = this.retryDelayMs * 2 ** attempt + jitter;
-    await delay(waitMs);
+    if (error instanceof TimeoutError) {
+      throw new IexRequestError('IEX request timed out', 408);
+    }
+    throw error;
   }
 }
 
@@ -153,18 +153,6 @@ export interface IexDailyVolumeRecord {
   symbol: string;
   trade_date: string;
   matched_shares: number;
-}
-
-function shouldRetry(status: number): boolean {
-  return status === 429 || status >= 500;
-}
-
-async function safeReadBody(response: Response): Promise<string | undefined> {
-  try {
-    return await response.text();
-  } catch (err) {
-    return undefined;
-  }
 }
 
 function normalizeRow(row: Record<string, string>): Map<string, string> {
@@ -205,10 +193,10 @@ function parseCsvLine(line: string): string[] {
 export function createIexClient(): IexClient {
   const baseUrl = process.env.IEX_HIST_BASE_URL ?? DEFAULT_BASE_URL;
   const maxRetries = process.env.IEX_MAX_RETRIES ? Number(process.env.IEX_MAX_RETRIES) : DEFAULT_MAX_RETRIES;
-  const retryDelayMs = process.env.IEX_RETRY_DELAY_MS
-    ? Number(process.env.IEX_RETRY_DELAY_MS)
-    : DEFAULT_RETRY_DELAY_MS;
   const userAgent = process.env.EDGAR_USER_AGENT ?? DEFAULT_USER_AGENT;
+  const histDownloadTimeoutMs = process.env.IEX_HIST_TIMEOUT_MS
+    ? Number(process.env.IEX_HIST_TIMEOUT_MS)
+    : DEFAULT_HIST_TIMEOUT_MS;
 
-  return new IexClient({ baseUrl, maxRetries, retryDelayMs, userAgent });
+  return new IexClient({ baseUrl, maxRetries, userAgent, histDownloadTimeoutMs });
 }
