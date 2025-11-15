@@ -1,16 +1,12 @@
-import type { Cache as FinraCache } from '@libs/finra-client';
-import type { Cache as OpenAiCache } from '@libs/openai-client';
-import type { Cache as UwCache } from '@libs/unusualwhales-client';
+import type { HttpCache } from '@libs/http-client-core';
 import { getRedisCache, redisDebugLog } from './redisClient';
-
-type SharedCache = FinraCache & UwCache & OpenAiCache;
 
 interface RedisApiCacheOptions {
   namespace?: string;
   failOpen?: boolean;
 }
 
-export class RedisApiCache implements SharedCache {
+export class RedisApiCache implements HttpCache {
   private readonly redis = getRedisCache();
   private readonly namespace: string;
   private readonly failOpen: boolean;
@@ -51,7 +47,7 @@ export class RedisApiCache implements SharedCache {
     }
   }
 
-  async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
+  async set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void> {
     const client = this.client;
     if (!client) {
       if (this.failOpen) {

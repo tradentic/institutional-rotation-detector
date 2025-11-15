@@ -1,7 +1,7 @@
 {
-  "name": "@libs/openai-client",
+  "name": "@libs/http-client-core",
   "version": "1.0.0",
-  "description": "Shared OpenAI GPT-5 client library with CoT session management and E2B integration",
+  "description": "Shared HTTP client primitives used across API clients (cache, rate limiting, circuit breaker, logging, metrics)",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,26 +17,19 @@
     "test": "vitest run"
   },
   "keywords": [
-    "openai",
-    "gpt-5",
-    "chain-of-thought",
-    "cot",
-    "e2b",
-    "responses-api"
+    "http",
+    "cache",
+    "ratelimit",
+    "circuit-breaker",
+    "retry"
   ],
   "author": "Tradentic",
   "license": "UNLICENSED",
   "private": true,
-  "dependencies": {
-    "@libs/http-client-core": "workspace:*",
-    "openai": "^6.8.1"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",
     "vitest": "^4.0.8"
-  },
-  "peerDependencies": {
-    "openai": "^6.0.0"
   }
 }

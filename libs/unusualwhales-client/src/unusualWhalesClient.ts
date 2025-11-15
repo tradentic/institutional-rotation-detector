@@ -1,5 +1,13 @@
 import { setTimeout as sleep } from 'timers/promises';
 import type {
+  CircuitBreaker as CoreCircuitBreaker,
+  HttpCache,
+  HttpRateLimiter,
+  HttpTransport as CoreHttpTransport,
+  Logger as CoreLogger,
+  MetricsSink as CoreMetricsSink,
+} from '@libs/http-client-core';
+import type {
   CandleSize,
   DarkPoolRecentParams,
   DarkPoolTickerParams,
@@ -77,23 +85,15 @@ export class ApiRequestError extends Error {
   }
 }
 
-export interface RateLimiter {
-  throttle(key?: string): Promise<void>;
-  onSuccess?(key?: string): void | Promise<void>;
-  onError?(key: string | undefined, error: ApiRequestError): void | Promise<void>;
-}
+export interface RateLimiter extends HttpRateLimiter {}
 
 export class NoopRateLimiter implements RateLimiter {
   async throttle(): Promise<void> {}
   onSuccess?(): void {}
-  onError?(): void {}
+  onError?(_key?: string, _error?: unknown): void {}
 }
 
-export interface Cache {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void>;
-  delete?(key: string): Promise<void>;
-}
+export interface Cache extends HttpCache {}
 
 export class InMemoryCache implements Cache {
   private store = new Map<string, { value: unknown; expiresAt?: number }>();
@@ -110,7 +110,7 @@ export class InMemoryCache implements Cache {
     return entry.value as T;
   }
 
-  async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
+  async set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void> {
     const expiresAt = ttlMs ? Date.now() + ttlMs : undefined;
     this.store.set(key, { value, expiresAt });
   }
@@ -120,33 +120,13 @@ export class InMemoryCache implements Cache {
   }
 }
 
-export interface CircuitBreaker {
-  beforeRequest(key?: string): Promise<void>;
-  onSuccess(key?: string): void | Promise<void>;
-  onFailure(key: string | undefined, err: ApiRequestError): void | Promise<void>;
-}
+export interface CircuitBreaker extends CoreCircuitBreaker {}
 
-export interface Logger {
-  debug?(msg: string, meta?: unknown): void;
-  info?(msg: string, meta?: unknown): void;
-  warn?(msg: string, meta?: unknown): void;
-  error?(msg: string, meta?: unknown): void;
-}
+export interface Logger extends CoreLogger {}
 
-export interface MetricsSink {
-  recordRequest(options: {
-    endpoint: string;
-    method: string;
-    durationMs: number;
-    status: number;
-    retries: number;
-    cacheHit: boolean;
-  }): void | Promise<void>;
-}
+export interface MetricsSink extends CoreMetricsSink {}
 
-export interface HttpTransport {
-  (url: string, init: RequestInit): Promise<Response>;
-}
+export type HttpTransport = CoreHttpTransport;
 
 export type QueryParamValue = string | number | boolean | string[] | number[] | undefined;
 export type QueryParams = Record<string, QueryParamValue>;
@@ -158,10 +138,17 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   cacheTtlMs?: number;
   cacheKey?: string;
   timeoutMs?: number;
+  operation?: string;
 }
 
 export interface CacheableHelperOptions {
   cacheTtlMs?: number;
+}
+
+export interface UnusualWhalesCacheTtls {
+  seasonalityMs?: number;
+  exposureMs?: number;
+  ohlcHistoricalMs?: number;
 }
 
 export interface UnusualWhalesClientConfig {
@@ -176,6 +163,7 @@ export interface UnusualWhalesClientConfig {
   logger?: Logger;
   metrics?: MetricsSink;
   transport?: HttpTransport;
+  defaultCacheTtls?: UnusualWhalesCacheTtls;
 }
 
 export class UnusualWhalesRequestError extends ApiRequestError {
@@ -198,6 +186,7 @@ export class UnusualWhalesClient {
   private readonly logger?: Logger;
   private readonly metrics?: MetricsSink;
   private readonly transport: HttpTransport;
+  private readonly defaultCacheTtls?: UnusualWhalesCacheTtls;
 
   constructor(private readonly config: UnusualWhalesClientConfig) {
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
@@ -210,6 +199,7 @@ export class UnusualWhalesClient {
     this.logger = config.logger;
     this.metrics = config.metrics;
     this.transport = config.transport ?? ((url, init) => fetch(url, init));
+    this.defaultCacheTtls = config.defaultCacheTtls;
   }
 
   // ---------------------------------------------------------------------------
@@ -223,7 +213,13 @@ export class UnusualWhalesClient {
       ...options.headers,
     };
 
-    return this.requestWithRetries(path, { ...options, headers }, (response) =>
+    const requestOptions: RequestOptions = {
+      ...options,
+      headers,
+      operation: options.operation ?? path,
+    };
+
+    return this.requestWithRetries(path, requestOptions, (response) =>
       parseJson<T>(response)
     );
   }
@@ -239,6 +235,19 @@ export class UnusualWhalesClient {
       cacheTtlMs: requestOptions?.cacheTtlMs,
       cacheKey: requestOptions?.cacheKey,
     });
+  }
+
+  private resolveCacheOptions(
+    options: CacheableHelperOptions | undefined,
+    defaultTtl?: number,
+  ): CacheableHelperOptions | undefined {
+    if (options?.cacheTtlMs !== undefined) {
+      return options;
+    }
+    if (defaultTtl === undefined) {
+      return options;
+    }
+    return { ...(options ?? {}), cacheTtlMs: defaultTtl };
   }
 
   // ---------------------------------------------------------------------------
@@ -309,19 +318,52 @@ export class UnusualWhalesClient {
     });
   }
 
-  getSpotExposures(ticker: string, params?: SpotExposuresParams): Promise<UwSpotExposuresResponse> {
-    return this.get(`/api/stock/${encodeURIComponent(ticker)}/spot-exposures`, params?.date ? { date: params.date } : undefined);
+  getSpotExposures(
+    ticker: string,
+    params?: SpotExposuresParams,
+    options?: CacheableHelperOptions,
+  ): Promise<UwSpotExposuresResponse> {
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.exposureMs,
+    );
+    return this.get(
+      `/api/stock/${encodeURIComponent(ticker)}/spot-exposures`,
+      params?.date ? { date: params.date } : undefined,
+      cacheOptions,
+    );
   }
 
-  getSpotExposuresByStrike(ticker: string, params?: SpotExposuresByStrikeParams): Promise<UwSpotExposuresByStrikeResponse> {
-    return this.get(`/api/stock/${encodeURIComponent(ticker)}/spot-exposures/strike`, this.buildSpotStrikeParams(params));
+  getSpotExposuresByStrike(
+    ticker: string,
+    params?: SpotExposuresByStrikeParams,
+    options?: CacheableHelperOptions,
+  ): Promise<UwSpotExposuresByStrikeResponse> {
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.exposureMs,
+    );
+    return this.get(
+      `/api/stock/${encodeURIComponent(ticker)}/spot-exposures/strike`,
+      this.buildSpotStrikeParams(params),
+      cacheOptions,
+    );
   }
 
   getSpotExposuresByExpiryStrike(
     ticker: string,
-    params: SpotExposuresByExpiryStrikeParams
+    params: SpotExposuresByExpiryStrikeParams,
+    options?: CacheableHelperOptions,
   ): Promise<UwSpotExposuresByStrikeResponse> {
-    return this.get(`/api/stock/${encodeURIComponent(ticker)}/spot-exposures/expiry-strike`, this.buildSpotExpiryStrikeParams(params));
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.exposureMs,
+    );
+    return this.get(
+      `/api/stock/${encodeURIComponent(ticker)}/spot-exposures/expiry-strike`,
+      this.buildSpotExpiryStrikeParams(params),
+      cacheOptions,
+    );
   }
 
   getOiPerStrike(ticker: string, params?: OiPerExpiryParams): Promise<UwOpenInterestPerStrikeResponse> {
@@ -356,10 +398,14 @@ export class UnusualWhalesClient {
     params?: OhlcParams,
     options?: CacheableHelperOptions,
   ): Promise<UwOhlcResponse> {
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.ohlcHistoricalMs,
+    );
     return this.get(
       `/api/stock/${encodeURIComponent(ticker)}/ohlc/${candleSize}`,
       this.buildOhlcParams(params),
-      options,
+      cacheOptions,
     );
   }
 
@@ -418,7 +464,11 @@ export class UnusualWhalesClient {
   // ---------------------------------------------------------------------------
 
   getMarketSeasonality(): Promise<UwMarketSeasonalityResponse> {
-    return this.get('/api/seasonality/market');
+    const cacheOptions = this.resolveCacheOptions(
+      undefined,
+      this.defaultCacheTtls?.seasonalityMs,
+    );
+    return this.get('/api/seasonality/market', undefined, cacheOptions);
   }
 
   getSeasonalityMonthPerformers(
@@ -426,10 +476,14 @@ export class UnusualWhalesClient {
     params?: SeasonalityMonthPerformersParams,
     options?: CacheableHelperOptions,
   ): Promise<UwSeasonalityPerformersResponse> {
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.seasonalityMs,
+    );
     return this.get(
       `/api/seasonality/${encodeURIComponent(String(month))}/performers`,
       this.buildSeasonalityPerformersParams(params),
-      options,
+      cacheOptions,
     );
   }
 
@@ -437,14 +491,22 @@ export class UnusualWhalesClient {
     ticker: string,
     options?: CacheableHelperOptions,
   ): Promise<UwSeasonalityMonthlyResponse> {
-    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/monthly`, undefined, options);
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.seasonalityMs,
+    );
+    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/monthly`, undefined, cacheOptions);
   }
 
   getSeasonalityYearMonthForTicker(
     ticker: string,
     options?: CacheableHelperOptions,
   ): Promise<UwSeasonalityYearMonthResponse> {
-    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/year-month`, undefined, options);
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.seasonalityMs,
+    );
+    return this.get(`/api/seasonality/${encodeURIComponent(ticker)}/year-month`, undefined, cacheOptions);
   }
 
   getInstitutionHoldings(name: string): Promise<UwInstitutionHoldingsResponse> {
@@ -661,6 +723,7 @@ export class UnusualWhalesClient {
     const method = (options.method ?? 'GET').toUpperCase();
     const url = this.buildUrl(path, options.params);
     const endpoint = path;
+    const operation = options.operation ?? endpoint;
     const timeout = options.timeoutMs ?? this.timeoutMs;
     const effectiveTimeout = timeout && timeout > 0 ? timeout : undefined;
 
@@ -678,19 +741,27 @@ export class UnusualWhalesClient {
     if (cacheEligible && cacheKey) {
       const cached = await this.cache!.get<T>(cacheKey);
       if (cached !== undefined) {
-        await this.metrics?.recordRequest({
-          endpoint,
-          method,
+        await this.metrics?.recordRequest?.({
+          client: 'unusualwhales',
+          operation,
           durationMs: 0,
           status: 200,
-          retries: 0,
           cacheHit: true,
+          attempt: 0,
         });
         return cached;
       }
     }
 
-    const { params: _p, cacheTtlMs, timeoutMs, body, cacheKey: _cacheKey, ...rest } = options;
+    const {
+      params: _p,
+      cacheTtlMs,
+      timeoutMs,
+      body,
+      cacheKey: _cacheKey,
+      operation: _operation,
+      ...rest
+    } = options;
     const init: RequestInit = {
       ...rest,
       method,
@@ -715,7 +786,7 @@ export class UnusualWhalesClient {
             bodyText,
             retryAfterMs,
           );
-          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          await this.handleFailure(key, error, endpoint, operation, start, attempt);
 
           if (!this.isRetryable(error.status) || attempt === this.maxRetries) {
             (error as InternalApiError).__handled = true;
@@ -730,16 +801,16 @@ export class UnusualWhalesClient {
         await this.rateLimiter.onSuccess?.(key);
         await this.circuitBreaker?.onSuccess?.(key);
 
-        await this.metrics?.recordRequest({
-          endpoint,
-          method,
+        await this.metrics?.recordRequest?.({
+          client: 'unusualwhales',
+          operation,
           durationMs: Date.now() - start,
           status: response.status,
-          retries: attempt,
           cacheHit: false,
+          attempt,
         });
 
-        if (cacheEligible && cacheKey) {
+        if (cacheEligible && cacheKey && cacheTtlMs) {
           await this.cache!.set(cacheKey, data, cacheTtlMs);
         }
 
@@ -752,7 +823,7 @@ export class UnusualWhalesClient {
               0,
             );
         if (!error.__handled) {
-          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          await this.handleFailure(key, error, endpoint, operation, start, attempt);
           error.__handled = true;
         }
 
@@ -789,19 +860,19 @@ export class UnusualWhalesClient {
     key: string,
     error: ApiRequestError,
     endpoint: string,
-    method: string,
+    operation: string,
     start: number,
     attempt: number,
   ): Promise<void> {
     await this.rateLimiter.onError?.(key, error);
     await this.circuitBreaker?.onFailure?.(key, error);
-    await this.metrics?.recordRequest({
-      endpoint,
-      method,
+    await this.metrics?.recordRequest?.({
+      client: 'unusualwhales',
+      operation,
       durationMs: Date.now() - start,
       status: error.status,
-      retries: attempt,
       cacheHit: false,
+      attempt,
     });
   }
 
@@ -969,6 +1040,7 @@ export function createUnusualWhalesClientFromEnv(
     logger: overrides.logger,
     metrics: overrides.metrics,
     transport: overrides.transport,
+    defaultCacheTtls: overrides.defaultCacheTtls,
   };
 
   return new UnusualWhalesClient(config);

@@ -1,21 +1,7 @@
 import { setTimeout as sleep } from 'timers/promises';
-import type {
-  ApiRequestError as FinraApiRequestError,
-  RateLimiter as FinraRateLimiter,
-} from '@libs/finra-client';
-import type {
-  ApiRequestError as OpenAiApiRequestError,
-  RateLimiter as OpenAiRateLimiter,
-} from '@libs/openai-client';
-import type {
-  ApiRequestError as UwApiRequestError,
-  RateLimiter as UwRateLimiter,
-} from '@libs/unusualwhales-client';
+import type { HttpRateLimiter } from '@libs/http-client-core';
 import { createDistributedRateLimiter } from './distributedRateLimit';
 import { getRedisCache, redisDebugLog } from './redisClient';
-
-type AnyRateLimiter = FinraRateLimiter & UwRateLimiter & OpenAiRateLimiter;
-type AnyApiError = FinraApiRequestError | UwApiRequestError | OpenAiApiRequestError;
 
 interface RedisRateLimiterOptions {
   identifier: string;
@@ -24,7 +10,7 @@ interface RedisRateLimiterOptions {
   failOpen?: boolean;
 }
 
-export class RedisRateLimiter implements AnyRateLimiter {
+export class RedisRateLimiter implements HttpRateLimiter {
   private readonly cache = getRedisCache();
   private readonly namespace: string;
   private readonly failOpen: boolean;
@@ -55,8 +41,10 @@ export class RedisRateLimiter implements AnyRateLimiter {
     await this.clearCooldown(key);
   }
 
-  async onError(key = 'global', error: AnyApiError): Promise<void> {
-    if (error.status !== 429 || !error.retryAfterMs || error.retryAfterMs <= 0) {
+  async onError(key = 'global', error: unknown): Promise<void> {
+    const retryAfterMs = extractRetryAfterMs(error);
+    const status = extractStatus(error);
+    if (status !== 429 || !retryAfterMs || retryAfterMs <= 0) {
       return;
     }
     const client = this.cache.getClient();
@@ -66,9 +54,9 @@ export class RedisRateLimiter implements AnyRateLimiter {
       }
       throw new Error('Redis client unavailable for rate limiter');
     }
-    const expiresAt = Date.now() + error.retryAfterMs;
+    const expiresAt = Date.now() + retryAfterMs;
     try {
-      await client.set(this.keyForCooldown(key), String(expiresAt), 'PX', error.retryAfterMs);
+      await client.set(this.keyForCooldown(key), String(expiresAt), 'PX', retryAfterMs);
     } catch (err) {
       redisDebugLog('[RedisRateLimiter] onError set error', err);
       if (!this.failOpen) {
@@ -124,4 +112,24 @@ export class RedisRateLimiter implements AnyRateLimiter {
       }
     }
   }
+}
+
+function extractStatus(error: unknown): number | undefined {
+  if (typeof error === 'object' && error && 'status' in error) {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === 'number') {
+      return status;
+    }
+  }
+  return undefined;
+}
+
+function extractRetryAfterMs(error: unknown): number | undefined {
+  if (typeof error === 'object' && error && 'retryAfterMs' in error) {
+    const retry = (error as { retryAfterMs?: unknown }).retryAfterMs;
+    if (typeof retry === 'number') {
+      return retry;
+    }
+  }
+  return undefined;
 }

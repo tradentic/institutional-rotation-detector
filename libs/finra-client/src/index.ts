@@ -76,6 +76,7 @@ export { FinraClient, createFinraClient, createNormalizedRow } from './finraClie
 export type {
   // Core config
   FinraClientConfig,
+  FinraCacheTtls,
   TokenResponse,
   RateLimiter,
   Cache,

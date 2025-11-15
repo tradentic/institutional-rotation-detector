@@ -25,6 +25,7 @@ import type {
   QueryParams,
   RequestOptions,
   CacheableHelperOptions,
+  FinraCacheTtls,
 } from './types';
 import { ApiRequestError, FinraRequestError, NoopRateLimiter } from './types';
 
@@ -62,6 +63,7 @@ export class FinraClient {
   private readonly logger?: Logger;
   private readonly metrics?: MetricsSink;
   private readonly transport: HttpTransport;
+  private readonly defaultCacheTtls?: FinraCacheTtls;
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
 
@@ -78,6 +80,7 @@ export class FinraClient {
     this.logger = config.logger;
     this.metrics = config.metrics;
     this.transport = config.transport ?? ((url, init) => fetch(url, init));
+    this.defaultCacheTtls = config.defaultCacheTtls;
   }
 
   // ==========================================================================
@@ -236,6 +239,19 @@ export class FinraClient {
     }
   }
 
+  private resolveCacheOptions(
+    options: CacheableHelperOptions | undefined,
+    defaultTtl?: number,
+  ): CacheableHelperOptions | undefined {
+    if (options?.cacheTtlMs !== undefined) {
+      return options;
+    }
+    if (defaultTtl === undefined) {
+      return options;
+    }
+    return { ...(options ?? {}), cacheTtlMs: defaultTtl };
+  }
+
   /**
    * Fetch dataset with automatic pagination
    *
@@ -297,6 +313,7 @@ export class FinraClient {
     const method = (options.method ?? 'GET').toUpperCase();
     const url = this.buildUrl(path, options.params);
     const endpoint = path;
+    const operation = options.operation ?? endpoint;
     const timeout = options.timeoutMs ?? this.timeoutMs;
     const effectiveTimeout = timeout > 0 ? timeout : undefined;
 
@@ -314,19 +331,27 @@ export class FinraClient {
     if (cacheEligible && cacheKey) {
       const cached = await this.cache!.get<T>(cacheKey);
       if (cached !== undefined) {
-        await this.metrics?.recordRequest({
-          endpoint,
-          method,
+        await this.metrics?.recordRequest?.({
+          client: 'finra',
+          operation,
           durationMs: 0,
           status: 200,
-          retries: 0,
           cacheHit: true,
+          attempt: 0,
         });
         return cached;
       }
     }
 
-    const { params: _p, cacheTtlMs, timeoutMs, body, cacheKey: _cacheKey, ...rest } = options;
+    const {
+      params: _p,
+      cacheTtlMs,
+      timeoutMs,
+      body,
+      cacheKey: _cacheKey,
+      operation: _operation,
+      ...rest
+    } = options;
     const init: RequestInit = {
       ...rest,
       method,
@@ -351,7 +376,7 @@ export class FinraClient {
             body,
             retryAfterMs,
           );
-          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          await this.handleFailure(key, error, endpoint, operation, start, attempt);
 
           if (!this.shouldRetry(error.status) || attempt === this.maxRetries) {
             (error as InternalApiError).__handled = true;
@@ -366,16 +391,16 @@ export class FinraClient {
         await this.rateLimiter.onSuccess?.(key);
         await this.circuitBreaker?.onSuccess?.(key);
 
-        await this.metrics?.recordRequest({
-          endpoint,
-          method,
+        await this.metrics?.recordRequest?.({
+          client: 'finra',
+          operation,
           durationMs: Date.now() - start,
           status: response.status,
-          retries: attempt,
           cacheHit: false,
+          attempt,
         });
 
-        if (cacheEligible && cacheKey) {
+        if (cacheEligible && cacheKey && cacheTtlMs) {
           await this.cache!.set(cacheKey, data, cacheTtlMs);
         }
 
@@ -389,7 +414,7 @@ export class FinraClient {
             );
 
         if (!error.__handled) {
-          await this.handleFailure(key, error, endpoint, method, start, attempt);
+          await this.handleFailure(key, error, endpoint, operation, start, attempt);
           error.__handled = true;
         }
 
@@ -511,19 +536,19 @@ export class FinraClient {
     key: string,
     error: ApiRequestError,
     endpoint: string,
-    method: string,
+    operation: string,
     start: number,
     attempt: number,
   ): Promise<void> {
     await this.rateLimiter.onError?.(key, error);
     await this.circuitBreaker?.onFailure?.(key, error);
-    await this.metrics?.recordRequest({
-      endpoint,
-      method,
+    await this.metrics?.recordRequest?.({
+      client: 'finra',
+      operation,
       durationMs: Date.now() - start,
       status: error.status,
-      retries: attempt,
       cacheHit: false,
+      attempt,
     });
   }
 
@@ -558,12 +583,16 @@ export class FinraClient {
     request: FinraPostRequest,
     options?: CacheableHelperOptions,
   ): Promise<WeeklySummaryRecord[]> {
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.weeklySummaryMs,
+    );
     return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummary',
       request,
       true,
-      options,
+      cacheOptions,
     );
   }
 
@@ -606,12 +635,17 @@ export class FinraClient {
       }
     }
 
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.weeklySummaryHistoricMs,
+    );
+
     return this.fetchDatasetPaginated<WeeklySummaryRecord>(
       'otcMarket',
       'weeklySummaryHistoric',
       request,
       true,
-      options,
+      cacheOptions,
     );
   }
 
@@ -715,6 +749,11 @@ export class FinraClient {
       });
     }
 
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.consolidatedShortInterestMs,
+    );
+
     return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>(
       'otcMarket',
       'consolidatedShortInterest',
@@ -723,7 +762,7 @@ export class FinraClient {
         limit,
       },
       true,
-      options,
+      cacheOptions,
     );
   }
 
@@ -762,6 +801,11 @@ export class FinraClient {
       fieldValue: endDate,
     });
 
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.consolidatedShortInterestMs,
+    );
+
     return this.fetchDatasetPaginated<ConsolidatedShortInterestRecord>(
       'otcMarket',
       'consolidatedShortInterest',
@@ -770,7 +814,7 @@ export class FinraClient {
         limit: limitPerCall,
       },
       true,
-      options,
+      cacheOptions,
     );
   }
 
@@ -816,6 +860,11 @@ export class FinraClient {
       });
     }
 
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.regShoDailyMs,
+    );
+
     return this.fetchDatasetPaginated<RegShoDailyRecord>(
       'otcMarket',
       'regShoDaily',
@@ -824,7 +873,7 @@ export class FinraClient {
         limit,
       },
       true,
-      options,
+      cacheOptions,
     );
   }
 
@@ -870,6 +919,11 @@ export class FinraClient {
       });
     }
 
+    const cacheOptions = this.resolveCacheOptions(
+      options,
+      this.defaultCacheTtls?.thresholdListMs,
+    );
+
     return this.fetchDatasetPaginated<ThresholdListRecord>(
       'otcMarket',
       'thresholdList',
@@ -878,7 +932,7 @@ export class FinraClient {
         limit,
       },
       true,
-      options,
+      cacheOptions,
     );
   }
 

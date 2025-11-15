@@ -15,7 +15,15 @@ export function createUnusualWhalesClient(): UnusualWhalesClient {
       failOpen: true,
     });
     const cache = new RedisApiCache({ namespace: 'uw', failOpen: true });
-    cachedClient = createUnusualWhalesClientFromEnv({ rateLimiter, cache });
+    cachedClient = createUnusualWhalesClientFromEnv({
+      rateLimiter,
+      cache,
+      defaultCacheTtls: {
+        seasonalityMs: 60 * 60 * 1000,
+        exposureMs: 5 * 60 * 1000,
+        ohlcHistoricalMs: 5 * 60 * 1000,
+      },
+    });
   }
 
   return cachedClient;

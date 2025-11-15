@@ -15,7 +15,18 @@ export function getFinraClient(): FinraClient {
       failOpen: true,
     });
     const cache = new RedisApiCache({ namespace: 'finra', failOpen: true });
-    cachedClient = createFinraClient({ rateLimiter, cache });
+    cachedClient = createFinraClient({
+      rateLimiter,
+      cache,
+      defaultCacheTtls: {
+        // Weekly summary data is published once per week; cache for 30 minutes to reduce churn.
+        weeklySummaryMs: 30 * 60_000,
+        weeklySummaryHistoricMs: 6 * 60 * 60_000,
+        consolidatedShortInterestMs: 12 * 60 * 60_000,
+        regShoDailyMs: 30 * 60_000,
+        thresholdListMs: 30 * 60_000,
+      },
+    });
   }
   return cachedClient;
 }

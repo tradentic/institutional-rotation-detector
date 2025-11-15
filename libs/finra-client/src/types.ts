@@ -1,3 +1,12 @@
+import type {
+  CircuitBreaker as CoreCircuitBreaker,
+  HttpCache,
+  HttpRateLimiter,
+  HttpTransport as CoreHttpTransport,
+  Logger as CoreLogger,
+  MetricsSink as CoreMetricsSink,
+} from '@libs/http-client-core';
+
 /**
  * FINRA API Client Types
  *
@@ -20,11 +29,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-export interface RateLimiter {
-  throttle(key?: string): Promise<void>;
-  onSuccess?(key?: string): void | Promise<void>;
-  onError?(key: string | undefined, error: ApiRequestError): void | Promise<void>;
-}
+export interface RateLimiter extends HttpRateLimiter {}
 
 export class NoopRateLimiter implements RateLimiter {
   async throttle(): Promise<void> {
@@ -35,14 +40,10 @@ export class NoopRateLimiter implements RateLimiter {
   onSuccess?(): void {}
 
   // eslint-disable-next-line @typescript-eslint/no-empty-function
-  onError?(): void {}
+  onError?(_key?: string, _error?: unknown): void {}
 }
 
-export interface Cache {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void>;
-  delete?(key: string): Promise<void>;
-}
+export interface Cache extends HttpCache {}
 
 export class InMemoryCache implements Cache {
   private store = new Map<string, { value: unknown; expiresAt?: number }>();
@@ -59,7 +60,7 @@ export class InMemoryCache implements Cache {
     return entry.value as T;
   }
 
-  async set<T = unknown>(key: string, value: T, ttlMs?: number): Promise<void> {
+  async set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void> {
     const expiresAt = ttlMs ? Date.now() + ttlMs : undefined;
     this.store.set(key, { value, expiresAt });
   }
@@ -69,33 +70,13 @@ export class InMemoryCache implements Cache {
   }
 }
 
-export interface CircuitBreaker {
-  beforeRequest(key?: string): Promise<void>;
-  onSuccess(key?: string): void | Promise<void>;
-  onFailure(key: string | undefined, err: ApiRequestError): void | Promise<void>;
-}
+export interface CircuitBreaker extends CoreCircuitBreaker {}
 
-export interface Logger {
-  debug?(msg: string, meta?: unknown): void;
-  info?(msg: string, meta?: unknown): void;
-  warn?(msg: string, meta?: unknown): void;
-  error?(msg: string, meta?: unknown): void;
-}
+export interface Logger extends CoreLogger {}
 
-export interface MetricsSink {
-  recordRequest(options: {
-    endpoint: string;
-    method: string;
-    durationMs: number;
-    status: number;
-    retries: number;
-    cacheHit: boolean;
-  }): void | Promise<void>;
-}
+export interface MetricsSink extends CoreMetricsSink {}
 
-export interface HttpTransport {
-  (url: string, init: RequestInit): Promise<Response>;
-}
+export type HttpTransport = CoreHttpTransport;
 
 export type QueryParams = Record<string, string | number | boolean | string[] | number[]>;
 
@@ -106,10 +87,19 @@ export interface RequestOptions extends Omit<RequestInit, 'body' | 'method'> {
   cacheTtlMs?: number;
   cacheKey?: string;
   timeoutMs?: number;
+  operation?: string;
 }
 
 export interface CacheableHelperOptions {
   cacheTtlMs?: number;
+}
+
+export interface FinraCacheTtls {
+  weeklySummaryMs?: number;
+  weeklySummaryHistoricMs?: number;
+  consolidatedShortInterestMs?: number;
+  regShoDailyMs?: number;
+  thresholdListMs?: number;
 }
 
 export interface FinraClientConfig {
@@ -127,6 +117,7 @@ export interface FinraClientConfig {
   logger?: Logger;
   metrics?: MetricsSink;
   transport?: HttpTransport;
+  defaultCacheTtls?: FinraCacheTtls;
 }
 
 // ============================================================================

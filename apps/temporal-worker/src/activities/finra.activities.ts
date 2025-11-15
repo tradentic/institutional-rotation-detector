@@ -185,13 +185,7 @@ export async function seedCusipMappings(cik: string, cusips: string[]): Promise<
 }
 
 function normalizeRows(rows: Record<string, unknown>[]): NormalizedRow[] {
-  return rows.map((row) => {
-    const normalized = new Map<string, unknown>();
-    for (const [key, value] of Object.entries(row)) {
-      normalized.set(key.toLowerCase(), value);
-    }
-    return normalized;
-  });
+  return rows.map(createNormalizedRow);
 }
 
 export async function fetchShortInterest(cik: string, dateRange: { start: string; end: string }): Promise<number> {
@@ -537,7 +531,7 @@ export async function planFinraShortInterest(
 
 export interface FinraOtcWeeklyInput {
   symbols?: string[];
-  weekEnd: string;
+  weekEnd: string; // Week ending date (Friday) used for storage/search attributes
   source: OffExSource; // 'ATS' | 'NON_ATS'
 }
 
@@ -584,6 +578,17 @@ function extractVenueId(row: NormalizedRow, source: OffExSource): string | null 
   }
 }
 
+function getFinraWeekStartDate(date: string): string {
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid FINRA week date: ${date}`);
+  }
+  const offset = (parsed.getUTCDay() + 6) % 7;
+  const monday = new Date(parsed);
+  monday.setUTCDate(parsed.getUTCDate() - offset);
+  return monday.toISOString().slice(0, 10);
+}
+
 /**
  * Fetch and parse FINRA OTC Transparency weekly data (ATS or non-ATS)
  *
@@ -593,17 +598,19 @@ function extractVenueId(row: NormalizedRow, source: OffExSource): string | null 
 export async function fetchOtcWeeklyVenue(input: FinraOtcWeeklyInput): Promise<FinraOtcWeeklyResult> {
   const supabase = createSupabaseClient();
   const finra = getFinraClient();
+  const weekStartDate = getFinraWeekStartDate(input.weekEnd);
 
   // Fetch dataset from FINRA
   // Note: FINRA OTC Transparency uses weeklySummary dataset
   // Filter by summaryTypeCode: ATS_W_SMBL for ATS, OTC_W_SMBL for OTC
+  // FINRA queries require weekStartDate (Monday) even though we persist week_end (Friday)
   const summaryTypeCode = input.source === 'ATS' ? 'ATS_W_SMBL' : 'OTC_W_SMBL';
   const dataset = await finra.queryWeeklySummary({
     compareFilters: [
       {
         compareType: 'EQUAL',
         fieldName: 'weekStartDate',
-        fieldValue: input.weekEnd,
+        fieldValue: weekStartDate,
       },
       {
         compareType: 'EQUAL',
