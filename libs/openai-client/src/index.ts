@@ -47,6 +47,7 @@ export { createClient, type ClientConfig } from './factory';
 export {
   OpenAiClient,
   createOpenAiClientFromEnv,
+  ApiRequestError,
   ApiRequestError as OpenAiApiRequestError,
   OpenAiRequestError,
   InMemoryCache as OpenAiInMemoryCache,
@@ -55,11 +56,17 @@ export {
 
 export type {
   OpenAiClientConfig,
+  RateLimiter,
   RateLimiter as OpenAiRateLimiter,
+  Cache,
   Cache as OpenAiCache,
+  CircuitBreaker,
   CircuitBreaker as OpenAiCircuitBreaker,
+  Logger,
   Logger as OpenAiLogger,
+  MetricsSink,
   MetricsSink as OpenAiMetricsSink,
+  HttpTransport,
   HttpTransport as OpenAiHttpTransport,
   OpenAiResponsesRequest,
   OpenAiResponsesResult,

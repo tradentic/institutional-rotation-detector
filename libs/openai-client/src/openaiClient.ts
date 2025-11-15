@@ -15,16 +15,14 @@ import {
   NoopRateLimiter,
   OpenAiHttpClient,
 } from './httpClient';
-import {
-  ApiRequestError,
-  OpenAiRequestError,
-  type OpenAiCacheTtls,
-  type OpenAiClientConfig,
-  type OpenAiFileListResponse,
-  type OpenAiModelDescription,
-  type OpenAiModelListResponse,
-  type OpenAiResponsesRequest,
-  type OpenAiResponsesResult,
+import type {
+  OpenAiCacheTtls,
+  OpenAiClientConfig,
+  OpenAiFileListResponse,
+  OpenAiModelDescription,
+  OpenAiModelListResponse,
+  OpenAiResponsesRequest,
+  OpenAiResponsesResult,
 } from './types';
 export type {
   HttpRateLimiter as RateLimiter,

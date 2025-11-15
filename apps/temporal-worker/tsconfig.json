@@ -3,23 +3,25 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "baseUrl": ".",
+    "baseUrl": "./",
     "paths": {
-      "@libs/*": ["../../libs/*/src"]
+      "@libs/finra-client": ["../../libs/finra-client/src"],
+      "@libs/openai-client": ["../../libs/openai-client/src"],
+      "@libs/unusualwhales-client": ["../../libs/unusualwhales-client/src"]
     },
     "outDir": "dist",
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals"],
-    "baseUrl": "./",
-    "paths": {
-      "@libs/finra-client": ["../../libs/finra-client/src"],
-      "@libs/openai-client": ["../../libs/openai-client/src"],
-      "@libs/unusualwhales-client": ["../../libs/unusualwhales-client/src"]
-    }
+    "types": ["vitest/globals"]
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/__tests__"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/__tests__",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ]
 }
