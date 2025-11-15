@@ -443,10 +443,10 @@ describe('HttpClient v0.4', () => {
     const client = createClient({ transport, rateLimiter });
 
     const agentContext = {
-      correlationId: 'corr-123',
-      parentCorrelationId: 'corr-parent',
-      source: 'test-runner',
-      attributes: { shard: 1 },
+      agent: 'test-runner',
+      runId: 'run-1',
+      labels: { shard: '1' },
+      metadata: { region: 'iad' },
     };
 
     await client.requestJson({
@@ -475,10 +475,10 @@ describe('HttpClient v0.4', () => {
     const client = createClient({ transport, tracing });
 
     const agentContext = {
-      correlationId: 'corr-child',
-      parentCorrelationId: 'corr-parent',
-      source: 'worker',
-      attributes: { tier: 'experiment' },
+      agent: 'worker',
+      runId: 'run-42',
+      labels: { tier: 'experiment' },
+      metadata: { foo: 'bar' },
     };
     const extensions = { llm: { provider: 'openai', model: 'gpt' } };
 
@@ -505,7 +505,58 @@ describe('HttpClient v0.4', () => {
       'test-client.telemetry.test',
       expect.objectContaining({ agentContext, extensions }),
     );
+    const spanOptions = (tracing.startSpan as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'test-client.telemetry.test',
+    )?.[1];
+    expect(spanOptions?.attributes).toMatchObject({
+      'agent.name': 'worker',
+      'agent.run_id': 'run-42',
+      'agent.label.tier': 'experiment',
+    });
     expect(span.end).toHaveBeenCalled();
+  });
+
+  it('propagates correlation identifiers into telemetry channels', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const span: TracingSpan = { setAttribute: vi.fn(), recordException: vi.fn(), end: vi.fn() };
+    const tracing: TracingAdapter = { startSpan: vi.fn().mockReturnValue(span) };
+    const client = createClient({ transport, tracing });
+
+    await client.requestJson({
+      method: 'GET',
+      path: '/corr',
+      operation: 'corr.test',
+      requestId: 'req-123',
+      correlationId: 'corr-123',
+      parentCorrelationId: 'corr-root',
+    });
+
+    const successCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'http.request.success',
+    );
+    expect(successCall?.[1]).toMatchObject({
+      requestId: 'req-123',
+      correlationId: 'corr-123',
+      parentCorrelationId: 'corr-root',
+    });
+
+    const metricsCall = (metrics.recordRequest as ReturnType<typeof vi.fn>).mock.calls.find(([info]) =>
+      (info as MetricsRequestInfo).operation === 'corr.test',
+    ) as [MetricsRequestInfo];
+    expect(metricsCall[0]).toMatchObject({
+      requestId: 'req-123',
+      correlationId: 'corr-123',
+      parentCorrelationId: 'corr-root',
+    });
+
+    const spanOptions = (tracing.startSpan as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'test-client.corr.test',
+    )?.[1];
+    expect(spanOptions?.attributes).toMatchObject({
+      requestId: 'req-123',
+      correlation_id: 'corr-123',
+      parent_correlation_id: 'corr-root',
+    });
   });
 
   it('invokes tracing adapter spans', async () => {

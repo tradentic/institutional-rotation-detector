@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.1",
+    "@tradentic/resilient-http-core": "workspace:*",
     "@libs/finra-client": "workspace:*",
     "@libs/openai-client": "workspace:*",
     "@libs/unusualwhales-client": "workspace:*",

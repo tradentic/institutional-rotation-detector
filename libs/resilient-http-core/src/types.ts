@@ -8,24 +8,24 @@ export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' |
 
 export interface AgentContext {
   /**
-   * High-level correlation identifier for the caller (e.g. workflow, job, task).
+   * Logical name/identifier of the calling agent, component, or workflow.
    */
-  correlationId?: string;
+  agent?: string;
 
   /**
-   * Optional parent correlation identifier for hierarchical workflows.
+   * Stable identifier for the current agent run / job / workflow.
    */
-  parentCorrelationId?: string;
+  runId?: string;
 
   /**
-   * Short label describing the source of the call (e.g. worker name).
+   * Low-cardinality tags describing this agent run.
    */
-  source?: string;
+  labels?: Record<string, string>;
 
   /**
-   * Free-form attributes for generic tagging across telemetry systems.
+   * Opaque metadata bag for agent frameworks and higher-level tooling.
    */
-  attributes?: Record<string, string | number | boolean>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface HttpRequestBudget {
@@ -39,6 +39,8 @@ export interface RateLimiterContext {
   operation: string;
   attempt: number;
   requestId?: string;
+  correlationId?: string;
+  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
   [key: string]: unknown;
@@ -57,6 +59,9 @@ export interface CircuitBreaker {
 }
 
 export type LoggerMeta = Record<string, unknown> & {
+  requestId?: string;
+  correlationId?: string;
+  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
 };
@@ -95,6 +100,8 @@ export interface MetricsRequestInfo {
   cacheHit?: boolean;
   errorCategory?: ErrorCategory;
   requestId?: string;
+  correlationId?: string;
+  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
 }
@@ -139,6 +146,8 @@ export interface PolicyContext {
   client: string;
   operation: string;
   requestId?: string;
+  correlationId?: string;
+  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
 }
@@ -184,9 +193,11 @@ export interface HttpRequestOptions {
   cacheKey?: string;
   cacheTtlMs?: number;
   budget?: HttpRequestBudget;
+  requestId?: string;
+  correlationId?: string;
+  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
-  requestId?: string;
   pageSize?: number;
   pageOffset?: number;
 }

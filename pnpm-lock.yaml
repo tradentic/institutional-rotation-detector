@@ -126,6 +126,9 @@ importers:
       '@temporalio/client':
         specifier: ^1.13.2
         version: 1.13.2
+      '@tradentic/resilient-http-core':
+        specifier: workspace:*
+        version: link:../../libs/resilient-http-core
       fast-xml-parser:
         specifier: ^5.3.1
         version: 5.3.1
@@ -175,6 +178,9 @@ importers:
       '@temporalio/workflow':
         specifier: ^1.13.2
         version: 1.13.2
+      '@tradentic/resilient-http-core':
+        specifier: workspace:*
+        version: link:../../libs/resilient-http-core
       decimal.js:
         specifier: ^10.6.0
         version: 10.6.0

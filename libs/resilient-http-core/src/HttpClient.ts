@@ -68,6 +68,8 @@ export class HttpClient {
             cacheHit: true,
             attempt: 0,
             requestId: preparedOpts.requestId,
+            correlationId: preparedOpts.correlationId,
+            parentCorrelationId: preparedOpts.parentCorrelationId,
             agentContext: preparedOpts.agentContext,
             extensions: preparedOpts.extensions,
           });
@@ -159,19 +161,23 @@ export class HttpClient {
       requestId: opts.requestId ?? null,
     };
 
+    if (opts.correlationId) {
+      attributes['correlation_id'] = opts.correlationId;
+    }
+    if (opts.parentCorrelationId) {
+      attributes['parent_correlation_id'] = opts.parentCorrelationId;
+    }
+
     const agentContext = opts.agentContext;
-    if (agentContext?.correlationId) {
-      attributes['agent.correlation_id'] = agentContext.correlationId;
+    if (agentContext?.agent) {
+      attributes['agent.name'] = agentContext.agent;
     }
-    if (agentContext?.parentCorrelationId) {
-      attributes['agent.parent_correlation_id'] = agentContext.parentCorrelationId;
+    if (agentContext?.runId) {
+      attributes['agent.run_id'] = agentContext.runId;
     }
-    if (agentContext?.source) {
-      attributes['agent.source'] = agentContext.source;
-    }
-    if (agentContext?.attributes) {
-      for (const [key, value] of Object.entries(agentContext.attributes)) {
-        attributes[`agent.attr.${key}`] = value;
+    if (agentContext?.labels) {
+      for (const [key, value] of Object.entries(agentContext.labels)) {
+        attributes[`agent.label.${key}`] = value;
       }
     }
 
@@ -214,6 +220,8 @@ export class HttpClient {
               client: this.clientName,
               operation: attemptOpts.operation,
               requestId: attemptOpts.requestId,
+              correlationId: attemptOpts.correlationId,
+              parentCorrelationId: attemptOpts.parentCorrelationId,
               agentContext: attemptOpts.agentContext,
               extensions: attemptOpts.extensions,
             })
@@ -236,6 +244,8 @@ export class HttpClient {
           status: result.status,
           attempt,
           requestId: attemptOpts.requestId,
+          correlationId: attemptOpts.correlationId,
+          parentCorrelationId: attemptOpts.parentCorrelationId,
           agentContext: attemptOpts.agentContext,
           extensions: attemptOpts.extensions,
         });
@@ -258,6 +268,8 @@ export class HttpClient {
           status,
           attempt,
           requestId: attemptOpts.requestId,
+          correlationId: attemptOpts.correlationId,
+          parentCorrelationId: attemptOpts.parentCorrelationId,
           errorCategory: category,
           agentContext: attemptOpts.agentContext,
           extensions: attemptOpts.extensions,
@@ -552,6 +564,8 @@ export class HttpClient {
       operation: opts.operation,
       attempt,
       requestId: opts.requestId,
+      correlationId: opts.correlationId,
+      parentCorrelationId: opts.parentCorrelationId,
       agentContext: opts.agentContext,
       extensions: opts.extensions,
     };
@@ -570,7 +584,10 @@ export class HttpClient {
   }
 
   private baseLogMeta(
-    opts: Pick<HttpRequestOptions, 'operation' | 'method' | 'path' | 'requestId' | 'agentContext' | 'extensions'>,
+    opts: Pick<
+      HttpRequestOptions,
+      'operation' | 'method' | 'path' | 'requestId' | 'correlationId' | 'parentCorrelationId' | 'agentContext' | 'extensions'
+    >,
   ) {
     return {
       client: this.clientName,
@@ -578,6 +595,8 @@ export class HttpClient {
       method: opts.method,
       path: opts.path,
       requestId: opts.requestId,
+      correlationId: opts.correlationId,
+      parentCorrelationId: opts.parentCorrelationId,
       agentContext: opts.agentContext,
       extensions: opts.extensions,
     };
