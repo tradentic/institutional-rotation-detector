@@ -7,6 +7,7 @@ import type {
   HttpTransport,
   Logger,
   MetricsRequestInfo,
+  OperationDefaults,
   RateLimiterContext,
   ResponseClassification,
 } from './types';
@@ -30,27 +31,28 @@ interface AttemptSuccess<T> {
 }
 
 export class HttpClient {
-  private readonly baseUrl: string;
+  private readonly baseUrl?: string;
   private readonly clientName: string;
-  private readonly timeoutMs: number;
-  private readonly maxRetries: number;
+  private readonly defaultTimeoutMs: number;
+  private readonly defaultMaxRetries: number;
   private readonly transport: HttpTransport;
   private readonly logger?: Logger;
 
   constructor(private readonly config: BaseHttpClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '') || config.baseUrl;
+    this.baseUrl = this.normalizeBaseUrl(config.baseUrl);
     this.clientName = config.clientName;
-    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.defaultTimeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.defaultMaxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.transport = config.transport ?? fetchTransport;
     this.logger = config.logger;
   }
 
   async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
-    const span = this.startSpan(opts);
+    const preparedOpts = this.prepareRequestOptions(opts);
+    const span = this.startSpan(preparedOpts);
     const cache = this.config.cache;
-    const cacheKey = opts.cacheKey;
-    const cacheTtlMs = opts.cacheTtlMs ?? 0;
+    const cacheKey = preparedOpts.cacheKey;
+    const cacheTtlMs = preparedOpts.cacheTtlMs ?? 0;
 
     if (cache && cacheKey && cacheTtlMs > 0) {
       try {
@@ -58,35 +60,35 @@ export class HttpClient {
         if (cached !== undefined) {
           await this.recordMetrics({
             client: this.clientName,
-            operation: opts.operation,
+            operation: preparedOpts.operation,
             durationMs: 0,
             status: 200,
             cacheHit: true,
             attempt: 0,
-            requestId: opts.requestId,
+            requestId: preparedOpts.requestId,
           });
-          this.logger?.debug('http.cache.hit', this.baseLogMeta(opts));
+          this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
           span?.end();
           return cached;
         }
       } catch (error) {
         this.logger?.warn('http.cache.get.error', {
-          ...this.baseLogMeta(opts),
+          ...this.baseLogMeta(preparedOpts),
           error: error instanceof Error ? error.message : error,
         });
       }
     }
 
     try {
-      const result = await this.executeWithRetries<T>(opts, {
+      const result = await this.executeWithRetries<T>(preparedOpts, {
         parseJson: true,
-        allowRetries: opts.idempotent ?? ['GET', 'HEAD'].includes(opts.method),
+        allowRetries: this.getIdempotent(preparedOpts),
       });
 
       if (cache && cacheKey && cacheTtlMs > 0) {
         Promise.resolve(cache.set(cacheKey, result, cacheTtlMs)).catch((error) =>
           this.logger?.warn('http.cache.set.error', {
-            ...this.baseLogMeta(opts),
+            ...this.baseLogMeta(preparedOpts),
             error: error instanceof Error ? error.message : error,
           }),
         );
@@ -102,9 +104,10 @@ export class HttpClient {
   }
 
   async requestRaw(opts: HttpRequestOptions): Promise<Response> {
-    const span = this.startSpan(opts);
+    const preparedOpts = this.prepareRequestOptions(opts);
+    const span = this.startSpan(preparedOpts);
     try {
-      const response = await this.executeWithRetries<Response>(opts, {
+      const response = await this.executeWithRetries<Response>(preparedOpts, {
         parseJson: false,
         allowRetries: false,
         maxAttemptsOverride: 1,
@@ -131,7 +134,7 @@ export class HttpClient {
   private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<T> {
     const url = this.buildUrl(opts);
     const baseAttempts =
-      executeOptions.maxAttemptsOverride ?? opts.budget?.maxAttempts ?? this.maxRetries + 1;
+      executeOptions.maxAttemptsOverride ?? opts.budget?.maxAttempts ?? this.getMaxRetries(opts) + 1;
     const maxAttempts = executeOptions.allowRetries ? Math.max(baseAttempts, 1) : 1;
     const rateLimitKey = `${this.clientName}:${opts.operation}`;
     const deadline =
@@ -139,6 +142,7 @@ export class HttpClient {
         ? Date.now() + opts.budget.maxTotalDurationMs
         : undefined;
     let lastError: unknown;
+    const idempotent = this.getIdempotent(opts);
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const attemptContext = this.createRateLimiterContext(opts, attempt);
@@ -188,6 +192,7 @@ export class HttpClient {
           status: result.status,
           durationMs,
         });
+        await this.config.afterResponse?.(result.response, opts);
         return result.value;
       } catch (error) {
         lastError = error;
@@ -211,9 +216,7 @@ export class HttpClient {
         );
 
         const retryable =
-          executeOptions.allowRetries &&
-          attempt < maxAttempts &&
-          this.shouldRetry(error, opts.idempotent ?? ['GET', 'HEAD'].includes(opts.method));
+          executeOptions.allowRetries && attempt < maxAttempts && this.shouldRetry(error, idempotent);
         const failureMeta = {
           ...logMeta,
           status,
@@ -251,7 +254,7 @@ export class HttpClient {
     await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
     await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
 
-    const timeoutMs = this.computeAttemptTimeout(deadline);
+    const timeoutMs = this.computeAttemptTimeout(opts, deadline);
     const controller = new AbortController();
     let didTimeout = false;
     const timeoutHandle = setTimeout(() => {
@@ -307,9 +310,24 @@ export class HttpClient {
   }
 
   private buildUrl(opts: HttpRequestOptions): string {
-    const base = this.baseUrl.endsWith('/') ? this.baseUrl : `${this.baseUrl}/`;
+    if (this.isAbsoluteUrl(opts.path)) {
+      const url = new URL(opts.path);
+      this.applyQueryParameters(url, opts);
+      return url.toString();
+    }
+
+    const base = this.resolveBaseUrlForRequest(opts);
+    if (!base) {
+      throw new Error('No baseUrl provided and request path is not an absolute URL');
+    }
+    const normalizedBase = base.endsWith('/') ? base : `${base}/`;
     const path = opts.path.startsWith('/') ? opts.path.slice(1) : opts.path;
-    const url = new URL(path, base);
+    const url = new URL(path, normalizedBase);
+    this.applyQueryParameters(url, opts);
+    return url.toString();
+  }
+
+  private applyQueryParameters(url: URL, opts: HttpRequestOptions) {
     if (opts.query) {
       for (const [key, value] of Object.entries(opts.query)) {
         if (value === undefined) continue;
@@ -328,7 +346,69 @@ export class HttpClient {
     if (opts.pageOffset !== undefined) {
       url.searchParams.set('offset', String(opts.pageOffset));
     }
-    return url.toString();
+  }
+
+  private resolveBaseUrlForRequest(opts: HttpRequestOptions): string | undefined {
+    const resolved = this.normalizeBaseUrl(this.config.resolveBaseUrl?.(opts));
+    return resolved ?? this.baseUrl;
+  }
+
+  private isAbsoluteUrl(path: string): boolean {
+    try {
+      new URL(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private normalizeBaseUrl(value?: string): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    return trimmed.replace(/\/+$/, '') || trimmed;
+  }
+
+  private prepareRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
+    let effective: HttpRequestOptions = {
+      ...opts,
+      headers: opts.headers ? { ...opts.headers } : undefined,
+      query: opts.query ? { ...opts.query } : undefined,
+    };
+    if (this.config.beforeRequest) {
+      const modified = this.config.beforeRequest(effective);
+      if (modified) {
+        effective = { ...effective, ...modified };
+      }
+    }
+    return effective;
+  }
+
+  private getOperationDefaults(opts: HttpRequestOptions): OperationDefaults | undefined {
+    return this.config.operationDefaults?.[opts.operation];
+  }
+
+  private getTimeoutMs(opts: HttpRequestOptions): number {
+    return this.getOperationDefaults(opts)?.timeoutMs ?? this.defaultTimeoutMs;
+  }
+
+  private getMaxRetries(opts: HttpRequestOptions): number {
+    return this.getOperationDefaults(opts)?.maxRetries ?? this.defaultMaxRetries;
+  }
+
+  private getIdempotent(opts: HttpRequestOptions): boolean {
+    if (opts.idempotent !== undefined) {
+      return opts.idempotent;
+    }
+    const opDefaults = this.getOperationDefaults(opts);
+    if (opDefaults?.idempotent !== undefined) {
+      return opDefaults.idempotent;
+    }
+    return ['GET', 'HEAD'].includes(opts.method);
   }
 
   private buildHeaders(opts: HttpRequestOptions): Record<string, string> {
@@ -478,15 +558,16 @@ export class HttpClient {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private computeAttemptTimeout(deadline?: number): number {
+  private computeAttemptTimeout(opts: HttpRequestOptions, deadline?: number): number {
+    const timeoutMs = this.getTimeoutMs(opts);
     if (!deadline) {
-      return this.timeoutMs;
+      return timeoutMs;
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       throw new TimeoutError('Budget exceeded before request could start');
     }
-    return Math.min(this.timeoutMs, remaining);
+    return Math.min(timeoutMs, remaining);
   }
 
   private async classifyResponse(response: Response, bodyText?: string): Promise<ResponseClassification> {
