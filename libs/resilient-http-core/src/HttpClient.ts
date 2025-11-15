@@ -68,6 +68,8 @@ export class HttpClient {
             cacheHit: true,
             attempt: 0,
             requestId: preparedOpts.requestId,
+            agentContext: preparedOpts.agentContext,
+            extensions: preparedOpts.extensions,
           });
           this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
           span?.end();
@@ -149,12 +151,34 @@ export class HttpClient {
   }
 
   private startSpan(opts: HttpRequestOptions) {
-    return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
+    const attributes: Record<string, string | number | boolean | null> = {
       client: this.clientName,
       operation: opts.operation,
       method: opts.method,
       path: opts.path,
       requestId: opts.requestId ?? null,
+    };
+
+    const agentContext = opts.agentContext;
+    if (agentContext?.correlationId) {
+      attributes['agent.correlation_id'] = agentContext.correlationId;
+    }
+    if (agentContext?.parentCorrelationId) {
+      attributes['agent.parent_correlation_id'] = agentContext.parentCorrelationId;
+    }
+    if (agentContext?.source) {
+      attributes['agent.source'] = agentContext.source;
+    }
+    if (agentContext?.attributes) {
+      for (const [key, value] of Object.entries(agentContext.attributes)) {
+        attributes[`agent.attr.${key}`] = value;
+      }
+    }
+
+    return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
+      attributes,
+      agentContext,
+      extensions: opts.extensions,
     });
   }
 
@@ -191,6 +215,7 @@ export class HttpClient {
               operation: attemptOpts.operation,
               requestId: attemptOpts.requestId,
               agentContext: attemptOpts.agentContext,
+              extensions: attemptOpts.extensions,
             })
         : executeAttempt;
 
@@ -211,6 +236,8 @@ export class HttpClient {
           status: result.status,
           attempt,
           requestId: attemptOpts.requestId,
+          agentContext: attemptOpts.agentContext,
+          extensions: attemptOpts.extensions,
         });
         this.logger?.info('http.request.success', {
           ...logMeta,
@@ -232,6 +259,8 @@ export class HttpClient {
           attempt,
           requestId: attemptOpts.requestId,
           errorCategory: category,
+          agentContext: attemptOpts.agentContext,
+          extensions: attemptOpts.extensions,
         });
         await this.callOptionalHook('rateLimiter.onError', () =>
           this.config.rateLimiter?.onError?.(rateLimitKey, error, attemptContext),
@@ -454,7 +483,7 @@ export class HttpClient {
     if (opDefaults?.idempotent !== undefined) {
       return opDefaults.idempotent;
     }
-    return ['GET', 'HEAD'].includes(opts.method);
+    return opts.method === 'GET' || opts.method === 'HEAD' || opts.method === 'OPTIONS';
   }
 
   private buildHeaders(source?: Record<string, string | undefined>): Record<string, string> {
@@ -524,6 +553,7 @@ export class HttpClient {
       attempt,
       requestId: opts.requestId,
       agentContext: opts.agentContext,
+      extensions: opts.extensions,
     };
   }
 
@@ -539,13 +569,17 @@ export class HttpClient {
     }
   }
 
-  private baseLogMeta(opts: Pick<HttpRequestOptions, 'operation' | 'method' | 'path' | 'requestId'>) {
+  private baseLogMeta(
+    opts: Pick<HttpRequestOptions, 'operation' | 'method' | 'path' | 'requestId' | 'agentContext' | 'extensions'>,
+  ) {
     return {
       client: this.clientName,
       operation: opts.operation,
       method: opts.method,
       path: opts.path,
       requestId: opts.requestId,
+      agentContext: opts.agentContext,
+      extensions: opts.extensions,
     };
   }
 

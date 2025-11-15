@@ -4,11 +4,28 @@ export interface HttpCache {
   delete(key: string): Promise<void>;
 }
 
+export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
 export interface AgentContext {
-  agent?: string;
-  runId?: string;
-  labels?: Record<string, string>;
-  metadata?: Record<string, unknown>;
+  /**
+   * High-level correlation identifier for the caller (e.g. workflow, job, task).
+   */
+  correlationId?: string;
+
+  /**
+   * Optional parent correlation identifier for hierarchical workflows.
+   */
+  parentCorrelationId?: string;
+
+  /**
+   * Short label describing the source of the call (e.g. worker name).
+   */
+  source?: string;
+
+  /**
+   * Free-form attributes for generic tagging across telemetry systems.
+   */
+  attributes?: Record<string, string | number | boolean>;
 }
 
 export interface HttpRequestBudget {
@@ -23,6 +40,7 @@ export interface RateLimiterContext {
   attempt: number;
   requestId?: string;
   agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -38,7 +56,10 @@ export interface CircuitBreaker {
   onFailure(key: string, error: unknown): Promise<void>;
 }
 
-export type LoggerMeta = Record<string, unknown>;
+export type LoggerMeta = Record<string, unknown> & {
+  agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
+};
 
 export interface Logger {
   debug(message: string, meta?: LoggerMeta): void;
@@ -74,6 +95,8 @@ export interface MetricsRequestInfo {
   cacheHit?: boolean;
   errorCategory?: ErrorCategory;
   requestId?: string;
+  agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
 }
 
 export interface MetricsSink {
@@ -102,8 +125,14 @@ export interface TracingSpan {
   end(): void;
 }
 
+export interface TracingStartOptions {
+  attributes?: Record<string, string | number | boolean | null>;
+  agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
+}
+
 export interface TracingAdapter {
-  startSpan(name: string, attributes?: Record<string, string | number | boolean | null>): TracingSpan;
+  startSpan(name: string, options?: TracingStartOptions): TracingSpan;
 }
 
 export interface PolicyContext {
@@ -111,6 +140,7 @@ export interface PolicyContext {
   operation: string;
   requestId?: string;
   agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
 }
 
 export type PolicyWrapper = <T>(fn: () => Promise<T>, context: PolicyContext) => Promise<T>;
@@ -142,7 +172,7 @@ export interface BaseHttpClientConfig {
 }
 
 export interface HttpRequestOptions {
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
+  method: HttpMethod;
   path: string;
   operation: string;
   query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
@@ -155,6 +185,7 @@ export interface HttpRequestOptions {
   cacheTtlMs?: number;
   budget?: HttpRequestBudget;
   agentContext?: AgentContext;
+  extensions?: Record<string, unknown>;
   requestId?: string;
   pageSize?: number;
   pageOffset?: number;

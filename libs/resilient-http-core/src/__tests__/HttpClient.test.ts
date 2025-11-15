@@ -4,6 +4,7 @@ import type {
   HttpCache,
   HttpRateLimiter,
   Logger,
+  MetricsRequestInfo,
   MetricsSink,
   PolicyWrapper,
   ResponseClassifier,
@@ -18,7 +19,7 @@ const jsonResponse = (body: unknown, init?: ResponseInit) =>
     ...init,
   });
 
-describe('HttpClient v0.2', () => {
+describe('HttpClient v0.4', () => {
   let logger: Logger;
   let metrics: MetricsSink;
 
@@ -326,6 +327,22 @@ describe('HttpClient v0.2', () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
+  it('treats OPTIONS requests as idempotent by default', async () => {
+    vi.useFakeTimers();
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = createClient({ transport, maxRetries: 1 });
+
+    const promise = client.requestJson({ method: 'OPTIONS', path: '/capabilities', operation: 'options.test' });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it('applies operation-specific timeouts when scheduling attempts', async () => {
     const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
     const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
@@ -425,14 +442,70 @@ describe('HttpClient v0.2', () => {
     };
     const client = createClient({ transport, rateLimiter });
 
+    const agentContext = {
+      correlationId: 'corr-123',
+      parentCorrelationId: 'corr-parent',
+      source: 'test-runner',
+      attributes: { shard: 1 },
+    };
+
     await client.requestJson({
       method: 'GET',
       path: '/hooks',
       operation: 'hooks.test',
-      agentContext: { agent: 'tester' },
+      agentContext,
     });
 
-    expect(rateLimiter.throttle).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ agentContext: { agent: 'tester' } }));
+    expect(rateLimiter.throttle).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ agentContext }),
+    );
+  });
+
+  it('propagates agent context and extensions to telemetry sinks', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const span: TracingSpan = {
+      setAttribute: vi.fn(),
+      recordException: vi.fn(),
+      end: vi.fn(),
+    };
+    const tracing: TracingAdapter = {
+      startSpan: vi.fn().mockReturnValue(span),
+    };
+    const client = createClient({ transport, tracing });
+
+    const agentContext = {
+      correlationId: 'corr-child',
+      parentCorrelationId: 'corr-parent',
+      source: 'worker',
+      attributes: { tier: 'experiment' },
+    };
+    const extensions = { llm: { provider: 'openai', model: 'gpt' } };
+
+    await client.requestJson({
+      method: 'POST',
+      path: '/telemetry',
+      operation: 'telemetry.test',
+      agentContext,
+      extensions,
+    });
+
+    const successCall = (logger.info as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'http.request.success',
+    );
+    expect(successCall?.[1]).toMatchObject({ agentContext, extensions });
+
+    const metricsCall = (metrics.recordRequest as ReturnType<typeof vi.fn>).mock.calls.find(([info]) =>
+      (info as MetricsRequestInfo).operation === 'telemetry.test',
+    ) as [MetricsRequestInfo];
+    expect(metricsCall[0].agentContext).toEqual(agentContext);
+    expect(metricsCall[0].extensions).toBe(extensions);
+
+    expect(tracing.startSpan).toHaveBeenCalledWith(
+      'test-client.telemetry.test',
+      expect.objectContaining({ agentContext, extensions }),
+    );
+    expect(span.end).toHaveBeenCalled();
   });
 
   it('invokes tracing adapter spans', async () => {
