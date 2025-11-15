@@ -123,6 +123,31 @@ export class HttpClient {
     }
   }
 
+  /**
+   * Performs an HTTP request and resolves with the raw text body.
+   *
+   * This is a thin wrapper around {@link requestRaw}, so it inherits the same
+   * retry, tracing, metrics, classification, and hook behaviour. Use it when an
+   * endpoint returns plain text (CSV, NDJSON, etc.).
+   */
+  async requestText(opts: HttpRequestOptions): Promise<string> {
+    const response = await this.requestRaw(opts);
+    return response.text();
+  }
+
+  /**
+   * Performs an HTTP request and resolves with an ArrayBuffer of the response
+   * body.
+   *
+   * Like {@link requestText}, this method simply delegates to
+   * {@link requestRaw} to ensure all resilience features apply consistently
+   * before decoding the payload into binary form.
+   */
+  async requestArrayBuffer(opts: HttpRequestOptions): Promise<ArrayBuffer> {
+    const response = await this.requestRaw(opts);
+    return response.arrayBuffer();
+  }
+
   private startSpan(opts: HttpRequestOptions) {
     return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
       client: this.clientName,
