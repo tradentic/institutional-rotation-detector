@@ -176,6 +176,36 @@ describe('HttpClient v0.2', () => {
     expect(transport).toHaveBeenCalledWith('https://alt.example.com/alt/data', expect.any(Object));
   });
 
+  it('uses resolveBaseUrl when no default baseUrl is configured', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const resolveBaseUrl = vi.fn(() => 'https://dynamic.example.com/api');
+    const client = createClient({ transport, resolveBaseUrl, baseUrl: undefined });
+
+    await client.requestJson({ method: 'GET', path: '/items', operation: 'resolver.dynamic' });
+
+    expect(resolveBaseUrl).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'resolver.dynamic', path: '/items' }),
+    );
+    expect(transport).toHaveBeenCalledWith(
+      'https://dynamic.example.com/api/items',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('falls back to the configured baseUrl when resolveBaseUrl returns undefined', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const resolveBaseUrl = vi.fn(() => undefined);
+    const client = createClient({ transport, resolveBaseUrl });
+
+    await client.requestJson({ method: 'GET', path: '/fallback', operation: 'resolver.fallback' });
+
+    expect(resolveBaseUrl).toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledWith(
+      'https://example.com/api/fallback',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
   it('allows absolute URLs without a configured baseUrl', async () => {
     const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
     const client = createClient({ transport, baseUrl: undefined });
@@ -225,6 +255,26 @@ describe('HttpClient v0.2', () => {
     );
   });
 
+  it('allows beforeRequest to override queries without mutating the original options', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const beforeRequest = vi.fn((request) => ({
+      ...request,
+      headers: { ...request.headers, 'X-Before': 'set' },
+      query: { ...(request.query ?? {}), extra: '1' },
+    }));
+    const client = createClient({ transport, beforeRequest });
+
+    const opts = { method: 'GET', path: '/override', operation: 'before.override', query: { initial: 'true' } } as const;
+    await client.requestJson(opts);
+
+    expect(beforeRequest).toHaveBeenCalledWith(expect.objectContaining({ query: { initial: 'true' } }));
+    expect(opts.query).toEqual({ initial: 'true' });
+    expect(transport).toHaveBeenCalledWith(
+      expect.stringContaining('extra=1'),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-Before': 'set' }) }),
+    );
+  });
+
   it('uses operation defaults to override retry behaviour', async () => {
     const transport = vi
       .fn()
@@ -255,6 +305,25 @@ describe('HttpClient v0.2', () => {
       client.requestJson({ method: 'GET', path: '/non-idem', operation: 'non.idempotent' }),
     ).rejects.toBeInstanceOf(HttpError);
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('can mark POST operations as idempotent to allow retries', async () => {
+    vi.useFakeTimers();
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = createClient({
+      transport,
+      operationDefaults: { 'post.retry': { idempotent: true, maxRetries: 1 } },
+    });
+
+    const promise = client.requestJson({ method: 'POST', path: '/retry-post', operation: 'post.retry' });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 
   it('applies operation-specific timeouts when scheduling attempts', async () => {
@@ -405,6 +474,21 @@ describe('HttpClient v0.2', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('applies operation default timeouts to requestText calls', async () => {
+    vi.useFakeTimers();
+    const transport = vi.fn().mockResolvedValue(new Response('ok', { status: 200 }));
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    const client = createClient({
+      transport,
+      timeoutMs: 1000,
+      operationDefaults: { 'text.timeout': { timeoutMs: 25 } },
+    });
+
+    await client.requestText({ method: 'GET', path: '/text-timeout', operation: 'text.timeout' });
+
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 25);
+  });
+
   it('returns binary bodies via requestArrayBuffer', async () => {
     const payload = new Uint8Array([1, 2, 3]).buffer;
     const response = new Response(payload, { status: 200 });
@@ -416,6 +500,20 @@ describe('HttpClient v0.2', () => {
     expect(buffer).toBeInstanceOf(ArrayBuffer);
     expect(new Uint8Array(buffer)).toEqual(new Uint8Array([1, 2, 3]));
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs afterResponse hooks for requestArrayBuffer calls', async () => {
+    const payload = new Uint8Array([9]).buffer;
+    const response = new Response(payload, { status: 200 });
+    const afterResponse = vi.fn();
+    const client = createClient({ transport: vi.fn().mockResolvedValue(response), afterResponse });
+
+    await client.requestArrayBuffer({ method: 'GET', path: '/buffer', operation: 'buffer.hook' });
+
+    expect(afterResponse).toHaveBeenCalledWith(
+      expect.any(Response),
+      expect.objectContaining({ operation: 'buffer.hook' }),
+    );
   });
 
   it('treats idempotent=false requests as single attempts', async () => {
