@@ -1,3 +1,10 @@
+import {
+  HttpClient,
+  type HttpCache,
+  type HttpRateLimiter,
+  type HttpRequestOptions,
+  type RateLimiterContext,
+} from '@tradentic/resilient-http-core';
 import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
 import { getRedisCache, generateSecCacheKey } from './redisClient';
 
@@ -27,88 +34,198 @@ function getCacheTTL(path: string): number {
   return 0;
 }
 
-export class SecClient {
-  private limiter: DistributedRateLimiter;
-  private cache = getRedisCache();
+class SecRedisHttpCache implements HttpCache {
+  private readonly cache = getRedisCache();
 
-  constructor(private readonly config: SecClientConfig) {
-    // Use distributed rate limiter so all worker instances share the same limit
-    this.limiter = createDistributedRateLimiter('sec-api', config.maxRps);
+  async get<T = unknown>(key: string): Promise<T | undefined> {
+    const cached = await this.cache.get(key);
+    if (!cached) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(cached) as T;
+    } catch (error) {
+      console.warn('[SecClient] Failed to parse cached payload', { key, error });
+      return undefined;
+    }
+  }
+
+  async set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void> {
+    if (!ttlMs || ttlMs <= 0) {
+      return;
+    }
+    const ttlSeconds = Math.max(1, Math.ceil(ttlMs / 1000));
+    await this.cache.set(key, JSON.stringify(value), ttlSeconds);
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.cache.delete(key);
+  }
+}
+
+class DistributedHttpRateLimiter implements HttpRateLimiter {
+  constructor(private readonly limiter: DistributedRateLimiter) {}
+
+  async throttle(_key: string, _context: RateLimiterContext): Promise<void> {
+    await this.limiter.throttle();
+  }
+
+  async onSuccess(): Promise<void> {
+    // No-op: the underlying limiter has no notion of success/failure callbacks.
+  }
+
+  async onError(): Promise<void> {
+    // No-op
+  }
+}
+
+type ResponseKind = 'json' | 'text' | 'raw';
+
+const TEXT_EXTENSIONS = ['.txt', '.htm', '.html', '.xml'];
+const sharedSecCache = new SecRedisHttpCache();
+
+export class SecClient {
+  private readonly httpClient: HttpClient;
+
+  constructor(private readonly config: SecClientConfig, httpClient?: HttpClient) {
+    const limiter = createDistributedRateLimiter('sec-api', config.maxRps);
+    this.httpClient = httpClient ??
+      new HttpClient({
+        clientName: 'sec',
+        baseUrl: config.baseUrl,
+        cache: sharedSecCache,
+        rateLimiter: new DistributedHttpRateLimiter(limiter),
+        resolveBaseUrl: (opts) => this.resolveBaseUrl(opts.path),
+        beforeRequest: (opts) => ({
+          ...opts,
+          headers: {
+            ...opts.headers,
+            'User-Agent': this.config.userAgent,
+            'Accept-Encoding': 'gzip, deflate',
+          },
+        }),
+      });
   }
 
   async get(path: string, init?: RequestInit): Promise<Response> {
-    const cacheTTL = getCacheTTL(path);
+    const cacheTTLSeconds = getCacheTTL(path);
+    const cacheKey = cacheTTLSeconds > 0 ? generateSecCacheKey(path) : undefined;
+    const requestOptions = this.buildRequestOptions(path, init, cacheTTLSeconds, cacheKey);
+    const responseKind = determineResponseKind(path);
 
-    // Try to get from cache if caching is enabled for this endpoint
-    if (cacheTTL > 0) {
-      const cacheKey = generateSecCacheKey(path);
-      const cachedData = await this.cache.get(cacheKey);
-
-      if (cachedData) {
-        // Return cached response
-        console.log('[SecClient] Returning cached response for:', path);
-        return new Response(cachedData, {
-          status: 200,
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Cache': 'HIT',
-          },
-        });
-      }
-    }
-
-    // Cache miss or caching disabled - fetch from SEC API
-    await this.limiter.throttle();
-    // Use dataApiBaseUrl for /submissions/ endpoints, otherwise use main baseUrl
-    const base = path.startsWith('/submissions/') ? this.config.dataApiBaseUrl : this.config.baseUrl;
-    const url = new URL(path, base).toString();
-
-    // Debug logging
-    console.log('[SecClient] Fetching:', {
+    // Debug logging to help trace which endpoint/mode is being used
+    console.log('[SecClient] Fetching via HttpClient:', {
       path,
-      base,
-      finalUrl: url,
-      baseUrl: this.config.baseUrl,
-      dataApiBaseUrl: this.config.dataApiBaseUrl,
-      cacheTTL: cacheTTL > 0 ? `${cacheTTL}s` : 'disabled',
+      baseUrl: this.resolveBaseUrl(path),
+      cacheTTL: cacheTTLSeconds > 0 ? `${cacheTTLSeconds}s` : 'disabled',
+      responseKind,
     });
 
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        'User-Agent': this.config.userAgent,
-        'Accept-Encoding': 'gzip, deflate',
-        ...init?.headers,
-      },
-    });
-
-    if (!response.ok) {
-      console.error('[SecClient] Request failed:', {
-        url,
-        status: response.status,
-        statusText: response.statusText,
-      });
-      throw new Error(`SEC request failed ${response.status}`);
+    if (responseKind === 'json') {
+      const payload = await this.httpClient.requestJson<unknown>(requestOptions);
+      return createResponseFromBody(JSON.stringify(payload), 'application/json');
     }
 
-    // Cache the response if caching is enabled for this endpoint
-    if (cacheTTL > 0) {
-      const cacheKey = generateSecCacheKey(path);
-      const responseText = await response.text();
-
-      // Cache the response text
-      await this.cache.set(cacheKey, responseText, cacheTTL);
-
-      // Return a new response with the cached text
-      return new Response(responseText, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
+    if (responseKind === 'text') {
+      const text = await this.httpClient.requestText(requestOptions);
+      return createResponseFromBody(text, getContentTypeForPath(path));
     }
 
-    return response;
+    return this.httpClient.requestRaw(requestOptions);
   }
+
+  private resolveBaseUrl(path: string): string {
+    return path.startsWith('/submissions/') ? this.config.dataApiBaseUrl : this.config.baseUrl;
+  }
+
+  private buildRequestOptions(
+    path: string,
+    init: RequestInit | undefined,
+    cacheTTLSeconds: number,
+    cacheKey?: string,
+  ): HttpRequestOptions {
+    const headers = normalizeHeaders(init?.headers);
+    const options: HttpRequestOptions = {
+      method: 'GET',
+      path,
+      operation: getOperationName(path),
+      headers,
+    };
+
+    if (cacheKey && cacheTTLSeconds > 0) {
+      options.cacheKey = cacheKey;
+      options.cacheTtlMs = cacheTTLSeconds * 1000;
+    }
+
+    return options;
+  }
+}
+
+function normalizeHeaders(headers?: HeadersInit): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  if (headers instanceof Headers) {
+    const normalized: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      normalized[key] = value;
+    });
+    return normalized;
+  }
+
+  if (Array.isArray(headers)) {
+    return headers.reduce<Record<string, string>>((acc, [key, value]) => {
+      acc[key] = String(value);
+      return acc;
+    }, {});
+  }
+
+  return Object.entries(headers).reduce<Record<string, string>>((acc, [key, value]) => {
+    if (value === undefined) {
+      return acc;
+    }
+    acc[key] = String(value);
+    return acc;
+  }, {});
+}
+
+function getOperationName(path: string): string {
+  const sanitized = path.replace(/^\/+/, '').replace(/[^a-z0-9]+/gi, '_');
+  return sanitized || 'root';
+}
+
+function determineResponseKind(path: string): ResponseKind {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.json')) {
+    return 'json';
+  }
+  if (TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext))) {
+    return 'text';
+  }
+  return 'raw';
+}
+
+function getContentTypeForPath(path: string): string | undefined {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.htm') || lower.endsWith('.html')) {
+    return 'text/html; charset=utf-8';
+  }
+  if (lower.endsWith('.xml')) {
+    return 'application/xml; charset=utf-8';
+  }
+  if (lower.endsWith('.txt')) {
+    return 'text/plain; charset=utf-8';
+  }
+  return undefined;
+}
+
+function createResponseFromBody(body: string, contentType?: string): Response {
+  const headers = new Headers();
+  if (contentType) {
+    headers.set('Content-Type', contentType);
+  }
+  return new Response(body, { status: 200, headers });
 }
 
 export function createSecClient(): SecClient {
