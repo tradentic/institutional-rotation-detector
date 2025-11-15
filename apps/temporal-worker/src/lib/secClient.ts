@@ -95,8 +95,8 @@ export class SecClient {
         baseUrl: config.baseUrl,
         cache: sharedSecCache,
         rateLimiter: new DistributedHttpRateLimiter(limiter),
-        resolveBaseUrl: (opts) => this.resolveBaseUrl(opts.path),
-        beforeRequest: (opts) => ({
+        resolveBaseUrl: (opts: HttpRequestOptions) => this.resolveBaseUrl(opts.path),
+        beforeRequest: (opts: HttpRequestOptions) => ({
           ...opts,
           headers: {
             ...opts.headers,
