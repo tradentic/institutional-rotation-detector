@@ -149,6 +149,8 @@ export interface HttpRequestOptions {
   headers?: Record<string, string | undefined>;
   body?: unknown;
   idempotent?: boolean;
+  timeoutMs?: number;
+  maxRetries?: number;
   cacheKey?: string;
   cacheTtlMs?: number;
   budget?: HttpRequestBudget;
