@@ -1,162 +1,156 @@
 # CODING_AGENT_PROMPT.md — `@airnub/http-llm-openai` v0.2
 
-## 0. Role & Context
+## 0. Role & Scope
 
-You are a **senior TypeScript engineer**. Your task is to implement or align `@airnub/http-llm-openai` with the v0.2 spec.
+You are a **senior TypeScript engineer** working in the `tradentic/institutional-rotation-detector` monorepo.
 
-This package is a **thin HTTP wrapper** around the OpenAI Responses API using `@airnub/resilient-http-core` v0.7, plus an optional `ProviderAdapter` implementation for `@airnub/agent-conversation-core`.
+Your job in this prompt is **only** to implement and align the package:
+
+> `@airnub/http-llm-openai`
+
+with its v0.2 spec, built on top of **`@airnub/resilient-http-core` v0.7** and designed to plug into `@airnub/agent-conversation-core`.
+
+Do not modify other packages except where necessary for wiring (e.g., adding an adapter implementation). Other packages have their own prompts.
 
 ---
 
 ## 1. Source of Truth
 
-Use this spec as authoritative:
+Treat these documents as the **source of truth** for this package:
 
-- `docs/specs/resilient_http_llm_openai_spec_v_0_2.md`
+- Core v0.7 spec:
+  - `docs/specs/resilient_http_core_spec_v_0_7.md`
+- OpenAI HTTP wrapper v0.2 spec:
+  - `docs/specs/resilient_http_llm_openai_spec_v_0_2.md`
+- Agent conversation core v0.2 spec (for adapter interface alignment):
+  - `docs/specs/resilient_http_agent_conversation_core_spec_v_0_2.md`
 
-If existing code disagrees with the spec, the spec wins.
+If code and docs disagree, **the docs win**.
 
 ---
 
 ## 2. Global Constraints
 
-- TypeScript with `strict: true`.
-- No dependency on OpenAI’s official SDK — use `HttpClient` from `@airnub/resilient-http-core`.
-- No gRPC.
+- Language: **TypeScript** with `strict: true`.
+- Depends on:
+  - `@airnub/resilient-http-core` for `HttpClient` and types.
+  - `@airnub/agent-conversation-core` for `ProviderAdapter` interfaces.
+- Must not:
+  - Call `fetch` directly — always use core’s `HttpClient`.
+  - Implement its own resilience backoff or metrics — rely on core v0.7.
 
 ---
 
-## 3. Tasks
+## 3. Implementation Tasks
 
-### 3.1 Config & Client
+### 3.1 Configuration & Client Types
 
-Implement:
+Implement all public types described in `resilient_http_llm_openai_spec_v_0_2.md`, including:
 
-- `OpenAIHttpClientConfig` with:
-  - `apiKey` (required).
-  - `organizationId?`, `projectId?`.
-  - `baseUrl?` (default `https://api.openai.com/v1`).
-  - `clientName?` (default `"openai"`).
-  - `httpClient?` (injected `HttpClient`).
-  - `extensions?` (global extensions).
-  - `agentContextFactory?`.
+- Configuration:
+  - `OpenAIHttpClientConfig` (API key, base URL, organization, default model, etc.).
+  - Optional default `ResilienceProfile` and `AgentContext`.
+- Client:
+  - `OpenAIHttpClient` interface with at least:
+    - `responses.create(...)` (non-streaming).
+    - Optionally `responses.createStream(...)` (streaming) per the spec.
+  - `OpenAIResponsesClient` sub-interface if the spec splits concerns.
 
-- `OpenAIHttpClient` with:
-  - `http: HttpClient`.
-  - `responses: OpenAIResponsesClient`.
+### 3.2 Request & Response Models
 
-- `createOpenAIHttpClient(config)`:
-  - Use injected `httpClient` if provided.
-  - Else call `createDefaultHttpClient` from core with `clientName`.
+Define and export types that model the OpenAI Responses API as per the spec, including:
 
-### 3.2 Domain Types
+- Request types:
+  - `OpenAIResponseCreateRequest` or equivalent, including:
+    - `model`, `input`, `messages`, `tools`, `metadata`, etc.
+    - `previous_response_id` support for response-chaining.
+- Response types:
+  - `OpenAIResponseObject` (id, model, status, output, metadata, etc.).
+  - Streaming types:
+    - `OpenAIResponseStream`.
+    - `OpenAIResponseStreamEvent` (chunk types, e.g., `response.delta`, `response.completed`).
 
-Implement:
+Adhere to the spec’s field names and structures (it may be a simplified subset of the official API; don’t over-extend it).
 
-- Roles & messages:
-  - `OpenAIRole`
-  - `OpenAITextBlock`
-  - `OpenAIInputContent`
-  - `OpenAIInputMessage`
+### 3.3 Integration with Core v0.7
 
-- Tools:
-  - `OpenAIFunctionTool`
-  - `OpenAIToolDefinition`
+Implement a factory function, for example:
 
-- Usage & responses:
-  - `OpenAITokenUsage` (alias of `TokenUsage`).
-  - `OpenAIResponseObject` (id, model, createdAt, outputText, providerMessage, toolCalls, usage, raw).
-  - `OpenAIConversationState` (lastResponseId, metadata?).
+```ts
+export function createOpenAIHttpClient(config: OpenAIHttpClientConfig): OpenAIHttpClient;
+```
 
-### 3.3 Responses Client
+This client must:
 
-Implement:
-
-- `CreateResponseRequest` as per spec, including:
-  - `model`
-  - `input` (string or `OpenAIInputMessage | OpenAIInputMessage[]`).
-  - `modalities?`, `tools?`, `toolChoice?`, `maxOutputTokens?`, `store?`, `extraParams?`, `previousResponseId?`, `metadata?`.
-
-- `CreateResponseOptions` with `agentContext?`, `extensions?`, `conversationState?`.
-
-- `OpenAIResponsesClient` with:
-  - `create(request, options?)` → `Promise<OpenAIResponseObject>`.
-  - Optional `createStream(request, options?)` → `Promise<OpenAIResponseStream>`.
-
-- `OpenAIResponseStreamEvent` and `OpenAIResponseStream` as spec’d.
-
-### 3.4 HTTP Integration
-
-For `responses.create`:
-
-- Build `HttpRequestOptions` with:
-  - `method: 'POST'`.
-  - URL: `{baseUrl}/responses`.
-  - Headers:
-    - `Authorization: Bearer ${apiKey}`.
-    - `Content-Type: application/json`.
-    - `OpenAI-Organization` and `OpenAI-Project` when provided.
-  - Body: JSON encoding of OpenAI’s concrete request payload, including `previous_response_id` when present.
-
-- Extensions:
-  - Merge client-level and per-call `extensions`.
-  - Always set:
+- Internally construct or receive a `HttpClient` from `@airnub/resilient-http-core`.
+- For each operation (e.g., Responses `create`):
+  - Build `HttpRequestOptions` according to v0.7:
+    - `operation`: e.g., `"openai.responses.create"`.
+    - `method`: `"POST"`.
+    - `urlParts` or `url` pointing to the correct OpenAI endpoint.
+    - `headers`: `Authorization: Bearer <api_key>`, `Content-Type: application/json`, etc.
+    - `body`: JSON-encoded request.
+    - Optional `resilience` overrides appropriate for OpenAI (e.g., `maxAttempts`, timeouts), as per spec.
+  - Set metadata:
+    - `agentContext` from config + per-request overrides.
     - `extensions['ai.provider'] = 'openai'`.
-    - `extensions['ai.model'] = request.model`.
-    - `extensions['ai.operation'] = 'responses.create'`.
-    - Optionally `extensions['ai.tenant'] = organizationId ?? projectId`.
+    - `extensions['ai.model'] = <model>`.
+    - `extensions['ai.request_type'] = 'chat' | 'responses'` per spec.
 
-- AgentContext:
-  - Use `options.agentContext` if provided, else `config.agentContextFactory?.()`.
+Use `HttpClient.requestJson` / `requestRaw` to perform the actual HTTP calls.
 
-### 3.5 Mapping & Conversation Chaining
+### 3.4 Streaming Support (If Required by Spec)
 
-Implement helpers for:
+If the v0.2 spec requires streaming responses:
 
-- `ProviderMessage[]` → `OpenAIInputMessage[]` mapping (roles + text parts).
-- Raw Responses → `OpenAIResponseObject`:
-  - Extract `outputText` from the primary assistant text output.
-  - Build `ProviderMessage` for `providerMessage`.
-  - Parse any tool calls into `ProviderToolCall[]`.
-  - Populate `usage` if present.
+- Implement a streaming method (`responses.createStream` or similar) that:
+  - Sends the request with `stream: true` in the body if required.
+  - Uses `HttpClient.requestRaw` and decodes the streaming protocol (e.g., SSE or chunked JSON) into `OpenAIResponseStreamEvent`s.
+  - Returns an async iterator or callback-style interface per the spec.
 
-- Conversation chaining:
-  - If `CreateResponseRequest.previousResponseId` is not set and `options.conversationState?.lastResponseId` is defined, use that as `previous_response_id` in the payload.
+Keep the streaming parsing logic self-contained and focused on the OpenAI Responses API.
 
-### 3.6 Provider Adapter
+### 3.5 Provider Adapter for Agent Conversation Core
 
-Implement:
+Implement an `OpenAIProviderAdapter` that satisfies the `ProviderAdapter` interface from `@airnub/agent-conversation-core`:
 
-- `OpenAIProviderAdapterConfig` (client, defaultModel, getConversationState?, setConversationState?).
-- `OpenAIProviderAdapter implements ProviderAdapter` from `@airnub/agent-conversation-core`:
+- Adapt `Conversation`/`Turn` inputs into `OpenAIResponseCreateRequest`:
+  - Map messages from the internal representation to OpenAI’s `messages` or `input` format.
+  - Attach `previous_response_id` when continuing a chain.
+- Call the `OpenAIHttpClient` to perform the request.
+- Map `OpenAIResponseObject` (and optionally stream events) back into the agent-conversation domain types (`ProviderResponse`, etc.).
 
-`complete(params: ProviderCallParams)` must:
-
-1. Determine model from `params.metadata.model` or `defaultModel`.
-2. Map `params.messages` → `OpenAIInputMessage[]`.
-3. Build `CreateResponseRequest` from messages, tools, toolChoice, extraParams.
-4. Use `getConversationState`/`setConversationState` for `previousResponseId` chaining.
-5. Call `client.responses.create(...)`.
-6. Map `OpenAIResponseObject` → `ProviderCallResult`.
-
-If `completeStream` is implemented, adapt `OpenAIResponseStreamEvent` → `ProviderStreamEvent`.
+All correlation, resilience, and telemetry concerns must flow through `HttpClient` in the core.
 
 ---
 
 ## 4. Tests
 
-Use a **fake `HttpClient`** (no real OpenAI calls):
+Add tests for this package to cover:
 
-- Verify request construction (URL, headers, body) given `CreateResponseRequest`.
-- Verify extensions and `AgentContext` are attached correctly.
-- Verify mapping from fake response JSON → `OpenAIResponseObject` and `ProviderCallResult`.
-- Verify `OpenAIProviderAdapter.complete` wires everything together correctly, including conversation chaining.
+- Request construction:
+  - The correct URL, method, and headers are used for `responses.create`.
+  - The JSON body matches the spec given a sample `OpenAIResponseCreateRequest`.
+- Response mapping:
+  - Successful responses are decoded into `OpenAIResponseObject` correctly.
+  - Error responses are propagated as `HttpError` with correct status/category.
+- Streaming (if implemented):
+  - Example SSE or chunked responses are parsed into `OpenAIResponseStreamEvent`s.
+- Conversation adapter integration:
+  - Given a sample conversation and turn from `agent-conversation-core`, verify the adapter builds the expected request and maps the response back.
+
+Use a fake `HttpClient` (or stub transport) from core to avoid hitting real OpenAI endpoints.
 
 ---
 
-## 5. Acceptance Criteria
+## 5. Done Definition
 
-- Public API matches `resilient_http_llm_openai_spec_v_0_2.md`.
-- No OpenAI SDK or gRPC dependencies.
-- `OpenAIProviderAdapter` can be plugged into `@airnub/agent-conversation-core` in tests using a fake `HttpClient` and can successfully run a full turn end-to-end.
+You are **done** for this prompt when:
+
+- `@airnub/http-llm-openai` compiles and exports all types/interfaces described in `resilient_http_llm_openai_spec_v_0_2.md`.
+- All HTTP uses `@airnub/resilient-http-core`’s `HttpClient` and follows v0.7 conventions (operation names, metadata, resilience, correlation).
+- The package integrates cleanly with `@airnub/agent-conversation-core` via an `OpenAIProviderAdapter`.
+- Tests cover request/response mapping and adapter behaviour.
+
+Do not modify core or other satellites beyond what is necessary for type imports and adapter wiring.
 

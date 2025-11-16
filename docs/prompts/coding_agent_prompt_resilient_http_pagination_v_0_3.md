@@ -1,102 +1,156 @@
 # CODING_AGENT_PROMPT.md — `@airnub/resilient-http-pagination` v0.3
 
-## 0. Role & Context
+## 0. Role & Scope
 
-You are a **senior TypeScript engineer**. Your task is to implement or align `@airnub/resilient-http-pagination` with its v0.3 spec, using `@airnub/resilient-http-core` v0.7 as the transport.
+You are a **senior TypeScript engineer** working in the `tradentic/institutional-rotation-detector` monorepo.
 
-This package must handle **multi-page HTTP runs** (REST/JSON pagination) on top of the core, without adding new concerns into the core itself.
+Your job in this prompt is **only** to implement and align the package:
+
+> `@airnub/resilient-http-pagination`
+
+with its v0.3 pagination spec, building on **`@airnub/resilient-http-core` v0.7**.
+
+Do not modify other packages except for minimal type/import fixes. Other packages have their own prompts.
 
 ---
 
 ## 1. Source of Truth
 
-Use this spec as authoritative:
+Treat these documents as the **source of truth** for this package:
 
-- `docs/specs/resilient_http_pagination_spec_v_0_3.md`
+- Core v0.7 spec:
+  - `docs/specs/resilient_http_core_spec_v_0_7.md`
+- Pagination v0.3 spec:
+  - `docs/specs/resilient_http_pagination_spec_v_0_3.md`
 
-If code disagrees with the spec, the spec wins. Preserve existing behaviour where possible.
+If code disagrees with these docs, **the docs win**. The pagination package must not re-implement core’s resilience or telemetry; it must *use* the v0.7 core primitives.
 
 ---
 
 ## 2. Global Constraints
 
-- TypeScript with `strict: true`.
-- No direct network code; always go through `HttpClient` from `@airnub/resilient-http-core`.
-- No dependencies on Redis/DBs/OTEL.
-- This package must not modify `@airnub/resilient-http-core`.
+- Language: **TypeScript** with `strict: true`.
+- Dependencies:
+  - It may depend on `@airnub/resilient-http-core`.
+  - It must not pull in heavy external resilience or telemetry libraries.
+- No API-specific or provider-specific logic (no FINRA/SEC/UW/OpenAI semantics here).
 
 ---
 
-## 3. Tasks
+## 3. Implementation Tasks
 
-### 3.1 Core Types & Models
+### 3.1 Public API & Types
 
-Implement or align the following types exactly as described in the spec:
+Implement the public API exactly as described in `resilient_http_pagination_spec_v_0_3.md`:
 
-- `PaginationModel` (e.g. `'offset-limit' | 'cursor' | 'link-header' | 'custom'`).
-- `Page<TItem>` — a single page of results plus associated metadata.
-- `PaginationResult<TItem>` — run-level summary (pages, items, completed flag, aggregated outcome).
-- `PaginationLimits` — `maxPages`, `maxItems`, `maxEndToEndLatencyMs`.
-- `PageExtractor<TItem>` — parses an HTTP response into a `Page<TItem>`.
-- `PaginationStrategy` — generates initial and next `HttpRequestOptions`.
-- `PaginationObserver` — hooks for `onPage`, `onComplete`.
+- Functions:
+  - `paginate<TItem>(options: PaginateOptions<TItem>): Promise<PaginationResult<TItem>>`.
+  - `paginateStream<TItem>(options: PaginateOptions<TItem>): AsyncGenerator<Page<TItem>, PaginationResult<TItem>, void>`.
 
-### 3.2 Core API Functions
+- Core types:
+  - `PaginationModel` (`'offset-limit' | 'cursor' | 'link-header' | 'custom'`, or whatever the spec defines).
+  - `Page<TItem>` — single page (items + metadata).
+  - `PaginationResult<TItem>` — run-level summary.
+  - `PaginationLimits` — `maxPages`, `maxItems`, `maxEndToEndLatencyMs` (or equivalent per spec).
+  - `PaginationResilience` — hints for per-page `ResilienceProfile`.
+  - `PageExtractor<TItem>` and `PageExtraction<TItem>`.
+  - `PaginationStrategy`.
+  - `PaginationObserver` — callbacks (`onPage`, `onComplete`, `onError` as per spec).
 
-Implement:
+Export all required types from this package’s public barrel file.
 
-- `paginate<TItem>(options: PaginateOptions<TItem>): Promise<PaginationResult<TItem>>`
-- `paginateStream<TItem>(options: PaginateOptions<TItem>): AsyncGenerator<Page<TItem>, PaginationResult<TItem>, void>`
+### 3.2 Integration with Core v0.7
 
-Ensure both:
+Use `@airnub/resilient-http-core` types and client:
 
-- Use a provided `HttpClient` for each page.
-- Propagate `AgentContext`, `correlationId`, and `extensions` to each `HttpRequestOptions`.
-- Respect `PaginationLimits` strictly.
+- Accept a `HttpClient` instance from core and `HttpRequestOptions` for the initial request.
+- Do **not** re-implement HTTP transports, retries, or metrics.
+- For each page request:
+  - Clone and adjust the `HttpRequestOptions` (e.g., query params) via `PaginationStrategy`.
+  - Preserve and propagate:
+    - `correlation` (`CorrelationInfo`), updating `requestId` per page if spec requires or keeping per-run if specified.
+    - `agentContext` (`AgentContext`).
+    - `extensions` (including `ai.provider`, `ai.model`, etc., if present).
+  - Optionally use per-page `ResilienceProfile` hints (`PaginationResilience`) that merge into core’s `HttpRequestOptions.resilience`.
 
-### 3.3 Built-in Strategies & Helpers
+Aggregate a **run-level `RequestOutcome`** (attempts, duration, final status, errorCategory, RateLimitFeedback) for the entire pagination run when the spec requires it.
 
-Implement helpers described in the spec, such as:
+### 3.3 Built-in Strategies
 
-- Strategy builders:
-  - `createOffsetLimitStrategy(...)`
-  - `createCursorStrategy(...)`
-- Extractors:
-  - `createArrayFieldExtractor(...)` for common JSON response shapes.
-- Convenience functions:
-  - `paginateOffsetLimit(...)`
-  - `paginateCursor(...)`
-  - `paginateUntil(...)` (predicate-based termination).
+Implement built-in `PaginationStrategy` implementations described in the spec, e.g.:
 
-These must be thin wrappers over the core `paginate`/`paginateStream`.
+- `OffsetLimitStrategy`:
+  - Uses query parameters like `limit` and `offset`.
+- `CursorStrategy`:
+  - Uses a cursor/token returned in the response body for the next page.
+- `LinkHeaderStrategy`:
+  - Parses `Link` headers (e.g., `rel="next"`) to determine the next URL or parameters.
 
-### 3.4 Resilience & Outcome Aggregation
+Each strategy must:
 
-- Each page request must accept a `ResilienceProfile` (potentially different from single-call defaults).
-- Aggregate `RequestOutcome` from each page into a run-level summary as described in the spec.
+- Provide initial `HttpRequestOptions` based on the `PaginateOptions`.
+- Provide next `HttpRequestOptions` given a `PageExtraction` and current state.
+- Signal completion (no more pages) correctly.
+
+### 3.4 Page Extraction
+
+Implement `PageExtractor<TItem>` abstractions that:
+
+- Parse a `Response` (or its decoded JSON) into:
+  - `items: TItem[]`.
+  - Paging state (cursor, next offset, hasMore, etc.) as defined in the spec.
+  - Optional additional metadata (status code, raw response, etc.).
+
+Allow callers to plug custom extractors for odd-shaped APIs.
+
+### 3.5 Limits & Stop Conditions
+
+Implement `PaginationLimits` semantics exactly as per the spec:
+
+- Stop when `maxPages` is reached.
+- Stop when `maxItems` is reached.
+- Stop when max end-to-end latency is exceeded.
+
+Ensure the run-level result reports whether completion was natural or due to a limit being hit, if specified by the spec.
+
+### 3.6 Observers & Streaming
+
+- `paginate` must:
+  - Execute all pages until a stop condition.
+  - Invoke `PaginationObserver` callbacks (`onPage`, `onComplete`, `onError`) as defined.
+  - Return a final `PaginationResult<TItem>`.
+
+- `paginateStream` must:
+  - Yield `Page<TItem>` objects as they are fetched.
+  - Respect the same limits and stop conditions.
+  - Return the final `PaginationResult<TItem>` when the iterator completes.
+
+Both functions must use `HttpClient.requestJson` / `requestRaw` depending on what the extractor expects.
 
 ---
 
 ## 4. Tests
 
-Create tests that use a **fake `HttpClient`**:
+Add tests under this package to cover:
 
-- Simulate paged APIs (offset/limit and cursor-based) with deterministic responses.
-- Verify:
-  - Correct number of requests for given `maxPages` / `maxItems`.
-  - Correct aggregation of all items into `PaginationResult.items`.
-  - Correct `completed` flag when:
-    - There are no more pages.
-    - Limits are hit.
-  - Correct aggregation of `RequestOutcome`.
-  - Propagation of `AgentContext`, correlation IDs, and `extensions`.
+- Offset/limit, cursor, and link-header strategies with fake `HttpClient` responses.
+- Stop conditions for `maxPages`, `maxItems`, and time-based limits.
+- Error handling mid-run (e.g., early failure vs partial results).
+- Propagation of `correlation`, `agentContext`, and `extensions` across pages.
+- Correct aggregation of run-level `RequestOutcome`.
+
+Use stubs/mocks for `HttpClient` from `@airnub/resilient-http-core`.
 
 ---
 
-## 5. Acceptance Criteria
+## 5. Done Definition
 
-- Public API matches `resilient_http_pagination_spec_v_0_3.md`.
-- Core remains untouched; pagination logic is fully contained in this package.
-- `paginate` and `paginateStream` are covered by deterministic tests.
-- Existing HTTP clients that need pagination can be migrated to this package without changes to core.
+You are **done** for this prompt when:
+
+- The package compiles with all types and exports matching `resilient_http_pagination_spec_v_0_3.md`.
+- It depends on `@airnub/resilient-http-core` and uses its `HttpClient` correctly.
+- No resilience/telemetry logic is duplicated from core; the package only orchestrates pagination.
+- Tests pass and validate strategies, limits, and core integration.
+
+Do not modify core or other satellites in this prompt beyond what’s required to satisfy imports and types.
 

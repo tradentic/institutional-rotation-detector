@@ -1,336 +1,334 @@
 # CODING_AGENT_PROMPT.md — Implement the Resilient HTTP Ecosystem (Core v0.7 + Satellites)
 
-## 0. Role & Context
+## 0. Role & Scope
 
-You are a **senior TypeScript platform engineer** and **refactoring specialist**. Your task is to refactor and extend this monorepo so that it fully implements the **Resilient HTTP Core v0.7 ecosystem** and the associated satellite libraries, as described in the specs under `docs/specs/`.
+You are a **senior TypeScript engineer** working in the `tradentic/institutional-rotation-detector` monorepo.
 
-You MUST treat the spec documents as the **source of truth**. Where repo code and specs disagree, the specs win (but you should try to preserve backwards compatibility with minimal shims where feasible).
+Your job is to **implement and align the entire Resilient HTTP ecosystem** with the latest specs:
 
-This repo uses `@airnub/*` naming for the shared HTTP ecosystem.
+- Core: `@airnub/resilient-http-core` **v0.7**
+- Satellites:
+  - `@airnub/resilient-http-pagination` **v0.3**
+  - `@airnub/resilient-http-policies` **v0.3**
+  - `@airnub/agent-conversation-core` **v0.2`** (spec file name starts with `resilient_http_…`)
+  - `@airnub/agent-browser-guardrails` **v0.2**
+  - `@airnub/http-llm-openai` **v0.2**
+
+You must treat the **spec documents as the source of truth** and refactor the monorepo to match them.
+
+Do **not** invent new behaviours beyond the specs. Where existing code contradicts the spec, the spec wins (but preserve backwards compatibility where the spec requires it).
 
 ---
 
-## 1. Specs & Documents to Use as Source of Truth
+## 1. Source of Truth — Specs & Docs
 
-Before you write or change any code, carefully read these spec documents (they should already exist in `docs/specs/` or equivalent):
+Use these documents as authoritative (paths may vary slightly; search by filename if needed):
 
-- **Core & roadmap**
+- Core v0.7 spec (just created):
   - `docs/specs/resilient_http_core_spec_v_0_7.md`
-  - `docs/specs/resilient_http_core_roadmap_and_satellite_libs_v0_7.md`
-
-- **Satellites**
+- Core roadmap & satellites:
+  - `docs/specs/resilient_http_core_roadmap_and_satellite_libs.md`
+- Pagination spec:
   - `docs/specs/resilient_http_pagination_spec_v_0_3.md`
+- Policies spec:
   - `docs/specs/resilient_http_policies_spec_v_0_3.md`
+- Agent conversation core spec:
   - `docs/specs/resilient_http_agent_conversation_core_spec_v_0_2.md`
+- Browser guardrails spec:
   - `docs/specs/resilient_http_agent_browser_guardrails_spec_v_0_2.md`
+- OpenAI LLM HTTP wrapper spec:
   - `docs/specs/resilient_http_llm_openai_spec_v_0_2.md`
 
-Your implementation MUST follow these specs exactly unless directed otherwise in this prompt.
+If the code and these docs disagree, **assume the docs are correct** and adjust the code accordingly.
 
 ---
 
-## 2. Global Constraints & Conventions
+## 2. Global Constraints & Non‑Goals
 
-1. **Language & strictness**
-   - All packages are in **TypeScript** with `strict: true` in `tsconfig.json`.
-   - Prefer `unknown` over `any`. Use narrow types and discriminated unions as described in the specs.
-
-2. **Zero external dependencies by default**
-   - Core and satellite packages must work **without Redis, DBs, OTEL, or logging frameworks**.
-   - External integrations (e.g., OTEL, pino, Redis) MUST be optional, via separate adapters or configuration hooks.
-
-3. **HTTP-only**
-   - This ecosystem is HTTP(S)-only. **Do not introduce gRPC support**.
-   - Do not add gRPC-specific code paths or dependencies.
-
-4. **Backwards compatibility**
-   - Where existing clients (FINRA, SEC, IEX, etc.) already use an older version of the core, prefer **thin compatibility wrappers** rather than breaking changes.
-   - You can deprecate older APIs with `/** @deprecated */` but keep them working while you migrate call sites.
-
-5. **No fabricated data or behaviour**
-   - Do not stub behaviour that contradicts the specs.
-   - If a spec describes an interface or behaviour, implement it properly or explicitly mark TODOs where integration is outside the current repo.
-
-6. **Testing & quality**
-   - Every new public function or class MUST have unit tests.
-   - Keep tests deterministic; use fake/mocked transports instead of real network IO.
-   - Prefer Jest or the existing test framework configured in the repo.
-
-7. **Documentation**
-   - For each package, ensure there is a `README.md` that:
-     - Explains the purpose.
-     - Shows minimal usage examples.
-     - Points to the relevant spec in `docs/specs/`.
-   - Keep code-level docs in TSDoc style.
+- **Language:** TypeScript with `strict: true`.
+- **Runtime:** Node (for now), but keep browser compatibility in mind (no Node‑only globals without guards).
+- **Transport:** use `fetchTransport` as the default `HttpTransport` implementation.
+- **No gRPC support** in this ecosystem. Everything is HTTP(S) on top of `fetch`‑style requests.
+- **No heavy external resilience libs** (cockatiel, resilience4ts, etc.).
+- **No telemetry frameworks** baked into core (OTEL, Prometheus, Datadog, etc.).
+- **No domain‑specific logic** in core or generic satellites:
+  - No FINRA/UW/SEC/IEX/OpenAI logic in core.
+  - Provider/LLM logic lives in `@airnub/http-llm-openai` etc.
 
 ---
 
-## 3. Repository Structure (Target)
+## 3. High‑Level Tasks (Phased)
 
-Bring the monorepo into (or close to) this structure, using existing folders where possible:
+Work in **phases**, committing in small, reviewable chunks. The phases are ordered; complete earlier ones first.
 
-```text
-packages/
-  resilient-http-core/              # @airnub/resilient-http-core
-  resilient-http-pagination/        # @airnub/resilient-http-pagination
-  resilient-http-policies/          # @airnub/resilient-http-policies
-  agent-conversation-core/          # @airnub/agent-conversation-core
-  agent-browser-guardrails/         # @airnub/agent-browser-guardrails
-  http-llm-openai/                  # @airnub/http-llm-openai
+### Phase 1 — Align `@airnub/resilient-http-core` to v0.7
 
-docs/specs/
-  resilient_http_core_spec_v_0_7.md
-  resilient_http_core_roadmap_and_satellite_libs_v0_7.md
-  resilient_http_pagination_spec_v_0_3.md
-  resilient_http_policies_spec_v_0_3.md
-  resilient_http_agent_conversation_core_spec_v_0_2.md
-  resilient_http_agent_browser_guardrails_spec_v_0_2.md
-  resilient_http_llm_openai_spec_v_0_2.md
-```
+**Target package:** `libs/resilient-http-core`
 
-If existing packages already use slightly different names, you may:
+1. **Read the spec carefully**
+   - `docs/specs/resilient_http_core_spec_v_0_7.md`
+   - Pay special attention to:
+     - `HttpClientConfig`, `HttpRequestOptions`.
+     - `ResilienceProfile`, `RequestBudget`.
+     - `ErrorCategory`, `ClassifiedError`, `ErrorClassifier`.
+     - `HttpRequestInterceptor` contexts.
+     - Caching, backoff, rate‑limit feedback, tracing, metrics.
+     - Legacy fields: `pageSize`, `pageOffset`, `budget`, `maxEndToEndLatencyMs`, `beforeRequest`/`afterResponse`.
 
-- Keep the current on-disk paths but expose the new `@airnub/*` names via `package.json`.
-- Add `"name": "@airnub/..."` and fix import paths in the monorepo.
+2. **Refactor `HttpClient.ts` to match the spec**
 
----
+   - Keep the good structural changes from the existing 0.7 attempt:
+     - Use `url` / `urlParts` where available.
+     - Consolidate `correlation` into `CorrelationInfo`.
+     - Provide `defaultResilience` and `defaultAgentContext` on the config.
+     - Use interceptors with `BeforeSendContext`, `AfterResponseContext`, `OnErrorContext`.
+   - Restore or implement all required behaviours from v0.6 that the spec retains:
+     - **Caching**: `HttpCache`, `cacheKey`, `cacheTtlMs` on `requestJson<T>`.
+     - **Backoff & delay** between retries:
+       - Use `ClassifiedError.suggestedBackoffMs`, `Retry-After` header, and exponential backoff with jitter.
+     - **RateLimitFeedback**:
+       - Parse rate‑limit headers (`x-ratelimit-*`, `retry-after`) into a structured `RateLimitFeedback`.
+     - **JSON body handling**:
+       - Serialize plain objects/arrays to JSON and set `Content-Type: application/json` when missing.
+       - Pass through `BodyInit` unchanged.
+     - **Tracing**:
+       - Implement `TracingAdapter` support (`startSpan`, `recordException`, `end`).
+       - Attach attributes (client, operation, method, path/url, correlation IDs, agent labels, etc.).
+     - **ErrorClassifier & HttpError**:
+       - Implement `ErrorClassifier` (default + config override).
+       - `HttpError` must carry `status`, `category`, optional `body`, `headers`, `fallback`, `response`, `correlation`, `agentContext`.
+     - **MetricsSink integration**:
+       - Emit a single `MetricsRequestInfo` per logical request with final `RequestOutcome`.
+     - **RateLimiter & CircuitBreaker hooks**:
+       - `throttle` / `onSuccess` / `onError` for rate limiter.
+       - `beforeRequest` / `onSuccess` / `onFailure` for circuit breaker.
 
-## 4. Implementation Plan — High-Level Steps
+   - Ensure **retry loop semantics** match the v0.7 spec:
+     - `maxAttempts` from merged `ResilienceProfile` + legacy `RequestBudget`.
+     - `overallTimeoutMs` vs per‑attempt timeouts.
+     - Respect `retryEnabled` and category/`retryable` flags.
 
-Follow these steps in order. Do **not** skip ahead without ensuring earlier steps are complete and tests are passing.
+3. **Interceptors & legacy hooks**
 
-1. **Stabilise `@airnub/resilient-http-core` to match v0.7 spec.**
-2. **Extract/align pagination into `@airnub/resilient-http-pagination` v0.3.**
-3. **Implement `@airnub/resilient-http-policies` v0.3 and wire in via interceptors.**
-4. **Implement `@airnub/agent-conversation-core` v0.2 (conversation model + engine).**
-5. **Implement `@airnub/agent-browser-guardrails` v0.2.**
-6. **Implement `@airnub/http-llm-openai` v0.2 and its ProviderAdapter.**
-7. **Refactor existing API clients to use core v0.7 + satellites.**
-8. **Add template setups and documentation examples as described in the roadmap.**
+   - Define `HttpRequestInterceptor` with context objects:
 
-Each step below is detailed with concrete tasks and acceptance criteria.
+     ```ts
+     interface BeforeSendContext { request: HttpRequestOptions; signal: AbortSignal; }
+     interface AfterResponseContext { request: HttpRequestOptions; response: Response; attempt: number; }
+     interface OnErrorContext { request: HttpRequestOptions; error: unknown; attempt: number; }
+     ```
 
----
+   - Implement:
+     - `runBeforeSend(ctx)` in registration order.
+     - `runAfterResponse(ctx)` in **reverse** registration order.
+     - `runOnError(ctx)` in **reverse** registration order.
 
-## 5. Step 1 — Core v0.7 Implementation (`@airnub/resilient-http-core`)
+   - Implement a **legacy bridge interceptor** when `beforeRequest` / `afterResponse` are present on `HttpClientConfig`, as per spec.
 
-### 5.1 Tasks
+4. **URL building & legacy pagination fields**
 
-1. Open `docs/specs/resilient_http_core_spec_v_0_7.md` and compare the spec to the current implementation.
-2. Ensure the following public types and interfaces exist and match the spec (names and shapes):
-   - `HttpClient`, `HttpRequestOptions`, `HttpResponse`, `HttpTransport`.
-   - `ResilienceProfile` and its fields (priority, maxAttempts, latency budgets, backoff hints, failFast, failover hints, etc.).
-   - `ErrorCategory`, `ClassifiedError`, `ErrorClassifier` interface.
-   - `RequestOutcome` and any related metrics shapes.
-   - `RateLimitFeedback`.
-   - `HttpRequestInterceptor` with `beforeSend`, `afterResponse`, `onError` hooks.
-   - `AgentContext`, `extensions`, `requestId`, `correlationId`, `parentCorrelationId` wiring.
-3. Implement or refine a `createDefaultHttpClient(config?)` helper as specified:
-   - Uses fetch (or existing transport abstraction) with sane defaults.
-   - Sets a sensible default `ResilienceProfile`.
-   - Does not require Redis or OTEL.
-4. Ensure metrics and logging hooks receive full context:
-   - `MetricsSink` should be called with `RequestOutcome`, `RateLimitFeedback`, `AgentContext`, `correlationId`, and `extensions`.
-   - `Logger` should have enough information to debug failures without leaking secrets.
-5. Remove or deprecate any gRPC-related code. The core must be HTTP-only.
+   - Implement URL resolution exactly as described:
+     - Prefer `opts.url`.
+     - Else `opts.urlParts`.
+     - Else legacy `path` + `query`.
+   - For legacy pagination fields in `HttpRequestOptions`:
+     - If `pageSize` is defined → append `limit` query param.
+     - If `pageOffset` is defined → append `offset` query param.
+   - Do **not** implement full pagination in core; just these legacy query params.
 
-### 5.2 Acceptance Criteria
+5. **Complete types & exports**
 
-- All types and interfaces listed in the v0.7 spec are present and match the documented shape.
-- Tests cover:
-  - Basic request flow with and without interceptors.
-  - Resilience behaviour (retries, timeouts) aligned with `ResilienceProfile`.
-  - Error classification via `ErrorClassifier`.
-- `createDefaultHttpClient` can be imported and used in a small example script without any other packages.
+   - Ensure all core types in the spec are exported from `src/types.ts`:
+     - `HttpClientConfig`, `HttpRequestOptions`, `HttpMethod`, `HttpHeaders`, `UrlParts`.
+     - `CorrelationInfo`, `AgentContext`, `Extensions`.
+     - `ResilienceProfile`, `RequestBudget`, `ErrorCategory`, `ClassifiedError`, `ResponseClassification`, `FallbackHint`.
+     - `RateLimitFeedback`, `RequestOutcome`, `MetricsRequestInfo`, `MetricsSink`.
+     - `HttpRequestInterceptor` and contexts.
+     - `ErrorClassifier`, `HttpError`, `TimeoutError`.
 
----
+6. **Tests for core**
 
-## 6. Step 2 — Pagination (`@airnub/resilient-http-pagination` v0.3)
+   - Add or update tests under `libs/resilient-http-core/src/__tests__/` to cover:
+     - Retry + backoff timing decisions (no tight retry loops; delay is applied).
+     - Caching: hit and miss, metrics `cacheHit` flag.
+     - Rate‑limit header parsing into `RateLimitFeedback`.
+     - Interceptor ordering (beforeSend order, afterResponse/onError reverse order).
+     - Error classification and `HttpError` shape.
+     - Tracing integration (mock adapter).
+     - Legacy `beforeRequest`/`afterResponse` proxy behaviour.
 
-### 6.1 Tasks
+### Phase 2 — `@airnub/resilient-http-pagination` v0.3
 
-1. Read `docs/specs/resilient_http_pagination_spec_v_0_3.md`.
-2. Create the `packages/resilient-http-pagination` package with the types and APIs defined there:
-   - `PaginationModel`, `Page<T>`, `PaginationResult<T>`, `PaginationLimits`, `PageExtractor<T>`, `PaginationStrategy`, `PaginationObserver`.
-   - `paginate` and `paginateStream` core functions.
-   - Strategy builders like `createOffsetLimitStrategy`, `createCursorStrategy`, and array field extractors.
-3. Ensure every request made via pagination:
-   - Uses a provided `HttpClient`.
-   - Propagates `AgentContext`, `correlationId`, and `extensions`.
-   - Applies per-page `ResilienceProfile` as specified.
-4. Add tests that:
-   - Use a fake `HttpClient` returning deterministic pages.
-   - Verify limit behaviour (`maxPages`, `maxItems`, `maxEndToEndLatencyMs`).
-   - Confirm aggregation of `RequestOutcome` across pages.
+**Target package:** `packages/resilient-http-pagination`
 
-### 6.2 Acceptance Criteria
+1. **Implement the spec** `resilient_http_pagination_spec_v_0_3.md`:
+   - Export public API:
+     - `paginate<TItem>(options: PaginateOptions<TItem>): Promise<PaginationResult<TItem>>`.
+     - `paginateStream<TItem>(options: PaginateOptions<TItem>): AsyncGenerator<Page<TItem>, PaginationResult<TItem>, void>`.
+   - Implement models:
+     - `PaginationModel`, `Page<T>`, `PaginationResult<T>`, `PaginationLimits`, `PaginationResilience`, `PaginationObserver`.
+     - `PageExtractor<T>`, `PaginationStrategy`.
+   - Provide built‑in strategies:
+     - Offset/limit, cursor, link‑header.
 
-- No pagination logic remains inside `@airnub/resilient-http-core` or individual API clients (beyond minimal glue).
-- `paginate` and `paginateStream` work with a fake `HttpClient` and are covered by tests.
+2. **Core assumptions**
+   - Use `HttpClient` from `@airnub/resilient-http-core` only.
+   - Do **not** add new behaviour back into core.
+   - Propagate correlation, agentContext, and extensions from the initial request to all pages.
+   - Aggregate a **run‑level `RequestOutcome`** for the pagination run.
 
----
+3. **Tests**
+   - Use a fake `HttpClient` to simulate paged APIs.
+   - Test stop conditions: `maxPages`, `maxItems`, `maxEndToEndLatencyMs`.
+   - Test error handling mid‑run and that partial results are represented correctly.
 
-## 7. Step 3 — Policies & Budgets (`@airnub/resilient-http-policies` v0.3)
+### Phase 3 — `@airnub/resilient-http-policies` v0.3
 
-### 7.1 Tasks
+**Target package:** `packages/resilient-http-policies`
 
-1. Read `docs/specs/resilient_http_policies_spec_v_0_3.md`.
-2. Create the `packages/resilient-http-policies` package with:
-   - Core types: `RequestClass`, `PolicyScope`, `ScopeSelector`, `PolicyDefinition`, `PolicyDecision`, `PolicyOutcome`, `PolicyEngine`.
-   - In-memory engine: `createInMemoryPolicyEngine`.
-   - Helper factories: `createBasicRateLimitPolicy`, `createBasicConcurrencyPolicy`, `createBasicInMemoryPolicyEngine`.
-   - Interceptor: `createPolicyInterceptor(options)`.
-3. Implement the interceptor according to the spec:
-   - Derive `PolicyScope` from `HttpRequestOptions`, `AgentContext`, `extensions`.
-   - Call `engine.evaluate()` in `beforeSend` and enforce `allow/delay/deny`.
-   - Merge resilience overrides into `request.resilience`.
-   - Call `engine.onResult()` in `afterResponse`/`onError` with `RequestOutcome` + any `RateLimitFeedback`.
-4. Add tests covering:
-   - Allow vs delay vs deny.
-   - Concurrency limits and queueing behaviour.
-   - Fail-open vs fail-closed options when the policy engine errors.
+1. **Implement spec** `resilient_http_policies_spec_v_0_3.md`:
+   - Core concepts:
+     - `PolicyScope`, `RequestClass`, `PolicyRateLimit`, `PolicyConcurrencyLimit`, `PolicyResilienceHints`, `PolicyDefinition`.
+     - `PolicyRequestContext`, `PolicyDecision`, `PolicyResultContext`.
+     - `PolicyEngine` interface.
+   - Implement `InMemoryPolicyEngine`.
 
-### 7.2 Acceptance Criteria
+2. **Policy‑aware interceptor**
+   - Implement `createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRequestInterceptor`:
+     - `beforeSend`:
+       - Build `PolicyScope` from `HttpRequestOptions`, `AgentContext`, and `extensions`.
+       - Call `engine.evaluate()` → `PolicyDecision`.
+       - Enforce `allow`/`delay`/`deny` and apply any `resilienceOverrides` to the request.
+     - `afterResponse` / `onError`:
+       - Build `PolicyResultContext` with `RequestOutcome` + any `RateLimitFeedback`.
+       - Call `engine.onResult()`.
 
-- Policies are fully decoupled from core; core does not know about them beyond using interceptors.
-- At least one demo configuration exists (in tests or examples) that limits requests per client/model.
+3. **Configuration**
+   - Support per‑scope policies (by client, operation, provider, model, bucket, etc.).
+   - Expose a simple in‑memory config loader for tests.
 
----
+### Phase 4 — `@airnub/agent-conversation-core` v0.2
 
-## 8. Step 4 — Agent Conversation Core (`@airnub/agent-conversation-core` v0.2)
+**Target package:** `packages/agent-conversation-core`
 
-### 8.1 Tasks
+1. **Implement spec** `resilient_http_agent_conversation_core_spec_v_0_2.md`:
+   - Concepts:
+     - `Conversation`, `Turn`, `ProviderSession`.
+     - `ProviderAdapter` interface (for OpenAI, Anthropic, etc.).
+     - `ConversationStore` interface (for in‑memory/Redis/DB storage).
+     - `HistoryBuilder` for building provider‑specific message arrays.
+     - `ConversationEngine` to drive multi‑turn flows.
 
-1. Read `docs/specs/resilient_http_agent_conversation_core_spec_v_0_2.md`.
-2. Implement the package with the following exported primitives:
-   - Domain types: `Conversation`, `ConversationMessage`, `ConversationTurn`, roles, content parts (`text`, `tool-call`, `tool-result`, `metadata`).
-   - Provider abstractions: `ProviderMessage`, `ProviderToolDefinition`, `ProviderToolCall`, `ProviderAdapter`, `ProviderStream`, etc.
-   - Store: `ConversationStore`, `InMemoryConversationStore`.
-   - History: `HistoryBuilder`, `RecentNTurnsHistoryBuilder`.
-   - Engine: `ConversationEngine`, `DefaultConversationEngine` with `runTurn` and optional `runStreamingTurn`.
-3. Ensure mapping functions exist (internal or exported) to:
-   - Convert `ConversationMessage[]` to `ProviderMessage[]`.
-   - Convert provider responses back to assistant messages and turns.
-4. Add tests that:
-   - Use a fake `ProviderAdapter` to simulate responses.
-   - Cover conversation creation, history building, and turn persistence.
+2. **Integration with core**
+   - All outbound HTTP calls must go through `@airnub/resilient-http-core`.
+   - Set `agentContext` and `extensions` appropriately for each turn:
+     - `extensions['ai.provider']`, `extensions['ai.model']`, `extensions['ai.request_type']`, etc.
 
-### 8.2 Acceptance Criteria
+3. **Tests**
+   - Use fake `ProviderAdapter`s and a fake `ConversationStore`.
+   - Show that multi‑turn flows transform correctly into provider calls and that correlation/agent metadata is set.
 
-- `DefaultConversationEngine` supports at least basic non-streaming turns.
-- `InMemoryConversationStore` is usable for tests and local prototyping.
+### Phase 5 — `@airnub/agent-browser-guardrails` v0.2
 
----
+**Target package:** `packages/agent-browser-guardrails`
 
-## 9. Step 5 — Browser Guardrails (`@airnub/agent-browser-guardrails` v0.2)
+1. **Implement spec** `resilient_http_agent_browser_guardrails_spec_v_0_2.md`:
+   - Guardrail concepts:
+     - Host allowlist/denylist.
+     - Method restrictions (read‑only vs mutating verbs).
+     - Path/pattern constraints.
+     - Payload size limits.
+   - Guardrail engine & selectors (per agent, per tool, etc.).
 
-### 9.1 Tasks
+2. **HttpRequestInterceptor implementation**
+   - Implement `createBrowserGuardrailsInterceptor(config): HttpRequestInterceptor`:
+     - `beforeSend`: inspect target URL + method + agent/tool metadata from `AgentContext`/`extensions`; throw a descriptive error when a rule is violated.
+     - Optionally annotate `extensions` with decision info.
 
-1. Read `docs/specs/resilient_http_agent_browser_guardrails_spec_v_0_2.md`.
-2. Implement the package with:
-   - Core types: `GuardedRequestKind`, `GuardrailScope`, `GuardrailSelector`, `GuardrailRule`, `GuardrailAction`, `GuardrailDecision`, `GuardrailEngine`.
-   - Error: `GuardrailViolationError`.
-   - HTTP integration: `createHttpGuardrailInterceptor(options)`.
-   - Browser integration: `BrowserNavigationGuard`, `createBrowserNavigationGuard(options)`.
-   - In-memory engine: `createInMemoryGuardrailEngine(config)`.
-   - Opinionated helper: `createHostAllowlistGuardrails(options)`.
-3. Implement host/path/method matching and header/query/body rules as per spec.
-4. Add tests for:
-   - Allow/block decisions.
-   - Header redaction and query param masking.
-   - Body size/content-type enforcement.
+3. **Tests**
+   - Verify blocked vs allowed URLs/methods.
+   - Verify per‑agent/per‑tool overrides.
 
-### 9.2 Acceptance Criteria
+### Phase 6 — `@airnub/http-llm-openai` v0.2
 
-- Guardrails and policies are clearly distinct (guardrails = surface allow/block; policies = budget/quotas).
-- Interceptors throw `GuardrailViolationError` on blocked requests.
+**Target package:** `packages/http-llm-openai`
 
----
+1. **Implement spec** `resilient_http_llm_openai_spec_v_0_2.md`:
+   - Implement configuration, client factory, and domain types:
+     - `OpenAIHttpClientConfig`, `OpenAIHttpClient`.
+     - `OpenAIResponsesClient` with `create` (+ optional `createStream`).
+     - `OpenAIResponseObject`, `OpenAIResponseStream`, `OpenAIResponseStreamEvent`.
+   - Map:
+     - Agent/Provider messages ↔ OpenAI messages.
+     - Raw OpenAI Responses API objects ↔ `OpenAIResponseObject`.
+     - `previous_response_id` and conversation chaining.
 
-## 10. Step 6 — OpenAI HTTP Wrapper (`@airnub/http-llm-openai` v0.2)
+2. **Integration with `agent-conversation-core`**
+   - Implement `OpenAIProviderAdapter` that satisfies `ProviderAdapter`.
+   - Use `@airnub/resilient-http-core` for all HTTP.
+   - Set `extensions['ai.provider'] = 'openai'` and `extensions['ai.model']` appropriately.
 
-### 10.1 Tasks
-
-1. Read `docs/specs/resilient_http_llm_openai_spec_v_0_2.md`.
-2. Implement the package with:
-   - Config & client: `OpenAIHttpClientConfig`, `OpenAIHttpClient`, `createOpenAIHttpClient(config)`.
-   - Domain types: `OpenAIRole`, `OpenAIInputMessage`, `OpenAIToolDefinition`, `OpenAIResponseObject`, `OpenAIConversationState`.
-   - Responses client: `OpenAIResponsesClient` with `create(...)` and optional `createStream(...)`.
-   - Provider adapter: `OpenAIProviderAdapterConfig`, `OpenAIProviderAdapter` implementing `ProviderAdapter` from `agent-conversation-core`.
-3. Wire all HTTP calls via `HttpClient` from `resilient-http-core`:
-   - `POST {baseUrl}/responses`.
-   - Correct headers (`Authorization`, `OpenAI-Organization`, `OpenAI-Project`).
-   - `extensions` including `ai.provider`, `ai.model`, `ai.operation`, and optionally `ai.tenant`.
-4. Implement mapping:
-   - `ProviderMessage[]` → `OpenAIInputMessage[]`.
-   - Raw responses → `OpenAIResponseObject` → `ProviderCallResult`.
-   - `previous_response_id` chaining using `OpenAIConversationState`.
-5. Add tests using a fake `HttpClient` (no real network calls).
-
-### 10.2 Acceptance Criteria
-
-- `OpenAIProviderAdapter` can be plugged into `DefaultConversationEngine` and used to run a full turn with a fake underlying OpenAI HTTP client.
-- The client does not depend on SDKs; only `resilient-http-core` for HTTP.
-
----
-
-## 11. Step 7 — Refactor Existing API Clients
-
-### 11.1 Tasks
-
-1. Identify all existing HTTP clients in the monorepo (e.g., FINRA, SEC, IEX, any custom services).
-2. For each client:
-   - Ensure it uses `@airnub/resilient-http-core` v0.7 as the transport layer.
-   - Remove any bespoke resilience wrappers now superseded by `ResilienceProfile` and interceptors.
-   - If the client does pagination, replace ad-hoc logic with `@airnub/resilient-http-pagination`.
-   - If the client needs budgets/quotas, integrate `@airnub/resilient-http-policies` via `createPolicyInterceptor`.
-   - If the client will be called by agents or tools, consider layering `agent-browser-guardrails` (for unsafe surfaces).
-3. Add or update tests to ensure behaviour is preserved (same endpoints, same auth, same core semantics).
-
-### 11.2 Acceptance Criteria
-
-- All HTTP clients depend on `@airnub/resilient-http-core` as their only HTTP abstraction.
-- Pagination and policy behaviour are implemented via the new satellites, not custom code.
+3. **Tests**
+   - Use fake `HttpClient` to assert request shapes.
+   - Verify message/response mapping and `previous_response_id` behaviour.
 
 ---
 
-## 12. Step 8 — Template Stacks & Examples
+## 4. Consumer Clients (FINRA, SEC, etc.)
 
-### 12.1 Tasks
+After core + satellites are aligned, update client libraries in `libs/` to use the new ecosystem:
 
-1. Based on the roadmap doc, add a `docs/` or `examples/` section with three template setups:
-   - **Minimal Core Stack**
-   - **Data Ingest / ETL Stack**
-   - **AI / Agentic Stack**
-2. For each stack, add:
-   - A short markdown description.
-   - Example TypeScript snippet showing how to wire:
-     - `createDefaultHttpClient`.
-     - Optional pagination/policies/guardrails.
-     - For AI stack: `ConversationEngine` + `OpenAIProviderAdapter`.
-3. Ensure examples compile (either via example tsconfig or by including them in tests).
+- `libs/finra-client`
+- Any other HTTP clients present in the repo.
 
-### 12.2 Acceptance Criteria
+For each client:
 
-- Developers can open `docs/specs/resilient_http_core_roadmap_and_satellite_libs_v0_7.md` and follow links/code references to real examples that compile in the repo.
+1. Inject `HttpClient` from `@airnub/resilient-http-core` via config.
+2. Use `requestJson` / `requestText` / `requestRaw` as appropriate.
+3. Set `operation` for every request (e.g. `'finra.getShortInterest'`).
+4. Pass meaningful `agentContext` and `extensions` where available (e.g. for background jobs vs interactive calls).
+5. Use `@airnub/resilient-http-pagination` for any multi‑page APIs instead of hand‑rolled paging.
+6. Integrate `@airnub/resilient-http-policies` where you need budgets/rate‑limit enforcement.
+
+Do **not** add FINRA/SEC/UW‑specific logic to core or satellites.
 
 ---
 
-## 13. Definition of Done
+## 5. Safety & Regression Guardrails
 
-The implementation/refactor is **complete** when:
+When refactoring, **do not regress** the following behaviours:
 
-1. All specs listed in Section 1 are implemented and the public APIs match.
-2. All packages build successfully with TypeScript `strict` mode.
-3. All tests pass, including new tests for satellites and refactored clients.
-4. The example/template stacks compile and demonstrate:
-   - A minimal core-only HTTP client.
-   - A paginated + rate-limited data ingest worker.
-   - A small agentic stack using conversation core + OpenAI HTTP wrapper + guardrails.
-5. There are no stray gRPC-specific dependencies or code paths.
-6. Documentation is consistent:
-   - Each package has a `README.md`.
-   - Specs in `docs/specs/` are referenced from the relevant package README.
+- Caching support for `requestJson` (when configured).
+- Retry with backoff and use of `Retry-After`/`suggestedBackoffMs` when provided.
+- Rate‑limit feedback parsing into `RateLimitFeedback`.
+- Interceptor ordering and ability to mutate requests.
+- JSON serialization defaults and `Content-Type` handling.
+- Tracing and metrics hooks.
+- Legacy pagination fields (`pageSize`, `pageOffset`) behaviour.
+- Legacy `beforeRequest` / `afterResponse` hooks via the interceptor bridge.
 
-When you make changes, prefer small, focused commits that reference the relevant spec section (e.g., `core v0.7 §3.1 ResilienceProfile`). This makes future audits and externalisation to a dedicated `airnub-http` org much easier.
+If you need to change any of the above, adjust the spec **first**, then change the implementation.
+
+---
+
+## 6. Done Definition
+
+You are **done** when:
+
+- `@airnub/resilient-http-core` compiles and is fully aligned with `resilient_http_core_spec_v_0_7.md`.
+- All satellite packages compile and match their respective specs.
+- The HTTP clients in `libs/` use the new core and satellites where appropriate.
+- All tests pass, and you have added new tests for:
+  - Core retry/backoff, caching, rate‑limit feedback, interceptors, metrics, tracing.
+  - Pagination strategies and limits.
+  - Policies engine decisions and interceptor.
+  - Agent conversation flows and provider adapters.
+  - Browser guardrails blocking/allowing requests.
+  - OpenAI HTTP wrapper request/response mapping.
+- No package introduces gRPC, heavy resilience frameworks, or telemetry frameworks as dependencies.
+
+Throughout, keep the ecosystem:
+
+> **Core: stable contracts & boring HTTP.**  
+> **Satellites: all the interesting, fast‑moving stuff.**
 

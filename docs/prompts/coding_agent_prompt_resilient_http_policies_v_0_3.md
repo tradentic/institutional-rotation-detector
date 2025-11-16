@@ -1,110 +1,144 @@
 # CODING_AGENT_PROMPT.md — `@airnub/resilient-http-policies` v0.3
 
-## 0. Role & Context
+## 0. Role & Scope
 
-You are a **senior TypeScript engineer**. Your task is to implement or align `@airnub/resilient-http-policies` with its v0.3 spec, so it can apply **rate limits, concurrency limits, and resilience overrides** around `@airnub/resilient-http-core`.
+You are a **senior TypeScript engineer** working in the `tradentic/institutional-rotation-detector` monorepo.
 
-This package must be completely decoupled from core, using only public types and an interceptor.
+Your job in this prompt is **only** to implement and align the package:
+
+> `@airnub/resilient-http-policies`
+
+with its v0.3 spec, built on top of **`@airnub/resilient-http-core` v0.7**.
+
+Do not modify other packages except for minimal type/import fixes.
 
 ---
 
 ## 1. Source of Truth
 
-Use this spec as authoritative:
+Treat these documents as the **source of truth** for this package:
 
-- `docs/specs/resilient_http_policies_spec_v_0_3.md`
+- Core v0.7 spec:
+  - `docs/specs/resilient_http_core_spec_v_0_7.md`
+- Policies v0.3 spec:
+  - `docs/specs/resilient_http_policies_spec_v_0_3.md`
 
-If code disagrees with the spec, the spec wins.
+If code and docs disagree, **the docs win**.
 
 ---
 
 ## 2. Global Constraints
 
-- TypeScript with `strict: true`.
-- No direct network calls.
-- No required external storage (Redis, DB, etc.) — in-memory engine first.
-- No modifications to `@airnub/resilient-http-core`.
+- Language: **TypeScript** with `strict: true`.
+- Depends on `@airnub/resilient-http-core` types and interceptor interfaces.
+- Must not:
+  - Implement its own HTTP transport.
+  - Pull in heavy resilience/telemetry frameworks.
+  - Embed FINRA/SEC/UW/OpenAI-specific policies — all domain-specific usage should live in consumers.
 
 ---
 
-## 3. Tasks
+## 3. Implementation Tasks
 
-### 3.1 Core Types & Engine Interface
+### 3.1 Core Concepts & Types
 
-Implement or align these types exactly as per the spec:
+Implement all types defined in `resilient_http_policies_spec_v_0_3.md`, including:
 
-- `RequestClass` — `'interactive' | 'background' | 'batch'`.
-- `PolicyScope` — derived from `HttpRequestOptions`, `AgentContext`, `extensions`.
-- `ScopeSelector` — configuration for matching scopes (client, operation, method, requestClass, ai.provider/model/tool, tenant, etc.).
-- `PolicyDefinition` — includes:
-  - `key`, `priority`.
-  - `rateLimit?: RateLimitRule`.
-  - `concurrency?: ConcurrencyRule`.
-  - `resilienceOverride?: ResilienceOverride`.
-  - Queueing / failure mode settings (e.g. `failOpen`/`failClosed`).
-- `PolicyDecision` — `'allow' | 'delay' | 'deny'` + `delayBeforeSendMs` + `resilienceOverride`.
-- `PolicyOutcome` — includes policy key, delayMs, bucket keys, etc.
-- `PolicyEngine` interface — `evaluate()` + `onResult()`.
+- Policy scoping & classification:
+  - `PolicyScope` (fields for client, operation, agent, runId, provider, model, bucket, etc.).
+  - `RequestClass` (e.g., `'interactive' | 'background' | 'batch'`).
+- Limits & hints:
+  - `PolicyRateLimit` (max requests/tokens per interval).
+  - `PolicyConcurrencyLimit` (max concurrent requests).
+  - `PolicyResilienceHints` (overrides/guidance for `ResilienceProfile`).
+  - `PolicyDefinition` (combining the above with priority).
+- Flow types:
+  - `PolicyRequestContext` (what the engine sees before a request).
+  - `PolicyDecision` (`'allow' | 'delay' | 'deny'` + delayMs + resilienceOverrides).
+  - `PolicyResultContext` (outcome, including `RequestOutcome` and `RateLimitFeedback`).
+- Engine interface:
+  - `PolicyEngine` with `evaluate()` and `onResult()`.
+
+Export all public types from this package’s barrel file.
 
 ### 3.2 In-Memory Policy Engine
 
-Implement `createInMemoryPolicyEngine(config)` as in the spec:
+Implement an `InMemoryPolicyEngine` that satisfies `PolicyEngine`:
 
-- Holds `PolicyDefinition[]`.
-- Evaluates `PolicyScope` against definitions using `ScopeSelector` semantics.
-- Tracks per-bucket:
-  - Sliding-window request counts for rate limits.
-  - In-flight counts for concurrency.
-- Produces `PolicyDecision` with `allow`/`delay`/`deny` and resilience overrides.
-- Exposes `onResult` to update internal counters based on `RequestOutcome` and `RateLimitFeedback`.
+- Stores `PolicyDefinition`s keyed by some combination of `PolicyScope` dimensions.
+- Computes sliding-window rate limits per key.
+- Tracks in-flight request counts for concurrency limits.
+- Supports different priority or specificity rules when multiple policies match.
+- Computes `PolicyDecision` with:
+  - `allow`: request may proceed now.
+  - `delay`: caller must wait `delayMs` before sending.
+  - `deny`: request is rejected (caller should fail fast).
 
-Add helper factories:
+`InMemoryPolicyEngine` is single-process only; future engines (Redis/distributed) can reuse the same interface.
 
-- `createBasicRateLimitPolicy(...)`.
-- `createBasicConcurrencyPolicy(...)`.
-- `createBasicInMemoryPolicyEngine(...)`.
+### 3.3 Policy-Aware Interceptor
 
-### 3.3 HTTP Interceptor
+Implement `createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRequestInterceptor` using the v0.7 interceptor types from core:
 
-Implement `createPolicyInterceptor(options)` that returns a `HttpRequestInterceptor` compatible with `@airnub/resilient-http-core`:
+- `beforeSend`:
+  - Derive a `PolicyScope` from `ctx.request`:
+    - `client` (from `HttpClientConfig.clientName`, passed via config or extensions).
+    - `operation` from `ctx.request.operation`.
+    - `agent`, `runId` from `ctx.request.agentContext`.
+    - AI fields from `ctx.request.extensions` (e.g., `ai.provider`, `ai.model`).
+    - Any bucket/tenant from `extensions`/headers as per spec.
+  - Build a `PolicyRequestContext` and call `engine.evaluate()`.
+  - Enforce the decision:
+    - `allow`: proceed.
+    - `delay`: `await` a `sleep(decision.delayMs)` before proceeding.
+    - `deny`: throw a descriptive error (include scope + rule info).
+  - If `resilienceOverrides` is set, merge them into `ctx.request.resilience` following the core-v0.7 merging rules.
 
-- In `beforeSend`:
-  - Derive `PolicyScope` from `HttpRequestOptions`, `AgentContext`, and `extensions`.
-  - Call `engine.evaluate(scope)`.
-  - If decision is `deny`, throw a well-typed error (e.g. `PolicyDeniedError`).
-  - If `delay`, await the specified delay.
-  - Merge `resilienceOverride` into `request.resilience`.
+- `afterResponse` / `onError`:
+  - Build a `PolicyResultContext` with:
+    - The final `RequestOutcome` (if available) or derive an outcome approximation from status/category.
+    - Any `RateLimitFeedback` attached in `extensions` or from response headers.
+  - Call `engine.onResult()` so the engine can update its internal stats (sliding windows, error rates, concurrency).
 
-- In `afterResponse` / `onError`:
-  - Build a `PolicyOutcome` from the decision + `RequestOutcome`.
-  - Call `engine.onResult(...)`.
+Ensure the interceptor is compatible with core v0.7’s `HttpRequestInterceptor` shape.
 
-Ensure this interceptor does **not** own retries or low-level resilience (core handles that).
+### 3.4 Configuration & Matching
+
+- Implement a small matching layer that maps a `PolicyScope` to applicable `PolicyDefinition`s.
+- Allow matching by:
+  - Exact values (e.g., `client === 'finra'`, `provider === 'openai'`).
+  - Wildcards/suffix matches where required by the spec.
+- When multiple policies match, apply precedence rules defined in the spec (e.g., most specific wins, or highest priority field).
 
 ---
 
 ## 4. Tests
 
-Create tests that verify:
+Add tests under this package to cover:
 
-- Scope matching and precedence (priority wins).
-- Rate limiting behaviour:
-  - Requests allowed until the window is full.
-  - Subsequent requests delayed or denied according to policy.
+- Rate-limiting behaviour:
+  - Requests allowed under limit.
+  - Requests delayed when near/exceeding limit.
+  - Requests denied when clearly over limit.
 - Concurrency limits:
-  - Only `maxConcurrent` requests in-flight per bucket.
-  - Additional requests delayed/denied as configured.
-- Fail-open vs fail-closed options when the engine itself errors.
-- Correct propagation of `resilienceOverride` into `HttpRequestOptions.resilience`.
-
-Use fake time (e.g., Jest fake timers) and a fake `HttpClient` to keep tests deterministic.
+  - Max concurrent enforced per policy key.
+- Policy scoping & matching:
+  - Correct matching by client, operation, provider, model, bucket, etc.
+- Resilience overrides:
+  - Interceptor merges `resilienceOverrides` into `HttpRequestOptions` correctly.
+- Integration with core v0.7 interceptors:
+  - Use a fake `HttpClient` + `HttpRequestInterceptor` chain to validate that decisions are respected.
 
 ---
 
-## 5. Acceptance Criteria
+## 5. Done Definition
 
-- Public types and functions match `resilient_http_policies_spec_v_0_3.md`.
-- Policies are enforced purely via interceptors; core is unchanged.
-- In-memory engine works for single-process usage and is covered by tests.
-- Example configuration exists (in tests or docs) for limiting requests per client/provider/model.
+You are **done** for this prompt when:
+
+- The package compiles and exports all types/APIs required by `resilient_http_policies_spec_v_0_3.md`.
+- The `InMemoryPolicyEngine` behaves correctly under unit tests.
+- `createPolicyInterceptor` integrates cleanly with core v0.7’s `HttpRequestInterceptor` and respects `ResilienceProfile`.
+- No HTTP transports, heavy resilience libs, or telemetry frameworks are added here.
+
+Do not modify other packages beyond necessary types/imports.
 

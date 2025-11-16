@@ -1,118 +1,137 @@
 # CODING_AGENT_PROMPT.md — `@airnub/agent-browser-guardrails` v0.2
 
-## 0. Role & Context
+## 0. Role & Scope
 
-You are a **senior TypeScript engineer**. Your task is to implement or align `@airnub/agent-browser-guardrails` with the v0.2 spec.
+You are a **senior TypeScript engineer** working in the `tradentic/institutional-rotation-detector` monorepo.
 
-This package provides **surface-level safety** for AI-driven HTTP and browser navigation: host/path/method restrictions, header redaction, and URL classification. It is separate from quotas/policies.
+Your job in this prompt is **only** to implement and align the package:
+
+> `@airnub/agent-browser-guardrails`
+
+with its v0.2 spec, built on top of **`@airnub/resilient-http-core` v0.7**.
+
+This package provides **safety guardrails** for AI-driven HTTP usage (agentic browsing, tools). Do not modify other packages except for minimal wiring.
 
 ---
 
 ## 1. Source of Truth
 
-Use this spec as authoritative:
+Treat these documents as the **source of truth** for this package:
 
-- `docs/specs/resilient_http_agent_browser_guardrails_spec_v_0_2.md`
+- Core v0.7 spec:
+  - `docs/specs/resilient_http_core_spec_v_0_7.md`
+- Browser guardrails v0.2 spec:
+  - `docs/specs/resilient_http_agent_browser_guardrails_spec_v_0_2.md`
 
-If existing code disagrees with the spec, the spec wins.
+If code and docs disagree, **the docs win**.
 
 ---
 
 ## 2. Global Constraints
 
-- TypeScript with `strict: true`.
-- No direct network calls.
-- No dependency on `@airnub/resilient-http-policies` (they are separate concerns).
+- Language: **TypeScript** with `strict: true`.
+- Depends on `@airnub/resilient-http-core` for `HttpRequestInterceptor` and related types.
+- Must not:
+  - Implement its own HTTP transport.
+  - Introduce heavy security frameworks — keep it lightweight policies + interceptors.
 
 ---
 
-## 3. Tasks
+## 3. Implementation Tasks
 
-### 3.1 Core Types
+### 3.1 Guardrail Concepts & Types
 
-Implement or align the following types exactly as per the spec:
+Implement all core types from `resilient_http_agent_browser_guardrails_spec_v_0_2.md`, including:
 
-- `GuardedRequestKind` — `'http-request' | 'browser-navigation'`.
-- `GuardrailScope` — normalized URL view (protocol, hostname, port, pathname, search, method, headers, contentType, bodySizeBytes, category, agentContext, extensions).
-- `StringMatcher` and `GuardrailSelector` — match on protocol, hostname (with wildcard semantics), port, pathPrefix, method, category, tenantId, agentName.
-- `GuardrailRuleKey`, `GuardrailPriority`.
-- `GuardrailAction` — `effect: 'allow' | 'block'`, plus header/query/body rules.
-- `GuardrailRule` — `selector`, `action`, `priority`, `key`, `description?`.
-- `GuardrailDecision` and `GuardrailEvaluationResult`.
-- `GuardrailEngine` interface — `evaluate(ctx)`.
+- Configuration types:
+  - Host rules: allowlists, denylists, wildcard patterns.
+  - Method rules: allowed methods per host or pattern (e.g. read-only vs mutating).
+  - Path rules: path prefixes/regexes allowed or denied.
+  - Payload limits: maximum body size, allowed content types.
+  - Per-agent/per-tool overrides keyed off `AgentContext` and `extensions` (e.g., `toolId`).
+- Decision/result types:
+  - `GuardrailDecision` (e.g. `allow`, `deny`, `modify`, with reason codes).
+  - Optional annotations that can be attached to `extensions` for telemetry (e.g., `extensions['guardrail.decision']`).
 
-### 3.2 Error Type
+Export all public types from this package’s barrel file.
 
-Implement `GuardrailViolationError`:
+### 3.2 Interceptor Implementation
 
-- Contains `ruleKey?`, `scope`, optional human-readable `reason`.
-- Thrown whenever a request or navigation is blocked.
+Implement a function:
 
-### 3.3 HTTP Integration
+```ts
+export function createBrowserGuardrailsInterceptor(config: BrowserGuardrailsConfig): HttpRequestInterceptor;
+```
 
-Implement `createHttpGuardrailInterceptor(options)` as a `HttpRequestInterceptor` compatible with `@airnub/resilient-http-core`:
+Using v0.7 core interceptor contexts:
 
-- Build a `GuardrailScope` from `HttpRequestOptions`:
-  - Construct full URL from `url` or `urlParts`.
-  - Parse using `URL`.
-  - Map `method`, `headers`, `AgentContext`, `extensions`.
-  - Derive `contentType` from headers.
-  - Optionally add `category`/`tenantId` via `classifyScope`.
-- Call `engine.evaluate({ scope })`.
-- If decision is `block`, throw `GuardrailViolationError`.
-- If `allow`, apply:
-  - Header redaction (`allowOnlyHeaders`, `stripHeaders`).
-  - Query parameter masking/dropping.
-  - Body size/content-type enforcement.
+- `beforeSend(ctx: BeforeSendContext)`:
+  - Extract:
+    - Target URL from `ctx.request.url` / `urlParts` / legacy `path`.
+    - HTTP method from `ctx.request.method`.
+    - Agent and tool metadata from `ctx.request.agentContext` and `ctx.request.extensions` (e.g., `extensions['tool.id']`).
+  - Evaluate guardrail rules:
+    - Host allow/deny rules.
+    - Method restrictions (e.g., disallow `POST/PUT/DELETE` to certain hosts or paths).
+    - Path and query constraints.
+    - Payload size bounds (if `body` length can be computed cheaply).
+  - If a rule is violated:
+    - Throw a descriptive error that explains which rule was triggered and why.
+    - Optionally annotate `ctx.request.extensions` with guardrail info before throwing.
 
-The interceptor must **not** handle retries or quotas.
+- `afterResponse` / `onError`:
+  - The spec may define post-response checks (e.g., content-type filtering, response size limits). Implement those if required.
+  - Use `AfterResponseContext` and `OnErrorContext` as defined in core v0.7.
 
-### 3.4 Browser Navigation Integration
+Ensure the interceptor is pure relative to the HTTP core — it must not call `fetch` or other transports itself.
 
-Implement:
+### 3.3 Agent/Tool-Aware Rules
 
-- `BrowserNavigationRequest`.
-- `BrowserNavigationGuard` interface.
-- `createBrowserNavigationGuard(options)`:
-  - Build `GuardrailScope` with `kind = 'browser-navigation'`.
-  - Call `engine.evaluate({ scope })`.
-  - Throw `GuardrailViolationError` on `block`.
+Support rules that vary by:
 
-This is designed for use with headless browsers (Playwright, etc.) outside this package.
+- `agentContext.agent` (e.g., `"browser-agent"`, `"scraper-agent"`).
+- `agentContext.labels` (e.g., environment, risk level).
+- `extensions['tool.id']` or similar fields for specific tools.
 
-### 3.5 In-Memory Engine & Helpers
+Implement a simple override system so that, for example:
 
-Implement:
+- Default: only GET/HEAD allowed to external hosts.
+- Specific tool: allow POST to a safe internal API endpoint.
 
-- `createInMemoryGuardrailEngine(config)` with `GuardrailRule[]` and a default action.
-- Selection rules:
-  - Match rules via `GuardrailSelector` semantics.
-  - Pick the highest `priority` rule; break ties deterministically.
-- Opinionated helper:
-  - `createHostAllowlistGuardrails(options)` for simple host allowlisting.
+Matching and precedence rules must align with the v0.2 spec (e.g., more specific rules override global defaults).
+
+### 3.4 Error Design
+
+Errors thrown by guardrails should:
+
+- Extend `Error` and include a machine-readable code (e.g., `"GUARDRAIL_BLOCKED_HOST"`).
+- Include context for diagnostics (host, method, path, agent/tool IDs — but avoid leaking sensitive data).
+
+These errors may be surfaced to higher-level agent orchestration, so keep the message clear.
 
 ---
 
 ## 4. Tests
 
-Create tests that use fake `HttpRequestOptions` and browser navigation requests:
+Add tests under this package to cover:
 
-- Host/path/method allow/block cases.
-- Header redaction and query masking:
-  - `allowOnlyHeaders` vs `stripHeaders`.
-  - Mask vs drop query params.
-- Body constraints:
-  - Block on size too large.
-  - Block on disallowed content-types.
-- Distinction from policies:
-  - Ensure this package does not reference `PolicyEngine` or `PolicyDeniedError`.
+- Host allow/deny behaviour for various URLs (HTTP/HTTPS, ports, subdomains).
+- Method restrictions for different hosts and paths.
+- Path and payload size checks.
+- Per-agent/per-tool overrides (different outcomes for same URL/method based on metadata).
+- That the interceptor works correctly in a chain with other core v0.7 interceptors.
+
+Use fake `HttpRequestOptions` and context objects to test rule evaluation without making real HTTP calls.
 
 ---
 
-## 5. Acceptance Criteria
+## 5. Done Definition
 
-- Public API matches `resilient_http_agent_browser_guardrails_spec_v_0_2.md`.
-- `createHttpGuardrailInterceptor` and `createBrowserNavigationGuard` work with a `GuardrailEngine` and throw `GuardrailViolationError` on blocked surfaces.
-- In-memory engine and helpers are covered by deterministic tests.
-- No coupling to rate limiting or budgets (those belong to `@airnub/resilient-http-policies`).
+You are **done** for this prompt when:
+
+- The package compiles and exports all guardrail types and the `createBrowserGuardrailsInterceptor` function described in `resilient_http_agent_browser_guardrails_spec_v_0_2.md`.
+- The interceptor integrates with core v0.7’s `HttpRequestInterceptor` interfaces and does not perform HTTP itself.
+- Tests demonstrate correct blocking/allowing behaviour under different rules and agent/tool contexts.
+
+Do not modify `@airnub/resilient-http-core` or other satellites in this prompt beyond what is necessary for type imports.
 
