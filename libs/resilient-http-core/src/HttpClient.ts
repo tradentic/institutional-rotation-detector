@@ -1,9 +1,13 @@
 import { fetchTransport } from './transport/fetchTransport';
 import type {
+  AgentContext,
   BaseHttpClientConfig,
   BeforeSendContext,
   ClassifiedError,
+  CorrelationInfo,
   ErrorCategory,
+  ErrorClassifier,
+  Extensions,
   FallbackHint,
   HttpHeaders,
   HttpRequestInterceptor,
@@ -31,6 +35,67 @@ const RETRYABLE_ERROR_CATEGORIES = new Set<ErrorCategory>([
   'transient',
 ]);
 
+const statusToCategory = (status: number): ErrorCategory => {
+  if (status === 401 || status === 403) return 'auth';
+  if (status === 404) return 'not_found';
+  if (status === 400 || status === 422) return 'validation';
+  if (status === 402) return 'quota';
+  if (status === 429) return 'rate_limit';
+  if (status === 408) return 'timeout';
+  if (status >= 500) return 'transient';
+  if (status === 0) return 'network';
+  return 'unknown';
+};
+
+const parseRetryAfter = (value?: string | null): number | undefined => {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (!Number.isNaN(seconds)) {
+    return seconds * 1000;
+  }
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    const diff = date - Date.now();
+    return diff > 0 ? diff : undefined;
+  }
+  return undefined;
+};
+
+class DefaultErrorClassifier implements ErrorClassifier {
+  classify({ request: _request, response, error }: { request: HttpRequestOptions; response?: Response; error?: unknown }): ClassifiedError {
+    if (error instanceof TimeoutError) {
+      return { category: 'timeout', statusCode: 408, retryable: true, reason: 'timeout' };
+    }
+
+    if (error instanceof HttpError) {
+      return {
+        category: error.category,
+        statusCode: error.status,
+        retryable: RETRYABLE_ERROR_CATEGORIES.has(error.category),
+        suggestedBackoffMs: error.fallback?.retryAfterMs,
+        reason: 'http_error',
+      };
+    }
+
+    if (response) {
+      const category = statusToCategory(response.status);
+      return {
+        category,
+        statusCode: response.status,
+        retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
+        suggestedBackoffMs: parseRetryAfter(response.headers.get('retry-after')),
+        reason: 'http_response',
+      };
+    }
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { category: 'canceled', retryable: false, reason: 'aborted' };
+    }
+
+    return { category: 'network', retryable: true, reason: 'network_error' };
+  }
+}
+
 interface ExecuteOptions {
   parseJson: boolean;
   allowRetries: boolean;
@@ -53,6 +118,7 @@ export class HttpClient {
   private readonly transport: HttpTransport;
   private readonly logger?: Logger;
   private readonly interceptors: HttpRequestInterceptor[];
+  private readonly defaultErrorClassifier: ErrorClassifier = new DefaultErrorClassifier();
 
   constructor(private readonly config: BaseHttpClientConfig) {
     this.baseUrl = this.normalizeBaseUrl(config.baseUrl);
@@ -493,6 +559,13 @@ export class HttpClient {
           category,
           fallback,
           response,
+          correlation: opts.correlation ?? {
+            requestId: opts.requestId!,
+            correlationId: opts.correlationId,
+            parentCorrelationId: opts.parentCorrelationId,
+          },
+          agentContext: opts.agentContext,
+          extensions: opts.extensions,
         });
       }
 
@@ -931,11 +1004,9 @@ export class HttpClient {
     request: HttpRequestOptions,
     response?: Response,
   ): ClassifiedError | undefined {
-    if (!this.config.errorClassifier) {
-      return undefined;
-    }
+    const classifier = this.config.errorClassifier ?? this.defaultErrorClassifier;
     try {
-      return this.config.errorClassifier.classify({ request, response, error });
+      return classifier.classify({ request, response, error });
     } catch (classifierError) {
       this.logger?.warn('http.classifier.error', {
         client: this.clientName,
@@ -1173,15 +1244,7 @@ export class HttpClient {
   }
 
   private mapStatusToCategory(status: number): ErrorCategory {
-    if (status === 401 || status === 403) return 'auth';
-    if (status === 404) return 'not_found';
-    if (status === 400 || status === 422) return 'validation';
-    if (status === 402) return 'quota';
-    if (status === 429) return 'rate_limit';
-    if (status === 408) return 'timeout';
-    if (status >= 500) return 'transient';
-    if (status === 0) return 'network';
-    return 'unknown';
+    return statusToCategory(status);
   }
 }
 
@@ -1192,6 +1255,9 @@ export class HttpError extends Error {
   category: ErrorCategory;
   fallback?: FallbackHint;
   response?: Response;
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
 
   constructor(
     message: string,
@@ -1202,6 +1268,9 @@ export class HttpError extends Error {
       category: ErrorCategory;
       fallback?: FallbackHint;
       response?: Response;
+      correlation?: CorrelationInfo;
+      agentContext?: AgentContext;
+      extensions?: Extensions;
     },
   ) {
     super(message);
@@ -1212,6 +1281,9 @@ export class HttpError extends Error {
     this.category = options.category;
     this.fallback = options.fallback;
     this.response = options.response;
+    this.correlation = options.correlation;
+    this.agentContext = options.agentContext;
+    this.extensions = options.extensions;
   }
 }
 
