@@ -1,510 +1,555 @@
 # Resilient HTTP Core — Specification v0.7.0
 
-> **Status:** Draft (intended to become the first “API-stable” 1.0 base)
->
-> **Scope:** HTTP-only resilience + observability core for Node/Browser/Edge runtimes.
->
-> **Non-goals:** gRPC, WebSockets, domain-specific SDKs, or high-level agent logic.
-
-This document defines the **v0.7.0** specification for `@airnub/resilient-http-core`. It is intended to be complete enough that a developer or coding agent can implement a conforming TypeScript library without referring to previous versions.
+> **Package:** `@airnub/resilient-http-core`  
+> **Status:** Draft / Source of truth for implementation  
+> **Supersedes:** v0.6 spec (this document is self‑contained and includes all v0.6 semantics + v0.7 refinements)
 
 ---
 
-## 1. Design Goals & Principles
+## 1. Goals & Non‑Goals
 
-### 1.1 Primary Goals
+### 1.1 Goals
 
-1. **Single, resilient HTTP substrate** for all Airnub/Tradentic libraries and apps.
-2. **Runtime-agnostic** (Node, Browser, Edge), with **fetch-first** design.
-3. **No mandatory external dependencies** by default (no OTEL, no Redis, no Cockatiel).
-4. **First-class resilience & observability:**
-   - Timeouts, retries, budgets, error classification.
-   - Request IDs, correlation IDs, AgentContext.
-   - Metrics, logs, and tracing hooks.
-5. **Extensible via interceptors**, not inheritance or deep configuration trees.
-6. **Stable core, fast-moving satellites:**
-   - Core knows HTTP + resilience + telemetry shapes.
-   - Satellite libraries implement pagination, policy engines, agent logic, provider clients, browser guardrails, etc.
+`@airnub/resilient-http-core` provides a **small, boring, provider‑agnostic HTTP substrate** for Node/browser runtimes:
 
-### 1.2 Non-Goals
+- A single **`HttpClient`** abstraction on top of `fetch`‑like transports.
+- First‑class **resilience**: retries, timeouts, rate‑limit awareness.
+- First‑class **telemetry hooks**: logging, metrics, tracing.
+- **Interceptors** for extension, guardrails, and policies.
+- **Agent‑friendly metadata**: `AgentContext`, correlation IDs, `extensions` bag.
+- **Zero external dependencies by default** (no Redis, OTEL, specific resilience libs).
 
-- Not a full OpenAPI client generator.
-- Not a generic RPC framework.
-- Not a content-safety or guardrail engine (that lives in satellites).
-- Not a job scheduler or queue.
+### 1.2 Non‑Goals
 
----
-
-## 2. Core TypeScript Environment
-
-The spec assumes a TypeScript environment with the following:
-
-- `fetch`, `Request`, `Response`, `AbortController` (or polyfills).
-- ES2019 or later.
-
-All type examples below use TypeScript-style syntax, but a conforming implementation can be in any language as long as the semantics are preserved.
+- No built‑in support for:
+  - gRPC (HTTP(S) only).
+  - Domain‑specific APIs (FINRA, SEC, OpenAI, etc.).
+  - Heavy resilience frameworks (cockatiel, resilience4ts, etc.).
+  - Telemetry frameworks (OpenTelemetry, Prometheus, Datadog, etc.).
+- No opinionated pagination or policy engines in core:
+  - Those live in satellites: `@airnub/resilient-http-pagination`, `@airnub/resilient-http-policies`.
 
 ---
 
-## 3. Core Data Types & Interfaces
+## 2. Versioning & Compatibility
 
-### 3.1 HTTP Basics
+- **v0.5** introduced:
+  - Basic `HttpClient` on top of `fetchTransport`.
+  - Logging, metrics, tracing hooks.
+  - Optional cache, rate limiter, circuit breaker.
+- **v0.6** added:
+  - `ResilienceProfile` on requests.
+  - `ErrorCategory`, `ClassifiedError`, and `ErrorClassifier`.
+  - `RequestOutcome` and `RateLimitFeedback` into metrics.
+  - `HttpRequestInterceptor` chain (`beforeSend`, `afterResponse`, `onError`).
+- **v0.7 (this spec)**:
+  - Consolidates v0.5 + v0.6 semantics into a single spec.
+  - Clarifies **URL building**, **correlation**, and **resilience budgets**.
+  - Tightens **interceptor contracts** into structured context objects.
+  - Formalises **backoff & rate‑limit handling**.
+  - Marks pagination‑specific fields as legacy and encourages satellites.
+
+> **Design intent:** v0.7 is **additive** over v0.6.  
+> Existing v0.6 behaviour **must remain valid** (or be supported via shims) while new features are available.
+
+---
+
+## 3. Core Types
+
+All types are exported from `src/types.ts`.
+
+### 3.1 HTTP primitives
 
 ```ts
 export type HttpMethod =
-  | "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+  | 'GET'
+  | 'HEAD'
+  | 'OPTIONS'
+  | 'POST'
+  | 'PUT'
+  | 'PATCH'
+  | 'DELETE';
 
 export type HttpHeaders = Record<string, string>;
 
 export interface UrlParts {
-  /** Base URL such as "https://api.example.com". */
-  baseUrl?: string;
-  /** Path, e.g. "/v1/resources". Must NOT contain query string. */
-  path?: string;
-  /** Query parameters merged with any existing query on url/baseUrl+path. */
-  query?: Record<string, string | number | boolean | undefined>;
+  baseUrl?: string;      // e.g. 'https://api.example.com'
+  path?: string;         // e.g. '/v1/items'
+  query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
 }
 ```
 
-### 3.2 AgentContext & Metadata
+The client supports two mutually exclusive ways to specify the target:
 
-`AgentContext` answers: **who/what is making this call?**
+- `url` — full URL string, used as‑is (except query merging).
+- `urlParts` — base, path, and query that the client composes.
 
-```ts
-export interface AgentContext {
-  /** Logical agent or component name (e.g. "rotation-detector", "browser-agent"). */
-  agent?: string;
-  /** Unique run/workflow ID (e.g. a job id, trace id, or agent run id). */
-  runId?: string;
-  /** Stable, low-cardinality labels (e.g. env, logical subsystem). */
-  labels?: Record<string, string>;
-  /** Additional metadata stable for the life of this run. */
-  metadata?: Record<string, unknown>;
-}
-```
+Legacy `path` + `query` are still supported (see § 8), but v0.7 encourages `url`/`urlParts`.
 
-**Extensions** answer: **what extra attributes does this specific request have that might affect routing or policies?**
-
-```ts
-export type Extensions = Record<string, unknown>;
-```
-
-Implementations SHOULD treat extensions as an opaque bag, but RECOMMEND the following conventional keys for AI/LLM use cases:
-
-- `ai.provider` (e.g. `"openai"`, `"anthropic"`).
-- `ai.model` (e.g. `"gpt-5.1-mini"`).
-- `ai.operation` (e.g. `"responses.create"`, `"chat"`).
-- `ai.tool` (agent/tool identifier making the call).
-- `ai.tenant` (tenant identifier).
-
-### 3.3 Correlation IDs & Request Identity
-
-Each request MAY carry the following identifiers:
+### 3.2 Correlation & AgentContext
 
 ```ts
 export interface CorrelationInfo {
-  /** Unique identifier for this HTTP request attempt chain. */
-  requestId?: string;
-  /** Correlates this logical request across services. */
-  correlationId?: string;
-  /** ID of the parent request (e.g. upstream call) if any. */
-  parentCorrelationId?: string;
+  requestId: string;             // required; auto‑generated when absent
+  correlationId?: string;        // logical trace id
+  parentCorrelationId?: string;  // parent span/request id
 }
+
+export interface AgentContext {
+  agent?: string;                      // e.g. 'rotation-score-agent'
+  runId?: string;                      // e.g. 'conv-123:turn-4'
+  labels?: Record<string, string>;     // e.g. { tier: 'experiment' }
+  metadata?: Record<string, unknown>;  // arbitrary, small metadata
+}
+
+export type Extensions = Record<string, unknown>;
 ```
 
-**Rules:**
+The client **must always ensure** a `CorrelationInfo.requestId` exists:
 
-- If `correlationId` is set and `parentCorrelationId` is not, implementations MAY propagate the parent from a higher context.
-- Implementations MUST ensure `requestId` is unique per end-to-end request invocation (including all retries).
-- Implementations SHOULD surface these IDs in logs, metrics, and traces.
+- If the caller provides `correlation.requestId`, it is preserved.
+- Otherwise, the client generates a UUID (e.g. `crypto.randomUUID()` in Node/browser).
 
-### 3.4 ResilienceProfile
-
-`ResilienceProfile` specifies how a request may use time and attempts.
-
-```ts
-export interface ResilienceProfile {
-  /**
-   * Maximum number of attempts (including the first) that the client is
-   * allowed to make for this logical request.
-   */
-  maxAttempts?: number; // default: 1 (no retries)
-
-  /**
-   * Maximum per-attempt timeout in milliseconds. If exceeded, the attempt
-   * MUST be aborted and MAY be retried (subject to maxAttempts and error
-   * classification).
-   */
-  perAttemptTimeoutMs?: number;
-
-  /**
-   * Maximum end-to-end time budget for all attempts combined, in ms.
-   * If exceeded, the client MUST NOT start a new attempt and MUST fail.
-   */
-  overallTimeoutMs?: number;
-
-  /**
-   * Hints for retry behaviour. Concrete backoff policies live in interceptors
-   * or implementation details.
-   */
-  retryEnabled?: boolean; // default: true if maxAttempts > 1
-
-  /**
-   * If true, errors should fail fast without queuing or waiting for backlog
-   * to drain. Used by policy engines/bulkheads.
-   */
-  failFast?: boolean;
-
-  /**
-   * Optional name of a policy or bucket (for policy engines). The core
-   * does not interpret this value.
-   */
-  policyBucket?: string;
-}
-```
-
-### 3.5 Error Classification
+### 3.3 ErrorCategory & ClassifiedError
 
 ```ts
 export type ErrorCategory =
-  | "none"           // no error
-  | "transient"      // network/5xx/transient provider error
-  | "rateLimit"      // 429 or equivalent
-  | "auth"           // auth/permission error
-  | "validation"     // bad request, schema/validation error
-  | "quota"          // usage limit exceeded
-  | "safety"         // safety/guardrail/provider-enforced block
-  | "canceled"       // caller aborted
-  | "timeout"        // client-side timeout
-  | "unknown";       // everything else
+  | 'none'
+  | 'auth'
+  | 'validation'
+  | 'not_found'
+  | 'quota'
+  | 'rate_limit'
+  | 'timeout'
+  | 'transient'
+  | 'network'
+  | 'canceled'
+  | 'unknown';
 
 export interface ClassifiedError {
   category: ErrorCategory;
-  /** Optional human-readable reason or code. */
-  reason?: string;
-  /** HTTP status code, if known. */
-  statusCode?: number;
-  /** Hint: is this error retryable? Defaults derived from category if unset. */
-  retryable?: boolean;
+  statusCode?: number;          // HTTP status where applicable
+  retryable?: boolean;          // defaults to heuristic if undefined
+  suggestedBackoffMs?: number;  // may be used to override backoff
+  reason?: string;              // human‑readable explanation
 }
 
-export interface ErrorClassifier {
-  classifyNetworkError(err: unknown): ClassifiedError;
-  classifyResponse(response: Response): ClassifiedError;
+export interface ResponseClassification {
+  treatAsError?: boolean;         // default: !response.ok
+  overrideStatus?: number;        // override response.status for metrics & errors
+  category?: ErrorCategory;       // override derived category
+  fallback?: FallbackHint;        // provider‑specific fallback
+}
+
+export interface FallbackHint {
+  retryAfterMs?: number;          // ms to wait before retrying
+  degradeToOperation?: string;    // e.g., 'fallback-model', for higher layers
 }
 ```
 
-An implementation MUST provide a default `ErrorClassifier` with sensible mapping from HTTP statuses and network errors to `ErrorCategory` values.
+> **Note:** v0.6 used some categories with slightly different names (e.g. `rateLimit`).  
+> v0.7 **canonicalises** to the kebab style above; classifier implementations must map older names to these.
 
-### 3.6 Rate Limit Feedback
+### 3.4 ResilienceProfile & budgets
 
-`RateLimitFeedback` communicates rate-limit signal to metrics/policy engines.
+```ts
+export interface ResilienceProfile {
+  // Attempts / retry
+  maxAttempts?: number;           // total attempts (default: 1)
+  retryEnabled?: boolean;         // global on/off (default: true when maxAttempts > 1)
+
+  // Timing
+  perAttemptTimeoutMs?: number;   // per‑attempt timeout (ms)
+  overallTimeoutMs?: number;      // end‑to‑end deadline (ms)
+
+  // Backoff
+  baseBackoffMs?: number;         // base backoff (ms), default 250
+  maxBackoffMs?: number;          // cap for backoff, default 60_000
+  jitterFactorRange?: [number, number]; // e.g. [0.8, 1.2]
+
+  // Legacy fields (v0.6)
+  maxEndToEndLatencyMs?: number;  // maps onto overallTimeoutMs
+}
+
+export interface RequestBudget {
+  maxAttempts?: number;
+  maxTotalDurationMs?: number;
+}
+```
+
+Semantics:
+
+- **Primary knobs in v0.7**:
+  - `maxAttempts` / `retryEnabled`.
+  - `perAttemptTimeoutMs` / `overallTimeoutMs`.
+  - `baseBackoffMs`, `maxBackoffMs`, `jitterFactorRange`.
+- **Legacy v0.6 knobs**:
+  - `maxEndToEndLatencyMs` → treated as `overallTimeoutMs`.
+  - `RequestBudget` is still honoured if present on `HttpRequestOptions.budget`.
+
+The client must **merge** resilience from three layers:
+
+1. A library‑wide default (`HttpClientConfig.defaultResilience`).
+2. Operation‑level defaults (if exposed, optional).
+3. Per‑request override (`HttpRequestOptions.resilience`).
+
+The merged profile drives **attempt count**, **timeouts**, and **backoff**.
+
+### 3.5 RateLimitFeedback
 
 ```ts
 export interface RateLimitFeedback {
-  /** True if the response definitively indicates we hit a rate limit. */
-  isRateLimited: boolean;
-  /** Optional provider-specified reset time (e.g. from headers). */
-  resetAt?: Date;
-  /** Optional numeric limit and remaining values if known. */
-  limit?: number;
-  remaining?: number;
+  // Request‑based limits
+  limitRequests?: number;
+  remainingRequests?: number;
+  resetRequestsAt?: Date;
+
+  // Token‑based limits (LLMs, etc.)
+  limitTokens?: number;
+  remainingTokens?: number;
+  resetTokensAt?: Date;
+
+  // Derived booleans
+  isRateLimited?: boolean;      // true when response is clearly a rate limit
+
+  // Raw headers for debugging
+  rawHeaders?: Record<string, string>;
 }
 ```
 
-The `ErrorClassifier` or implementation MAY derive this from HTTP headers (e.g. `Retry-After`, `X-RateLimit-Remaining`).
+The client must expose best‑effort rate‑limit information parsed from common headers:
 
-### 3.7 RequestOutcome
+- `x-ratelimit-limit-requests`, `x-ratelimit-remaining-requests`, `x-ratelimit-reset-requests`
+- `x-ratelimit-limit-tokens`, `x-ratelimit-remaining-tokens`, `x-ratelimit-reset-tokens`
+- `retry-after`
 
-`RequestOutcome` captures the final result of a logical HTTP request (after all attempts).
+### 3.6 RequestOutcome
 
 ```ts
 export interface RequestOutcome {
   ok: boolean;
-  status?: number;            // final HTTP status, if any
-  errorCategory: ErrorCategory;
-  attempts: number;           // total attempts made
-  startedAt: Date;
-  finishedAt: Date;
+  status?: number;                 // effective HTTP status, or 0 on network errors
+  errorCategory?: ErrorCategory;   // 'none' when ok
+  attempts: number;                // attempts made
+  startedAt: number;               // epoch ms
+  finishedAt: number;              // epoch ms
   rateLimitFeedback?: RateLimitFeedback;
 }
 ```
 
-Implementations MUST populate `RequestOutcome` for each `HttpClient` call and pass it to telemetry sinks.
-
-### 3.8 HttpTransport
-
-`HttpTransport` is the low-level bridge to `fetch` or other HTTP libraries.
-
-```ts
-export type HttpTransport = (url: string, init: RequestInit) => Promise<Response>;
-```
-
-A conforming implementation:
-
-- MUST use an `AbortController` to represent timeouts.
-- MAY wrap other HTTP clients (e.g. axios) as long as the behaviour is consistent with `fetch`.
+`RequestOutcome` is computed **once**, after the last attempt, and passed to metrics and tracing.
 
 ---
 
-## 4. HttpRequestOptions & Client Configuration
+## 4. HttpClient API
 
 ### 4.1 HttpRequestOptions
 
-`HttpRequestOptions` describes a logical HTTP request. It is intentionally rich but must support a **minimal happy path** for casual use.
-
 ```ts
 export interface HttpRequestOptions {
-  // ---- Required basics ----
+  operation: string;            // logical operation name, e.g. 'finra.getShortInterest'
   method: HttpMethod;
 
-  /** Optional fully-qualified URL. If omitted, baseUrl + path + query are used. */
-  url?: string;
+  // URL
+  url?: string;                 // absolute URL, highest precedence
+  urlParts?: UrlParts;          // base + path + query
 
-  /** Optional URL parts. Used if url is not provided. */
-  urlParts?: UrlParts;
+  // Legacy URL fields (v0.6)
+  path?: string;                // relative or absolute URL
+  query?: Record<string, unknown>;
+  pageSize?: number;            // see § 8 (legacy pagination)
+  pageOffset?: number;          // see § 8 (legacy pagination)
 
+  // Body
+  body?: BodyInit | unknown;    // see § 4.4 for serialization rules
   headers?: HttpHeaders;
-  body?: BodyInit | null; // raw body; higher-level serializers live in interceptors
+  idempotencyKey?: string;      // for POST/PUT idempotency
 
-  // ---- Operation identity ----
-  /**
-   * Logical operation name, e.g. "openai.responses.create" or "finra.otc.get".
-   * Used for metrics, policies, and debugging.
-   */
-  operation: string;
+  // Resilience & budgets
+  resilience?: ResilienceProfile;
+  budget?: RequestBudget;       // legacy; folded into resilience
 
-  /** True if this operation is safe/idempotent for retries (e.g. GET). */
-  idempotent?: boolean;
-
-  /**
-   * Optional idempotency key for safe retry of non-GET operations. The core
-   * does not interpret this value; interceptors may convert it to headers.
-   */
-  idempotencyKey?: string;
-
-  // ---- Metadata & correlation ----
+  // Correlation, agent & metadata
   correlation?: CorrelationInfo;
   agentContext?: AgentContext;
   extensions?: Extensions;
 
-  // ---- Resilience & timeouts ----
-  resilience?: ResilienceProfile;
-
-  // ---- Cache hints (optional) ----
-  /** Whether the request is allowed to hit cache. Default true. */
-  cacheEnabled?: boolean;
-  /** Optional cache key override. */
-  cacheKey?: string;
-  /** Optional TTL in ms for successful responses. */
-  cacheTtlMs?: number;
-
-  // ---- Internal / advanced ----
-  /** Attempt number (1-based) for interceptors; set by the client, not callers. */
-  attempt?: number;
+  // Internal / advanced (optional)
+  attempt?: number;             // populated by HttpClient during retries
 }
-```
-
-**Minimal usage example** (what a simple caller might provide):
-
-```ts
-const result = await client.requestJson<MyType>({
-  method: "GET",
-  operation: "github.repos.list",
-  url: "https://api.github.com/user/repos",
-});
 ```
 
 ### 4.2 HttpClientConfig
 
 ```ts
 export interface HttpClientConfig {
-  /** Name for metrics/logging (e.g. "finra-client", "openai-client"). */
-  clientName: string;
+  clientName: string;               // e.g. 'finra', 'openai'
+  baseUrl?: string;                 // default base for UrlParts and legacy path
 
-  /** Optional default base URL. */
-  baseUrl?: string;
+  transport?: HttpTransport;        // defaults to fetchTransport
+  defaultHeaders?: HttpHeaders;     // applied to every request
 
-  /** Transport implementation (e.g. fetch). */
-  transport: HttpTransport;
-
-  /** Default headers applied to every request (caller headers override). */
-  defaultHeaders?: HttpHeaders;
-
-  /** Default resilience profile applied to requests (overridden per-request). */
   defaultResilience?: ResilienceProfile;
+  defaultAgentContext?: AgentContext;
 
-  /** Telemetry sinks (may be no-op). */
+  interceptors?: HttpRequestInterceptor[];
   logger?: Logger;
   metrics?: MetricsSink;
   tracing?: TracingAdapter;
 
-  /**
-   * Interceptors applied in order. The implementation MUST respect this
-   * order for beforeSend and reverse for afterResponse/onError.
-   */
-  interceptors?: HttpRequestInterceptor[];
+  // Optional helpers
+  resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;  // legacy helper
+  cache?: HttpCache;                // optional cache (see § 6.3)
+  rateLimiter?: HttpRateLimiter;    // optional rate limiter
+  circuitBreaker?: CircuitBreaker;  // optional circuit breaker
 
-  /**
-   * Optional cache, rate limiter, and circuit breaker hooks. These are
-   * not required for a minimal implementation.
-   */
-  cache?: HttpCache;
-  rateLimiter?: HttpRateLimiter;
-  circuitBreaker?: HttpCircuitBreaker;
+  // Legacy hooks (wrapped into interceptors in v0.7)
+  beforeRequest?: (opts: HttpRequestOptions) => void | Promise<void>;
+  afterResponse?: (opts: HttpRequestOptions, res: Response) => void | Promise<void>;
 
-  /** Default AgentContext merged into per-request values. */
-  defaultAgentContext?: AgentContext;
+  // Error classification
+  responseClassifier?: (res: Response, bodyText?: string) => Promise<ResponseClassification | void>;
+  errorClassifier?: ErrorClassifier;
+
+  // Policy wrapper (v0.6 legacy, superseded by @airnub/resilient-http-policies)
+  policyWrapper?: (
+    runner: () => Promise<unknown>,
+    ctx: {
+      client: string;
+      operation: string;
+      correlation: CorrelationInfo;
+      agentContext?: AgentContext;
+      extensions?: Extensions;
+    },
+  ) => Promise<unknown>;
 }
 ```
 
-### 4.3 DefaultHttpClientConfig
-
-`DefaultHttpClientConfig` is a simplified config used by `createDefaultHttpClient` (section 7).
+### 4.3 HttpClient interface
 
 ```ts
-export interface DefaultHttpClientConfig {
-  clientName: string;
-  baseUrl?: string;
-  /** Optional override for console logger. */
-  logger?: Logger;
+export class HttpClient {
+  constructor(config: HttpClientConfig);
+
+  getClientName(): string;
+
+  requestJson<T>(opts: HttpRequestOptions): Promise<T>;
+  requestText(opts: HttpRequestOptions): Promise<string>;
+  requestArrayBuffer(opts: HttpRequestOptions): Promise<ArrayBuffer>;
+  requestRaw(opts: HttpRequestOptions): Promise<Response>;
 }
 ```
+
+- `requestJson<T>`
+  - Applies caching (if configured), resilience, interceptors, metrics, tracing.
+  - Parses response body as JSON (falling back to text if JSON parse fails), returning `T`.
+- `requestText`
+  - As above, but resolves `string`.
+- `requestArrayBuffer`
+  - As above, but resolves `ArrayBuffer`.
+- `requestRaw`
+  - Runs the full resilience pipeline but returns the raw `Response` without body decoding.
+
+### 4.4 Body serialization rules
+
+To preserve v0.6 ergonomics while remaining explicit:
+
+- If `opts.body` is already a valid `BodyInit` (string, Blob, ArrayBuffer, FormData, URLSearchParams, etc.), it is passed through unchanged.
+- If `opts.body` is a plain object or array:
+  - The client **MUST** serialize as JSON: `JSON.stringify(body)`.
+  - It **MUST** set `Content-Type: application/json` if no content‑type header is present.
+- If `opts.body` is `undefined`/`null`, no body is sent.
+
+### 4.5 URL resolution rules
+
+1. If `opts.url` is provided, it is used verbatim (except that query from `urlParts.query` or `query` may be merged if explicitly required by implementation).
+2. Else, if `opts.urlParts` is provided:
+   - `baseUrl` is taken from `opts.urlParts.baseUrl` or `config.baseUrl` or `config.resolveBaseUrl(opts)`.
+   - `path` is taken from `opts.urlParts.path`.
+   - `query` from `opts.urlParts.query`.
+3. Else, legacy fields are used:
+   - `config.resolveBaseUrl(opts)` → `config.baseUrl` → error if missing and `path` is relative.
+   - `path` and `query` are joined.
+   - `pageSize` and `pageOffset` are appended as `limit` and `offset` query params (see § 8 for deprecation).
+
+The implementation **must** handle absolute `path` values (`https://...`) by constructing a `URL` directly from `path`.
 
 ---
 
-## 5. HttpClient Interface
+## 5. Interceptors & Hooks
 
-A conforming implementation MUST provide an `HttpClient` interface with the following methods.
-
-```ts
-export interface HttpClient {
-  /**
-   * Core request method returning a raw Response. Respects resilience
-   * settings, interceptors, cache, rate limiting, and circuit breaker.
-   */
-  requestRaw(options: HttpRequestOptions): Promise<Response>;
-
-  /**
-   * Request and parse JSON. If the response status is 2xx, the body MUST be
-   * parsed as JSON. Non-2xx statuses MAY throw or return a rejected promise,
-   * depending on implementation (documented behaviour is required).
-   */
-  requestJson<T = unknown>(options: HttpRequestOptions): Promise<T>;
-
-  /** Request and return text body. */
-  requestText(options: HttpRequestOptions): Promise<string>;
-
-  /** Request and return an ArrayBuffer. */
-  requestArrayBuffer(options: HttpRequestOptions): Promise<ArrayBuffer>;
-}
-```
-
-### 5.1 Behavioural Requirements
-
-1. **Resilience & attempts**
-   - `requestRaw` MUST enforce `ResilienceProfile` constraints:
-     - Abort attempts exceeding `perAttemptTimeoutMs`.
-     - Respect `overallTimeoutMs` when considering new attempts.
-     - Never exceed `maxAttempts`.
-   - `requestJson`, `requestText`, and `requestArrayBuffer` MUST call `requestRaw` internally and MUST NOT implement their own additional retries.
-
-2. **Interceptors**
-   - Interceptors MUST be invoked for each attempt (see Section 6).
-
-3. **Correlation & metadata**
-   - For each logical request, the implementation MUST assign a new `requestId` if not provided.
-   - It MUST pass `CorrelationInfo`, `AgentContext`, and `extensions` into interceptors and telemetry.
-
-4. **Telemetry**
-   - After all attempts complete, the implementation MUST compute a `RequestOutcome` and pass it to the `MetricsSink` and `Logger`/`TracingAdapter` (where appropriate).
-
-5. **Error semantics**
-   - For JSON/text/ArrayBuffer methods, non-2xx responses SHOULD throw or reject with an error that carries `status` and `ErrorCategory` information, unless the implementation explicitly documents alternative behaviour.
-
----
-
-## 6. Interceptors (Canonical Extension Mechanism)
-
-Interceptors are the **only canonical way** to plug cross-cutting behaviour into the HTTP client (aside from the transport).
-
-> **NOTE:** Previous `beforeRequest`/`afterResponse` hooks are considered deprecated in v0.7 and SHOULD be implemented internally as a compatibility interceptor.
-
-### 6.1 HttpRequestInterceptor Interface
+### 5.1 HttpRequestInterceptor (v0.7 shape)
 
 ```ts
 export interface BeforeSendContext {
-  /** Mutable HttpRequestOptions for this attempt (attempt number included). */
-  request: HttpRequestOptions;
-  /** AbortSignal for this attempt. */
+  request: HttpRequestOptions;   // mutable
   signal: AbortSignal;
 }
 
 export interface AfterResponseContext {
   request: HttpRequestOptions;
   response: Response;
-  /** Number of this attempt (1-based). */
   attempt: number;
 }
 
-export interface ErrorContext {
+export interface OnErrorContext {
   request: HttpRequestOptions;
   error: unknown;
-  /** Number of this attempt (1-based). */
   attempt: number;
 }
 
 export interface HttpRequestInterceptor {
-  beforeSend?(ctx: BeforeSendContext): Promise<void> | void;
-  afterResponse?(ctx: AfterResponseContext): Promise<void> | void;
-  onError?(ctx: ErrorContext): Promise<void> | void;
+  beforeSend?: (ctx: BeforeSendContext) => void | Promise<void>;
+  afterResponse?: (ctx: AfterResponseContext) => void | Promise<void>;
+  onError?: (ctx: OnErrorContext) => void | Promise<void>;
 }
 ```
 
-### 6.2 Ordering Rules
+Semantics:
 
-- For a given attempt:
-  - `beforeSend` MUST run in the order interceptors were provided in `HttpClientConfig.interceptors`.
-  - `afterResponse` MUST run in reverse order.
-  - `onError` MUST run in reverse order when an attempt fails.
-- Interceptors MAY mutate `ctx.request` and associated metadata.
-- Interceptors MUST NOT directly perform retries; they MAY modify `ResilienceProfile` or set flags that the client respects.
+- `beforeSend`:
+  - Called **in registration order** for each attempt.
+  - May mutate `ctx.request` in place (e.g. add headers, adjust URL, attach metadata).
+- `afterResponse`:
+  - Called **in reverse registration order** after a successful attempt.
+- `onError`:
+  - Called **in reverse registration order** when an attempt throws.
 
-### 6.3 Deprecated Hooks: beforeRequest/afterResponse
+The client must:
 
-A v0.7 implementation MAY expose the legacy options:
+- Apply interceptors to the **per‑attempt cloned request**.
+- Ensure a failing interceptor does **not** crash the client:
+  - Errors should be logged via `Logger` and then swallowed, unless explicitly designed otherwise.
+
+### 5.2 Legacy `beforeRequest` / `afterResponse` hooks
+
+To preserve v0.6 compatibility, `HttpClient` must internally construct a **legacy bridge interceptor** when either hook is provided on `HttpClientConfig`:
 
 ```ts
-export interface LegacyRequestHooks {
-  beforeRequest?(options: HttpRequestOptions): void | Promise<void>;
-  afterResponse?(options: HttpRequestOptions, response: Response): void | Promise<void>;
+function buildLegacyInterceptor(config: HttpClientConfig): HttpRequestInterceptor | undefined {
+  if (!config.beforeRequest && !config.afterResponse) return undefined;
+  return {
+    beforeSend: async ({ request }) => {
+      await config.beforeRequest?.(request);
+    },
+    afterResponse: async ({ request, response }) => {
+      await config.afterResponse?.(request, response);
+    },
+  };
 }
 ```
 
-If provided, the implementation MUST:
-
-- Internally construct an `HttpRequestInterceptor` that calls these hooks.
-- Mark them as deprecated in its public API.
-
-No new code SHOULD use these hooks; interceptors are the canonical mechanism.
+This interceptor must be appended **after** any user‑provided interceptors, so that user interceptors run first and legacy hooks last.
 
 ---
 
-## 7. Telemetry Interfaces
+## 6. Resilience, Retries, & Telemetry
 
-### 7.1 Logger
+### 6.1 Execution model
+
+`requestRaw` is the canonical implementation; all other helpers delegate to it.
+
+For a given `HttpRequestOptions`:
+
+1. Merge resilience:
+   - `config.defaultResilience` → operation defaults (if any) → `opts.resilience` → legacy `opts.budget`.
+2. Compute attempt count & deadlines:
+   - `maxAttempts = merged.maxAttempts ?? 1`.
+   - `overallDeadline = now + merged.overallTimeoutMs` (or from legacy `maxEndToEndLatencyMs` / `budget.maxTotalDurationMs`).
+3. For each attempt:
+   - Clone request options; set `attempt` field.
+   - Enforce `overallDeadline` (if exceeded before attempt, abort with `TimeoutError`).
+   - Run `beforeSend` interceptors.
+   - Invoke `rateLimiter.throttle(key, ctx)` if configured.
+   - Invoke `circuitBreaker.beforeRequest(key)` if configured.
+   - Execute actual HTTP call via `transport(url, init)` with `AbortController` for per‑attempt timeout.
+   - If timeout triggered, throw `TimeoutError`.
+   - Run response classification.
+   - If classification says **OK**:
+     - Run `rateLimiter.onSuccess`, `circuitBreaker.onSuccess`.
+     - Run `afterResponse` interceptors.
+     - Build `RequestOutcome` with `ok = true`.
+     - Record metrics + tracing.
+     - Return `Response`.
+   - If classification says **error**:
+     - Run `rateLimiter.onError`, `circuitBreaker.onFailure`.
+     - Run `onError` interceptors.
+     - Decide whether to retry:
+       - Using `ClassifiedError.retryable` (when set) or fall back to category heuristics.
+       - Respect `retryEnabled`, `maxAttempts`, and deadlines.
+     - If not retryable → build `HttpError`, mark `RequestOutcome.ok = false`, record metrics/tracing, throw.
+     - If retryable → compute backoff delay and `sleep` before next attempt.
+
+### 6.2 Backoff & retry
+
+The client must implement **exponential backoff with jitter**, taking into account:
+
+- `ClassifiedError.suggestedBackoffMs`.
+- `Retry-After` header from responses.
+- `ResilienceProfile.baseBackoffMs`, `maxBackoffMs`, `jitterFactorRange`.
+
+Algorithm (per attempt):
 
 ```ts
-export type LogLevel = "debug" | "info" | "warn" | "error";
+function computeRetryDelay(
+  attempt: number,
+  classified?: ClassifiedError,
+  resilience?: ResilienceProfile,
+  retryAfterHeaderMs?: number,
+): number {
+  const maxBackoff = resilience?.maxBackoffMs ?? 60_000;
+  const base = resilience?.baseBackoffMs ?? 250;
+  const [minJ, maxJ] = resilience?.jitterFactorRange ?? [0.8, 1.2];
 
-export interface Logger {
-  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void;
+  if (classified?.suggestedBackoffMs != null) {
+    return Math.min(classified.suggestedBackoffMs, maxBackoff);
+  }
+  if (retryAfterHeaderMs != null) {
+    return Math.min(retryAfterHeaderMs, maxBackoff);
+  }
+  const ideal = base * 2 ** (attempt - 1);
+  const jitter = ideal * (minJ + Math.random() * (maxJ - minJ));
+  return Math.min(jitter, maxBackoff);
 }
 ```
 
-Implementations SHOULD at minimum support `info` and `error` and may route to `console` by default.
+### 6.3 Caching
 
-### 7.2 MetricsSink
+The core **retains** v0.6 cache semantics.
+
+```ts
+export interface HttpCache {
+  get<T>(key: string): Promise<T | undefined>;
+  set<T>(key: string, value: T, ttlMs: number): Promise<void>;
+}
+```
+
+Optional request fields:
+
+```ts
+export interface HttpRequestOptions {
+  cacheKey?: string;
+  cacheTtlMs?: number;  // > 0 to enable caching
+}
+```
+
+Semantics:
+
+- Only `requestJson<T>` participates in caching.
+- When `cache`, `cacheKey`, and `cacheTtlMs > 0` are configured:
+  1. `requestJson` first attempts `cache.get<T>(cacheKey)`.
+  2. If hit:
+     - It records metrics with `cacheHit: true` and `RequestOutcome.ok = true`, `attempts = 0`.
+     - Returns cached value without calling `transport`.
+  3. If miss or cache error:
+     - Proceeds with normal `executeWithRetries` flow.
+     - After success, writes `cache.set(cacheKey, result, cacheTtlMs)` in the background.
+
+- Errors from cache `get`/`set` must be logged but **never** cause request failure.
+
+Metrics must support a `cacheHit?: boolean` field.
+
+### 6.4 MetricsSink & MetricsRequestInfo
 
 ```ts
 export interface MetricsRequestInfo {
@@ -512,275 +557,193 @@ export interface MetricsRequestInfo {
   operation: string;
   method: HttpMethod;
   url: string;
+
   status?: number;
-  errorCategory: ErrorCategory;
+  errorCategory?: ErrorCategory;
   durationMs: number;
   attempts: number;
+
+  cacheHit?: boolean;
   rateLimitFeedback?: RateLimitFeedback;
 
-  // Derived metadata (from AgentContext, extensions, correlation)
+  correlation: CorrelationInfo;
   agentContext?: AgentContext;
   extensions?: Extensions;
-  correlation?: CorrelationInfo;
 }
 
 export interface MetricsSink {
-  recordRequest(info: MetricsRequestInfo): void;
+  recordRequest?(info: MetricsRequestInfo): Promise<void> | void;
 }
 ```
 
-A conforming implementation MUST call `recordRequest` **once per end-to-end request**, not per attempt.
+The client must call `metrics.recordRequest` **once per logical request** (after the last attempt) with the final `RequestOutcome`.
 
-### 7.3 TracingAdapter
+### 6.5 Logger & TracingAdapter
 
 ```ts
-export interface Span {
-  setAttribute(key: string, value: unknown): void;
+export interface Logger {
+  debug(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
+}
+
+export interface TracingSpan {
   end(): void;
+  recordException?(err: unknown): void;
 }
 
 export interface TracingAdapter {
-  /**
-   * Start a span for an HTTP request. Implementations MAY ignore this.
-   */
-  startRequestSpan(info: {
-    clientName: string;
-    operation: string;
-    method: HttpMethod;
-    url: string;
-    correlation?: CorrelationInfo;
-    agentContext?: AgentContext;
-    extensions?: Extensions;
-  }): Span | null;
+  startSpan(
+    name: string,
+    ctx: {
+      attributes?: Record<string, string | number | boolean | null>;
+      agentContext?: AgentContext;
+      extensions?: Extensions;
+    },
+  ): TracingSpan | undefined;
 }
 ```
 
-The HTTP client MUST:
+Guidelines:
 
-- Create a span at the beginning of an end-to-end request (if `tracing` is provided).
-- Set status and error attributes on the span based on `RequestOutcome`.
-- End the span when the request completes.
+- For each `requestRaw` call, the client may create a span named `${clientName}.${operation}`.
+- Attributes should include:
+  - `client`, `operation`, `method`, `path`/`url`.
+  - `correlation_id`, `parent_correlation_id`, `request_id`.
+  - `agent.name`, `agent.run_id`, `agent.label.*` from `AgentContext`.
+- On error, the client should call `span.recordException(error)` before `span.end()`.
 
 ---
 
-## 8. Cache, Rate Limiter, Circuit Breaker Interfaces
+## 7. ErrorClassifier & HttpError
 
-These interfaces are optional but recommended for a complete implementation.
-
-### 8.1 HttpCache
+### 7.1 ErrorClassifier
 
 ```ts
-export interface HttpCacheEntry {
+export interface ErrorClassifier {
+  classifyNetworkError(err: unknown): ClassifiedError;
+  classifyResponse(response: Response, bodyText?: string): ClassifiedError;
+}
+```
+
+Requirements:
+
+- `classifyNetworkError` should handle at least:
+  - `TimeoutError` → `timeout`, `retryable: true`.
+  - `AbortError` (from `fetch`) → `canceled`, `retryable: false`.
+  - generic `Error` → `transient`, `retryable: true`.
+- `classifyResponse` should:
+  - Map 5xx → `transient`, retryable.
+  - 429 → `rate_limit`, retryable.
+  - 401/403 → `auth`, not retryable.
+  - 400/404/422 → `validation` / `not_found`, not retryable.
+  - Everything else → `unknown`.
+
+A default implementation (`DefaultErrorClassifier`) must be provided and used when `config.errorClassifier` is not supplied.
+
+### 7.2 HttpError & TimeoutError
+
+```ts
+export class HttpError extends Error {
   status: number;
-  headers: HttpHeaders;
-  body: ArrayBuffer; // cached as binary, user API may convert to text/json
-  expiresAt?: Date;
+  category: ErrorCategory;
+  body?: unknown;       // optional, decoded body
+  headers?: Headers;
+  fallback?: FallbackHint;
+  response?: Response;
+
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
 }
 
-export interface HttpCache {
-  get(key: string): Promise<HttpCacheEntry | null> | HttpCacheEntry | null;
-  set(key: string, entry: HttpCacheEntry): Promise<void> | void;
-  delete?(key: string): Promise<void> | void;
-}
-```
-
-### 8.2 HttpRateLimiter
-
-```ts
-export interface RateLimiterContext {
-  clientName: string;
-  operation: string;
-  method: HttpMethod;
-  extensions?: Extensions;
-}
-
-export interface HttpRateLimiter {
-  acquire(ctx: RateLimiterContext): Promise<void>;
+export class TimeoutError extends Error {
+  constructor(message: string);
 }
 ```
 
-If a rate limiter is provided, the client MUST call `acquire` **before each attempt**.
+Semantics:
 
-### 8.3 HttpCircuitBreaker
+- `HttpError` is thrown when:
+  - Classification treats the response as an error **and** no more retries will be attempted.
+- `TimeoutError` is thrown when:
+  - Per‑attempt timeout is exceeded.
+  - Overall deadline is exceeded before or during an attempt.
 
-```ts
-export interface CircuitBreakerContext {
-  clientName: string;
-  operation: string;
-}
+The client should attach:
 
-export interface HttpCircuitBreaker {
-  /** Throws/ rejects if the circuit is open. */
-  beforeRequest(ctx: CircuitBreakerContext): Promise<void> | void;
-  /** Notified with outcome so breaker can update state. */
-  afterRequest(ctx: CircuitBreakerContext, outcome: RequestOutcome): Promise<void> | void;
-}
+- `status`, `category`, `fallback`, `response`, `headers`.
+- Optional `body` when cheaply available (JSON or text of error payload).
+- `correlation` and `agentContext` for observability.
+
+---
+
+## 8. Legacy Pagination Fields & Migration
+
+v0.6 surfaced primitive pagination knobs on `HttpRequestOptions`:
+
+- `pageSize` → appended as `limit` query param.
+- `pageOffset` → appended as `offset` query param.
+
+v0.7 marks these as **legacy** and encourages migration to `@airnub/resilient-http-pagination`.
+
+### 8.1 Required backwards compatibility
+
+- The core **must continue** to append `pageSize` / `pageOffset` as `limit` / `offset` when set.
+- New code **should not add additional pagination semantics** to `HttpClient`.
+
+### 8.2 Migration guidance
+
+- For multi‑page workflows, use `@airnub/resilient-http-pagination`:
+  - It builds on `HttpClient` and `HttpRequestOptions`.
+  - It treats pagination runs and stop‑conditions as first‑class concepts.
+
+---
+
+## 9. Backwards Compatibility with v0.6
+
+To be considered a conformant v0.7 implementation, `@airnub/resilient-http-core` must:
+
+1. **Retain caching semantics** as specified in v0.6.
+2. **Retain rate‑limit header parsing** into `RateLimitFeedback`.
+3. **Retain interceptor capabilities**, either:
+   - via the v0.7 context‑mutating model, or
+   - by preserving the v0.6 `beforeSend(opts) => opts` contract and adapting it.
+4. **Retain JSON serialization defaults** for non‑BodyInit objects.
+5. **Retain tracing hooks** (`TracingAdapter`) wired at request boundaries.
+6. **Retain policy wrapper support**, even though policies are moving to satellites.
+
+Where behaviour changed in v0.7 (e.g. correlation consolidation, UrlParts), the implementation must:
+
+- Provide **adapters/shims** so that v0.6 callers continue to function.
+- Document deprecated fields clearly and provide migration notes.
+
+---
+
+## 10. Implementation Checklist
+
+A v0.7 implementation is considered complete when:
+
+1. `HttpClient` and `HttpClientConfig` match this spec.
+2. All four request helpers (`requestJson`, `requestText`, `requestArrayBuffer`, `requestRaw`) share the same resilience, interceptor, and telemetry behaviour.
+3. `ResilienceProfile` and `RequestBudget` drive attempts, deadlines, backoff, and classification decisions.
+4. `RateLimitFeedback` is populated from headers and propagated into metrics.
+5. `HttpCache` behaviour is implemented for `requestJson` with cache hit/miss metrics.
+6. Interceptors follow the v0.7 context contract and legacy hooks are bridged.
+7. `ErrorClassifier`, `HttpError`, and `TimeoutError` are implemented as specified.
+8. `MetricsSink` and `TracingAdapter` are exercised in tests with representative metadata.
+9. Legacy pagination fields (`pageSize`, `pageOffset`) are honoured but no new pagination logic is added.
+10. The library compiles under `strict: true` TypeScript and is covered by tests for:
+    - Retry/backoff.
+    - Timeouts.
+    - Caching.
+    - Rate‑limit feedback.
+    - Interceptor ordering.
+    - Error classification.
+
+This document is the single source of truth for `@airnub/resilient-http-core` v0.7 and should be stored as:
+
+```text
+docs/specs/resilient_http_core_spec_v_0_7.md
 ```
-
-The client MUST call `beforeRequest` once per end-to-end request and `afterRequest` when it completes.
-
----
-
-## 9. Default Client Factory (createDefaultHttpClient)
-
-To support an out-of-the-box experience with no external dependencies, a conforming library MUST expose a `createDefaultHttpClient` function.
-
-### 9.1 Signature
-
-```ts
-export function createDefaultHttpClient(
-  config: DefaultHttpClientConfig
-): HttpClient;
-```
-
-### 9.2 Behaviour
-
-- **Transport:**
-  - Use global `fetch` where available; otherwise require the user to polyfill or provide a transport in a non-default constructor.
-
-- **Resilience defaults:**
-  - `maxAttempts`: 3 for idempotent methods (`GET`, `HEAD`, `OPTIONS`); 1 otherwise.
-  - `perAttemptTimeoutMs`: 10_000 (10 seconds).
-  - `overallTimeoutMs`: 25_000 (25 seconds).
-
-- **Error classification:**
-  - Provide a default classifier:
-    - 5xx, network errors, and timeouts → `transient`.
-    - 429 → `rateLimit`.
-    - 4xx auth-related (401/403) → `auth`.
-    - 4xx others → `validation`.
-
-- **Logging:**
-  - Use `console`-based logger implementing `Logger` by default.
-
-- **Metrics & tracing:**
-  - Use no-op `MetricsSink` and `TracingAdapter`.
-
-- **Interceptors:**
-  - No interceptors by default.
-  - Implementations MAY include a simple interceptor that:
-    - Applies default headers.
-    - Sets `requestId` if not provided.
-
-- **Cache, rate limiter, circuit breaker:**
-  - Default implementation MAY omit these entirely or provide simple in-memory stand-ins with small, fixed limits.
-  - They MUST NOT require external services.
-
-`createDefaultHttpClient` SHOULD be the recommended entry point for small services and tests.
-
----
-
-## 10. Idempotency & Retries
-
-### 10.1 Idempotency Hints
-
-The `idempotent` flag on `HttpRequestOptions` and HTTP method semantics SHOULD guide retry behaviour:
-
-- If `idempotent` is true and `maxAttempts > 1`, the client MAY retry transient errors.
-- If `idempotent` is false and `idempotencyKey` is not provided, the client SHOULD be conservative about retries and MAY only retry network errors where it is certain the request did not reach the server.
-
-### 10.2 Idempotency Keys
-
-- `idempotencyKey` is an opaque string supplied by the caller.
-- The core DOES NOT automatically send it as a header; an interceptor MAY map it to `Idempotency-Key` or another header.
-- Recommended pattern:
-
-```ts
-const idempotencyInterceptor: HttpRequestInterceptor = {
-  beforeSend({ request }) {
-    if (request.idempotencyKey) {
-      request.headers = {
-        ...(request.headers ?? {}),
-        "Idempotency-Key": request.idempotencyKey,
-      };
-    }
-  },
-};
-```
-
-Implementations SHOULD document their default behaviour for retries and idempotency.
-
----
-
-## 11. Backwards Compatibility & Deprecated Features
-
-### 11.1 policyWrapper
-
-Previous versions allowed a `policyWrapper` function to wrap the entire request pipeline with external resilience libraries.
-
-- In v0.7, `policyWrapper` is considered **legacy**.
-- New code SHOULD use `HttpRequestInterceptor`s, together with `ResilienceProfile` and external policy engines (see satellite `@airnub/resilient-http-policies`).
-- Implementations MAY continue to expose `policyWrapper` for backwards compatibility but SHOULD:
-  - Document that it MUST NOT apply additional retries beyond those controlled by `ResilienceProfile`.
-  - Warn users against combining it with policy interceptors to avoid nested retries.
-
-### 11.2 beforeRequest/afterResponse
-
-- As noted, these hooks are deprecated and MUST be implemented internally as a thin compatibility layer over interceptors.
-
----
-
-## 12. Metadata & Telemetry Semantics (Summary)
-
-To avoid confusion across core and satellites:
-
-- `AgentContext` = **who/what is calling** (agent name, run id, labels, stable metadata).
-- `extensions` = **request-level attributes** relevant for routing, policies, AI metadata, tenanting, experiments.
-- Telemetry meta = **derived** from `AgentContext`, `extensions`, correlation IDs, and `RequestOutcome`.
-
-No layer should invent new semantic keys that duplicate existing ones (e.g. `tenant` vs `tenant.id`) without documenting the mapping.
-
----
-
-## 13. Versioning & Stability Guarantees
-
-- v0.7 is intended to be the last pre-1.0 spec.
-- The following types and interfaces are considered **core surface** and SHOULD remain stable across 1.x:
-  - `HttpClient`, `HttpRequestOptions`, `HttpTransport`.
-  - `AgentContext`, `Extensions`, `CorrelationInfo`.
-  - `ResilienceProfile`, `ErrorCategory`, `ClassifiedError`, `ErrorClassifier`.
-  - `RateLimitFeedback`, `RequestOutcome`.
-  - `HttpRequestInterceptor`, `BeforeSendContext`, `AfterResponseContext`, `ErrorContext`.
-  - `Logger`, `MetricsSink`, `TracingAdapter`.
-  - `HttpCache`, `HttpRateLimiter`, `HttpCircuitBreaker`.
-  - `createDefaultHttpClient`, `DefaultHttpClientConfig`, `HttpClientConfig`.
-
-Breaking changes to these shapes SHOULD only occur in a major version.
-
----
-
-## 14. Reference Implementation Notes (Non-normative)
-
-This section is guidance for implementers and coding agents and is not normative.
-
-1. **Internal request pipeline**:
-   - Build a single `executeWithRetries` function that:
-     - Applies `ResilienceProfile` to attempt loop.
-     - Calls rate limiter, circuit breaker, interceptors, and transport.
-     - Aggregates attempts into a final `RequestOutcome`.
-
-2. **Transport abstraction**:
-   - Consider a `createFetchTransport` helper that adapts global `fetch` to `HttpTransport` and handles `AbortController` wiring.
-
-3. **Testing strategy**:
-   - Unit tests for:
-     - Retry behaviour respecting `maxAttempts` and timeouts.
-     - Error classification mapping various HTTP statuses.
-     - Interceptor ordering.
-     - Cache hits/misses.
-   - Integration tests against a small HTTP test server that can simulate slow, flaky, and error responses.
-
-4. **Performance**:
-   - Avoid unnecessary cloning of `HttpRequestOptions` for each interceptor.
-   - Use lazy JSON parsing (only parse when `requestJson` is called).
-
-5. **Documentation for users**:
-   - Provide quick-start examples with `createDefaultHttpClient`.
-   - Document how to add interceptors for:
-     - Auth headers.
-     - Idempotency keys.
-     - Logging & metrics.
-     - Policies and guardrails (via satellite libraries).
-
-With this specification, a developer or coding agent should be able to implement `@airnub/resilient-http-core` v0.7 in a new codebase and know how it will interact with existing satellites (pagination, policies, agent conversation, browser guardrails, and provider clients) while remaining strictly HTTP-only.
 
