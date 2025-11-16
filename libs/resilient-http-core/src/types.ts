@@ -6,6 +6,16 @@ export interface HttpCache {
 
 export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+export type ResiliencePriority = 'low' | 'normal' | 'high' | 'critical';
+
+export interface ResilienceProfile {
+  priority?: ResiliencePriority;
+  maxEndToEndLatencyMs?: number;
+  maxAttemptsOverride?: number;
+  failFast?: boolean;
+  allowFailover?: boolean;
+}
+
 export interface AgentContext {
   /**
    * Logical name/identifier of the calling agent, component, or workflow.
@@ -74,21 +84,61 @@ export interface Logger {
 }
 
 export type ErrorCategory =
-  | 'auth'
-  | 'validation'
-  | 'not_found'
+  | 'transient'
   | 'rate_limit'
+  | 'validation'
+  | 'auth'
+  | 'safety'
+  | 'quota'
+  | 'unknown'
+  // Legacy categories retained for backwards compatibility
+  | 'not_found'
   | 'quota_exceeded'
   | 'server'
   | 'network'
-  | 'timeout'
-  | 'unknown';
+  | 'timeout';
+
+export interface ErrorContext {
+  request: HttpRequestOptions;
+  response?: Response;
+  error?: unknown;
+}
+
+export interface ClassifiedError {
+  category: ErrorCategory;
+  retryable: boolean;
+  suggestedBackoffMs?: number;
+  policyKey?: string;
+}
+
+export interface ErrorClassifier {
+  classify(ctx: ErrorContext): ClassifiedError;
+}
 
 export interface FallbackHint {
   retryAfterMs?: number;
   downgrade?: string;
   reason?: string;
   [key: string]: unknown;
+}
+
+export interface RateLimitFeedback {
+  limitRequests?: number;
+  remainingRequests?: number;
+  resetRequestsAt?: Date;
+  limitTokens?: number;
+  remainingTokens?: number;
+  resetTokensAt?: Date;
+  rawHeaders?: Record<string, string>;
+}
+
+export interface RequestOutcome {
+  ok: boolean;
+  status?: number;
+  errorCategory?: ErrorCategory;
+  attempts: number;
+  startedAt: number;
+  finishedAt: number;
 }
 
 export interface MetricsRequestInfo {
@@ -104,6 +154,8 @@ export interface MetricsRequestInfo {
   parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
+  rateLimit?: RateLimitFeedback;
+  outcome?: RequestOutcome;
 }
 
 export interface MetricsSink {
@@ -174,9 +226,11 @@ export interface BaseHttpClientConfig {
   transport?: HttpTransport;
   tracing?: TracingAdapter;
   responseClassifier?: ResponseClassifier;
+  errorClassifier?: ErrorClassifier;
   resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;
   beforeRequest?: (opts: HttpRequestOptions) => HttpRequestOptions | void;
   afterResponse?: (response: Response, opts: HttpRequestOptions) => void | Promise<void>;
+  interceptors?: HttpRequestInterceptor[];
   operationDefaults?: Record<string, OperationDefaults>;
 }
 
@@ -198,6 +252,13 @@ export interface HttpRequestOptions {
   parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Record<string, unknown>;
+  resilience?: ResilienceProfile;
   pageSize?: number;
   pageOffset?: number;
+}
+
+export interface HttpRequestInterceptor {
+  beforeSend?(opts: HttpRequestOptions): Promise<HttpRequestOptions> | HttpRequestOptions;
+  afterResponse?(opts: HttpRequestOptions, res: Response): Promise<Response> | Response;
+  onError?(opts: HttpRequestOptions, error: unknown): Promise<void> | void;
 }

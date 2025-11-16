@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpClient, HttpError, TimeoutError } from '../HttpClient';
 import type {
   HttpCache,
+  ErrorClassifier,
   HttpRateLimiter,
+  HttpRequestOptions,
   Logger,
   MetricsRequestInfo,
   MetricsSink,
@@ -139,9 +141,6 @@ describe('HttpClient v0.4', () => {
     const client = createClient({ transport, responseClassifier: classifier, maxRetries: 2 });
 
     const promise = client.requestJson<{ ok: boolean }>({ method: 'GET', path: '/retry-after', operation: 'retry.after' });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(transport).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(999);
     expect(transport).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(2);
@@ -273,6 +272,43 @@ describe('HttpClient v0.4', () => {
     expect(transport).toHaveBeenCalledWith(
       expect.stringContaining('extra=1'),
       expect.objectContaining({ headers: expect.objectContaining({ 'X-Before': 'set' }) }),
+    );
+  });
+
+  it('executes interceptors in order for beforeSend and reverse for afterResponse', async () => {
+    const transport = vi.fn().mockImplementation(() => jsonResponse({ ok: true }));
+    const calls: string[] = [];
+    const interceptors = [
+      {
+        beforeSend: (opts: HttpRequestOptions) => {
+          calls.push('before-1');
+          return { ...opts, headers: { ...(opts.headers ?? {}), 'X-First': '1' } };
+        },
+        afterResponse: (opts: HttpRequestOptions, res: Response) => {
+          calls.push('after-1');
+          return res;
+        },
+      },
+      {
+        beforeSend: (opts: HttpRequestOptions) => {
+          calls.push('before-2');
+          return { ...opts, headers: { ...(opts.headers ?? {}), 'X-Second': '2' } };
+        },
+        afterResponse: (opts: HttpRequestOptions, res: Response) => {
+          calls.push('after-2');
+          return res;
+        },
+      },
+    ];
+
+    const client = createClient({ transport, interceptors });
+
+    await client.requestJson({ method: 'GET', path: '/intercept', operation: 'interceptor.order' });
+
+    expect(calls).toEqual(['before-1', 'before-2', 'after-2', 'after-1']);
+    expect(transport).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ headers: expect.objectContaining({ 'X-First': '1', 'X-Second': '2' }) }),
     );
   });
 
@@ -418,6 +454,24 @@ describe('HttpClient v0.4', () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
+  it('respects resilience maxAttemptsOverride on a request', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: true }), { status: 500 }));
+    const client = createClient({ transport, maxRetries: 5 });
+
+    await expect(
+      client.requestJson({
+        method: 'GET',
+        path: '/resilience-attempts',
+        operation: 'resilience.maxAttempts',
+        resilience: { maxAttemptsOverride: 2 },
+      }),
+    ).rejects.toBeInstanceOf(HttpError);
+
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it('fails fast when the total duration budget is exceeded', async () => {
     const transport = vi.fn();
     const client = createClient({ transport, timeoutMs: 10 });
@@ -431,6 +485,24 @@ describe('HttpClient v0.4', () => {
       }),
     ).rejects.toBeInstanceOf(TimeoutError);
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('fails when maxEndToEndLatencyMs is exhausted before a retry', async () => {
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const client = createClient({ transport, maxRetries: 2 });
+
+    await expect(
+      client.requestJson({
+        method: 'GET',
+        path: '/deadline',
+        operation: 'resilience.deadline',
+        resilience: { maxEndToEndLatencyMs: 10 },
+      }),
+    ).rejects.toBeInstanceOf(TimeoutError);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
 
   it('propagates agent context into rate limiter hooks', async () => {
@@ -514,6 +586,31 @@ describe('HttpClient v0.4', () => {
       'agent.label.tier': 'experiment',
     });
     expect(span.end).toHaveBeenCalled();
+  });
+
+  it('attaches rate limit feedback and outcome details to metrics', async () => {
+    const response = jsonResponse(
+      { ok: true },
+      {
+        headers: {
+          'x-ratelimit-limit-requests': '100',
+          'x-ratelimit-remaining-requests': '50',
+          'x-ratelimit-reset-requests': `${Math.round(Date.now() / 1000) + 60}`,
+        },
+      },
+    );
+    const transport = vi.fn().mockResolvedValue(response);
+    const client = createClient({ transport });
+
+    await client.requestJson({ method: 'GET', path: '/limits', operation: 'metrics.rate' });
+
+    const metricsCall = (metrics.recordRequest as ReturnType<typeof vi.fn>).mock.calls.find(([info]) =>
+      (info as MetricsRequestInfo).operation === 'metrics.rate',
+    ) as [MetricsRequestInfo];
+
+    expect(metricsCall[0].rateLimit?.limitRequests).toBe(100);
+    expect(metricsCall[0].rateLimit?.remainingRequests).toBe(50);
+    expect(metricsCall[0].outcome).toMatchObject({ ok: true, status: 200, attempts: 1 });
   });
 
   it('propagates correlation identifiers into telemetry channels', async () => {
@@ -676,5 +773,29 @@ describe('HttpClient v0.4', () => {
 
     expect(result).toEqual({ ok: true });
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('honors error classifier retryable hints and backoff', async () => {
+    vi.useFakeTimers();
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const classifier: ErrorClassifier = {
+      classify: vi.fn(() => ({ category: 'rate_limit', retryable: true, suggestedBackoffMs: 1234 })),
+    };
+    const client = createClient({ transport, errorClassifier: classifier, maxRetries: 2 });
+
+    const promise = client.requestJson({ method: 'GET', path: '/classified', operation: 'classified.retry' });
+
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(transport).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(40);
+    await vi.runOnlyPendingTimersAsync();
+
+    await promise;
+
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(classifier.classify).toHaveBeenCalled();
   });
 });
