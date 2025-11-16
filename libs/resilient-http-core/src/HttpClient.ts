@@ -133,7 +133,7 @@ export class HttpClient {
   private buildInterceptors(config: BaseHttpClientConfig): HttpRequestInterceptor[] {
     const interceptors = [...(config.interceptors ?? [])];
     if (config.beforeRequest || config.afterResponse) {
-      interceptors.unshift({
+      interceptors.push({
         beforeSend: config.beforeRequest
           ? ({ request }: BeforeSendContext) => config.beforeRequest?.(request)
           : undefined,
@@ -352,7 +352,6 @@ export class HttpClient {
 
         let response = attemptResult.response;
         response = await this.applyAfterResponseInterceptors(attemptOpts, response, attempt);
-        await this.config.afterResponse?.(response, attemptOpts);
 
         lastRateLimit = this.extractRateLimit(response.headers) ?? lastRateLimit;
         const finishedAt = Date.now();
