@@ -112,11 +112,29 @@ describe('HttpClient v0.7', () => {
       expect.objectContaining({
         operation: 'metrics.test',
         agentContext: expect.objectContaining({ agent: 'tester', runId: 'run-1' }),
-        correlationId: 'corr-1',
-        parentCorrelationId: 'parent-1',
+        correlation: expect.objectContaining({
+          correlationId: 'corr-1',
+          parentCorrelationId: 'parent-1',
+        }),
       }),
     );
     const captured = (metrics.recordRequest as vi.Mock).mock.calls[0][0];
-    expect(captured.requestId).toBeDefined();
+    expect(captured.correlation?.requestId).toBeDefined();
+  });
+
+  it('records rate limit feedback when available', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response('nope', { status: 429 }));
+    const client = createClient({ transport, defaultResilience: { maxAttempts: 1 } });
+
+    await expect(
+      client.requestJson({ method: 'GET', operation: 'metrics.ratelimit', url: 'https://example.com/limit' }),
+    ).rejects.toBeInstanceOf(HttpError);
+
+    expect(metrics.recordRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'metrics.ratelimit',
+        rateLimitFeedback: { isRateLimited: true },
+      }),
+    );
   });
 });

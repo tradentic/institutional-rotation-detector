@@ -143,11 +143,14 @@ export class HttpClient {
 
         const classified = await this.classifyResponse(response);
         if (classified.treatAsError || !response.ok) {
+          const rateLimitFeedback =
+            classified.category === 'rateLimit' ? { isRateLimited: true } : undefined;
           const retryable = this.shouldRetry(classified, attempt, resilience);
           if (!retryable) {
             outcome.ok = false;
             outcome.status = classified.overrideStatus ?? response.status;
             outcome.errorCategory = classified.category ?? 'unknown';
+            outcome.rateLimitFeedback = rateLimitFeedback;
             lastError = this.toHttpError(response, attemptOptions, classified);
             break;
           }
@@ -185,6 +188,7 @@ export class HttpClient {
           outcome.ok = false;
           outcome.errorCategory = classified.category;
           outcome.status = classified.statusCode;
+          outcome.rateLimitFeedback = classified.category === 'rateLimit' ? { isRateLimited: true } : undefined;
           break;
         }
       }
@@ -334,11 +338,10 @@ export class HttpClient {
       errorCategory: outcome.errorCategory,
       durationMs: outcome.finishedAt - outcome.startedAt,
       attempts: outcome.attempts,
-      requestId: opts.correlation?.requestId,
-      correlationId: opts.correlation?.correlationId,
-      parentCorrelationId: opts.correlation?.parentCorrelationId,
+      correlation: opts.correlation,
       agentContext: opts.agentContext,
       extensions: opts.extensions,
+      rateLimitFeedback: outcome.rateLimitFeedback,
     };
     await this.metrics.recordRequest(info);
   }

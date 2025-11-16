@@ -64,13 +64,13 @@ export interface ErrorClassifier {
 }
 
 export interface RateLimitFeedback {
-  limitRequests?: number;
-  remainingRequests?: number;
-  resetRequestsAt?: Date;
-  limitTokens?: number;
-  remainingTokens?: number;
-  resetTokensAt?: Date;
-  rawHeaders?: Record<string, string>;
+  /** True if the response definitively indicates we hit a rate limit. */
+  isRateLimited: boolean;
+  /** Optional provider-specified reset time (e.g. from headers). */
+  resetAt?: Date;
+  /** Optional numeric limit and remaining values if known. */
+  limit?: number;
+  remaining?: number;
 }
 
 export interface RequestOutcome {
@@ -80,6 +80,7 @@ export interface RequestOutcome {
   attempts: number;
   startedAt: number;
   finishedAt: number;
+  rateLimitFeedback?: RateLimitFeedback;
 }
 
 export interface MetricsRequestInfo {
@@ -91,11 +92,9 @@ export interface MetricsRequestInfo {
   errorCategory: ErrorCategory;
   durationMs: number;
   attempts: number;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
   agentContext?: AgentContext;
   extensions?: Extensions;
+  correlation?: CorrelationInfo;
   rateLimitFeedback?: RateLimitFeedback;
 }
 
