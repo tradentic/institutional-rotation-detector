@@ -62,9 +62,13 @@ const parseRetryAfter = (value?: string | null): number | undefined => {
 };
 
 class DefaultErrorClassifier implements ErrorClassifier {
-  classify({ request: _request, response, error }: { request: HttpRequestOptions; response?: Response; error?: unknown }): ClassifiedError {
+  classifyNetworkError(error: unknown): ClassifiedError {
     if (error instanceof TimeoutError) {
       return { category: 'timeout', statusCode: 408, retryable: true, reason: 'timeout' };
+    }
+
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { category: 'canceled', retryable: false, reason: 'aborted' };
     }
 
     if (error instanceof HttpError) {
@@ -77,22 +81,26 @@ class DefaultErrorClassifier implements ErrorClassifier {
       };
     }
 
-    if (response) {
-      const category = statusToCategory(response.status);
-      return {
-        category,
-        statusCode: response.status,
-        retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
-        suggestedBackoffMs: parseRetryAfter(response.headers.get('retry-after')),
-        reason: 'http_response',
-      };
-    }
+    return { category: 'transient', retryable: true, reason: 'network_error' };
+  }
 
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { category: 'canceled', retryable: false, reason: 'aborted' };
-    }
+  classifyResponse(response: Response, bodyText?: string): ClassifiedError {
+    const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
+    const category = statusToCategory(response.status);
+    return {
+      category,
+      statusCode: response.status,
+      retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
+      suggestedBackoffMs: retryAfter,
+      reason: bodyText ? 'http_response_with_body' : 'http_response',
+    };
+  }
 
-    return { category: 'network', retryable: true, reason: 'network_error' };
+  classify(ctx: { request: HttpRequestOptions; response?: Response; error?: unknown }): ClassifiedError {
+    if (ctx.response) {
+      return this.classifyResponse(ctx.response);
+    }
+    return this.classifyNetworkError(ctx.error);
   }
 }
 
@@ -1007,7 +1015,16 @@ export class HttpClient {
   ): ClassifiedError | undefined {
     const classifier = this.config.errorClassifier ?? this.defaultErrorClassifier;
     try {
-      return classifier.classify({ request, response, error });
+      if (response && typeof classifier.classifyResponse === 'function') {
+        return classifier.classifyResponse(response, undefined, { request, response, error });
+      }
+      if (typeof classifier.classifyNetworkError === 'function') {
+        return classifier.classifyNetworkError(error, { request, response, error });
+      }
+      if (typeof classifier.classify === 'function') {
+        return classifier.classify({ request, response, error });
+      }
+      return undefined;
     } catch (classifierError) {
       this.logger?.warn('http.classifier.error', {
         client: this.clientName,

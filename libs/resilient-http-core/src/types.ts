@@ -126,6 +126,13 @@ export interface ClassifiedError {
 }
 
 export interface ErrorClassifier {
+  classifyNetworkError(error: unknown, ctx?: ErrorContext): ClassifiedError;
+  classifyResponse(response: Response, bodyText?: string, ctx?: ErrorContext): ClassifiedError;
+  /** Legacy classifier hook retained for backwards compatibility */
+  classify?(ctx: ErrorContext): ClassifiedError;
+}
+
+export interface LegacyErrorClassifier {
   classify(ctx: ErrorContext): ClassifiedError;
 }
 
@@ -255,7 +262,7 @@ export interface HttpClientConfig {
   afterResponse?: (opts: HttpRequestOptions, res: Response) => void | Promise<void>;
 
   responseClassifier?: ResponseClassifier;
-  errorClassifier?: ErrorClassifier;
+  errorClassifier?: ErrorClassifier | LegacyErrorClassifier;
   policyWrapper?: PolicyWrapper;
 
   // Legacy configuration retained for compatibility
