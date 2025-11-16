@@ -105,6 +105,7 @@ interface ExecuteOptions {
 interface AttemptSuccess {
   status: number;
   response: Response;
+  url: string;
   bodyText?: string;
 }
 
@@ -159,18 +160,17 @@ export class HttpClient {
         if (cached !== undefined) {
           const now = Date.now();
           await this.recordMetrics({
-            client: this.clientName,
+            clientName: this.clientName,
             operation: preparedOpts.operation,
+            method: preparedOpts.method,
+            url: this.safeBuildUrl(preparedOpts),
             durationMs: 0,
             status: 200,
             cacheHit: true,
             attempts: 0,
-            requestId: preparedOpts.requestId,
-            correlationId: preparedOpts.correlationId,
-            parentCorrelationId: preparedOpts.parentCorrelationId,
+            correlation: this.getCorrelationInfo(preparedOpts),
             agentContext: preparedOpts.agentContext,
             extensions: preparedOpts.extensions,
-            outcome: { ok: true, status: 200, attempts: 0, startedAt: now, finishedAt: now },
           });
           this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
           span?.end();
@@ -318,6 +318,8 @@ export class HttpClient {
         const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
         this.logger?.debug('http.request.attempt', logMeta);
 
+        const resolvedUrl = this.buildUrl(attemptOpts);
+
         const executeAttempt = async () =>
           this.runAttempt({
             opts: attemptOpts as AttemptHttpRequestOptions,
@@ -326,6 +328,7 @@ export class HttpClient {
             deadline,
             parseJson: executeOptions.parseJson,
             controller,
+            url: resolvedUrl,
           });
 
         const runner = this.config.policyWrapper
@@ -370,18 +373,18 @@ export class HttpClient {
           attemptResult.bodyText,
         );
         await this.recordMetrics({
-          client: this.clientName,
+          clientName: this.clientName,
           operation: attemptOpts.operation,
+          method: attemptOpts.method,
+          url: attemptResult.url,
           durationMs: finishedAt - startedAt,
           status: attemptResult.status,
           attempts: attempt,
-          requestId: attemptOpts.requestId,
-          correlationId: attemptOpts.correlationId,
-          parentCorrelationId: attemptOpts.parentCorrelationId,
+          rateLimitFeedback: lastRateLimit,
+          correlation: this.getCorrelationInfo(attemptOpts),
           agentContext: attemptOpts.agentContext,
           extensions: attemptOpts.extensions,
-          rateLimit: lastRateLimit,
-          outcome: aggregateOutcome,
+          errorCategory: aggregateOutcome.errorCategory,
         });
         this.logger?.info('http.request.success', {
           ...logMeta,
@@ -444,19 +447,18 @@ export class HttpClient {
             rateLimitFeedback: lastRateLimit,
           };
           await this.recordMetrics({
-            client: this.clientName,
+            clientName: this.clientName,
             operation: attemptOpts.operation ?? opts.operation,
+            method: attemptOpts.method,
+            url: resolvedUrl,
             durationMs: finishedAt - startedAt,
             status,
             attempts: attempt,
-            requestId: attemptOpts.requestId,
-            correlationId: attemptOpts.correlationId,
-            parentCorrelationId: attemptOpts.parentCorrelationId,
             errorCategory: category,
             agentContext: attemptOpts.agentContext,
             extensions: attemptOpts.extensions,
-            rateLimit: lastRateLimit,
-            outcome: aggregateOutcome,
+            rateLimitFeedback: lastRateLimit,
+            correlation: this.getCorrelationInfo(attemptOpts),
           });
           throw error;
         }
@@ -485,20 +487,20 @@ export class HttpClient {
       rateLimitFeedback: lastRateLimit,
     };
     const metricsOpts = lastAttemptOpts ?? opts;
+    const url = this.safeBuildUrl(metricsOpts);
     await this.recordMetrics({
-      client: this.clientName,
+      clientName: this.clientName,
       operation: metricsOpts.operation ?? opts.operation,
+      method: metricsOpts.method,
+      url,
       durationMs: finishedAt - startedAt,
       status,
       attempts: maxAttempts,
-      requestId: metricsOpts.requestId,
-      correlationId: metricsOpts.correlationId,
-      parentCorrelationId: metricsOpts.parentCorrelationId,
       errorCategory: aggregateOutcome.errorCategory,
       agentContext: metricsOpts.agentContext,
       extensions: metricsOpts.extensions,
-      rateLimit: lastRateLimit,
-      outcome: aggregateOutcome,
+      rateLimitFeedback: lastRateLimit,
+      correlation: this.getCorrelationInfo(metricsOpts),
     });
 
     if (lastStatus === 408 || (deadline !== undefined && Date.now() >= deadline)) {
@@ -515,8 +517,9 @@ export class HttpClient {
     deadline?: number;
     parseJson: boolean;
     controller: AbortController;
+    url: string;
   }): Promise<AttemptSuccess> {
-    const { opts, attemptContext, rateLimitKey, deadline, parseJson, controller } = params;
+    const { opts, attemptContext, rateLimitKey, deadline, parseJson, controller, url } = params;
 
     await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
     await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
@@ -540,7 +543,6 @@ export class HttpClient {
     }
 
     try {
-      const url = this.buildUrl(opts);
       const response = await this.transport(url, init);
       const bodyText = parseJson ? await response.clone().text() : undefined;
       const classification = await this.classifyResponse(response, bodyText);
@@ -569,10 +571,10 @@ export class HttpClient {
       }
 
       if (!parseJson) {
-        return { status, response };
-      }
+      return { status, response, url };
+    }
 
-      return { status, response, bodyText };
+      return { status, response, bodyText, url };
     } catch (error) {
       if (didTimeout && !(error instanceof TimeoutError)) {
         throw new TimeoutError(`Request timed out after ${timeoutMs}ms`);
@@ -1033,6 +1035,24 @@ export class HttpClient {
       agentContext: opts.agentContext,
       extensions: opts.extensions,
     };
+  }
+
+  private getCorrelationInfo(opts: HttpRequestOptions): CorrelationInfo {
+    return (
+      opts.correlation ?? {
+        requestId: opts.requestId!,
+        correlationId: opts.correlationId,
+        parentCorrelationId: opts.parentCorrelationId,
+      }
+    );
+  }
+
+  private safeBuildUrl(opts: HttpRequestOptions): string {
+    try {
+      return this.buildUrl(opts);
+    } catch {
+      return opts.url ?? opts.path ?? '';
+    }
   }
 
   private async callOptionalHook(name: string, fn?: () => void | Promise<void>): Promise<void> {
