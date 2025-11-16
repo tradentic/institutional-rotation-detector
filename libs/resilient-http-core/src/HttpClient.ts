@@ -1,9 +1,11 @@
 import { fetchTransport } from './transport/fetchTransport';
 import type {
   BaseHttpClientConfig,
+  BeforeSendContext,
   ClassifiedError,
   ErrorCategory,
   FallbackHint,
+  HttpHeaders,
   HttpRequestInterceptor,
   HttpRequestOptions,
   HttpTransport,
@@ -14,6 +16,7 @@ import type {
   RateLimiterContext,
   RequestOutcome,
   ResponseClassification,
+  ResilienceProfile,
 } from './types';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -58,7 +61,23 @@ export class HttpClient {
     this.defaultMaxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.transport = config.transport ?? fetchTransport;
     this.logger = config.logger;
-    this.interceptors = config.interceptors ?? [];
+    this.interceptors = this.buildInterceptors(config);
+  }
+
+  private buildInterceptors(config: BaseHttpClientConfig): HttpRequestInterceptor[] {
+    const interceptors = [...(config.interceptors ?? [])];
+    if (config.beforeRequest || config.afterResponse) {
+      interceptors.unshift({
+        beforeSend: config.beforeRequest
+          ? ({ request }: BeforeSendContext) => config.beforeRequest?.(request)
+          : undefined,
+        afterResponse: config.afterResponse
+          ? ({ request, response }: { request: HttpRequestOptions; response: Response }) =>
+              config.afterResponse?.(response, request)
+          : undefined,
+      });
+    }
+    return interceptors;
   }
 
   async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
@@ -171,14 +190,15 @@ export class HttpClient {
       operation: opts.operation,
       method: opts.method,
       path: opts.path,
-      requestId: opts.requestId ?? null,
+      requestId: opts.requestId ?? opts.correlation?.requestId ?? null,
     };
 
-    if (opts.correlationId) {
-      attributes['correlation_id'] = opts.correlationId;
+    const correlation = opts.correlation;
+    if (correlation?.correlationId ?? opts.correlationId) {
+      attributes['correlation_id'] = correlation?.correlationId ?? opts.correlationId;
     }
-    if (opts.parentCorrelationId) {
-      attributes['parent_correlation_id'] = opts.parentCorrelationId;
+    if (correlation?.parentCorrelationId ?? opts.parentCorrelationId) {
+      attributes['parent_correlation_id'] = correlation?.parentCorrelationId ?? opts.parentCorrelationId;
     }
 
     const agentContext = opts.agentContext;
@@ -203,12 +223,14 @@ export class HttpClient {
 
   private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<T> {
     const startedAt = Date.now();
+    const resilience = opts.resilience ?? {};
     const configuredAttempts =
       executeOptions.maxAttemptsOverride ??
-      opts.resilience?.maxAttemptsOverride ??
+      resilience.maxAttemptsOverride ??
+      resilience.maxAttempts ??
       opts.budget?.maxAttempts ??
       this.getMaxRetries(opts) + 1;
-    const allowRetries = executeOptions.allowRetries && configuredAttempts > 1;
+    const allowRetries = executeOptions.allowRetries && (resilience.retryEnabled ?? true) && configuredAttempts > 1;
     const maxAttempts = allowRetries ? Math.max(configuredAttempts, 1) : 1;
     const rateLimitKey = `${this.clientName}:${opts.operation}`;
     const deadline = this.computeDeadline(opts, startedAt);
@@ -221,7 +243,8 @@ export class HttpClient {
       let attemptContext: RateLimiterContext | undefined;
       const attemptStart = Date.now();
       try {
-        attemptOpts = await this.prepareAttemptOptions(opts);
+        const controller = new AbortController();
+        attemptOpts = await this.prepareAttemptOptions(opts, controller.signal);
         attemptContext = this.createRateLimiterContext(attemptOpts, attempt);
         const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
         this.logger?.debug('http.request.attempt', logMeta);
@@ -233,6 +256,7 @@ export class HttpClient {
             rateLimitKey,
             deadline,
             parseJson: executeOptions.parseJson,
+            controller,
           });
 
         const runner = this.config.policyWrapper
@@ -258,7 +282,7 @@ export class HttpClient {
         );
 
         let response = attemptResult.response;
-        response = await this.applyAfterResponseInterceptors(attemptOpts, response);
+        response = await this.applyAfterResponseInterceptors(attemptOpts, response, attempt);
         await this.config.afterResponse?.(response, attemptOpts);
 
         const rateLimit = this.extractRateLimit(response.headers);
@@ -340,7 +364,7 @@ export class HttpClient {
         await this.callOptionalHook('circuitBreaker.onFailure', () =>
           this.config.circuitBreaker?.onFailure(rateLimitKey, error),
         );
-        await this.runErrorInterceptors(attemptOpts, error);
+        await this.runErrorInterceptors(attemptOpts, error, attempt);
 
         const retryable =
           allowRetries && attempt < maxAttempts && this.shouldRetry(error, classifiedError, this.getIdempotent(attemptOpts));
@@ -361,7 +385,7 @@ export class HttpClient {
           throw error;
         }
 
-        let delay = this.getRetryDelay(error, attempt, classifiedError);
+        let delay = this.getRetryDelay(error, attempt, classifiedError, attemptOpts);
         if (deadline !== undefined) {
           const remaining = deadline - Date.now();
           if (remaining <= 0) {
@@ -373,10 +397,7 @@ export class HttpClient {
       }
     }
 
-    if (
-      lastStatus === 408 ||
-      (opts.resilience?.maxEndToEndLatencyMs && deadline !== undefined && Date.now() >= deadline)
-    ) {
+    if (lastStatus === 408 || (deadline !== undefined && Date.now() >= deadline)) {
       throw new TimeoutError('Request timed out');
     }
 
@@ -389,14 +410,14 @@ export class HttpClient {
     rateLimitKey: string;
     deadline?: number;
     parseJson: boolean;
+    controller: AbortController;
   }): Promise<AttemptSuccess> {
-    const { opts, attemptContext, rateLimitKey, deadline, parseJson } = params;
+    const { opts, attemptContext, rateLimitKey, deadline, parseJson, controller } = params;
 
     await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
     await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
 
     const timeoutMs = this.computeAttemptTimeout(opts, deadline);
-    const controller = new AbortController();
     let didTimeout = false;
     const timeoutHandle = setTimeout(() => {
       didTimeout = true;
@@ -452,9 +473,37 @@ export class HttpClient {
   }
 
   private buildUrl(opts: HttpRequestOptions): string {
+    if (opts.url) {
+      const url = new URL(opts.url);
+      this.applyQueryParameters(url, opts);
+      return url.toString();
+    }
+
+    const urlParts = opts.urlParts;
+    if (urlParts?.path || urlParts?.baseUrl) {
+      const path = urlParts.path ?? '';
+      const base = this.normalizeBaseUrl(urlParts.baseUrl ?? this.resolveBaseUrlForRequest(opts));
+      let url: URL;
+
+      if (path && this.isAbsoluteUrl(path)) {
+        url = new URL(path);
+      } else {
+        if (!base) {
+          throw new Error('No baseUrl provided and request path is not an absolute URL');
+        }
+        const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+        const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+        url = new URL(normalizedPath, normalizedBase);
+      }
+
+      this.applyQueryParameters(url, opts, urlParts.query);
+      return url.toString();
+    }
+
+    const path = opts.path ?? '';
     const base = this.resolveBaseUrlForRequest(opts);
-    if (this.isAbsoluteUrl(opts.path)) {
-      const url = new URL(opts.path);
+    if (path && this.isAbsoluteUrl(path)) {
+      const url = new URL(path);
       this.applyQueryParameters(url, opts);
       return url.toString();
     }
@@ -463,25 +512,30 @@ export class HttpClient {
       throw new Error('No baseUrl provided and request path is not an absolute URL');
     }
     const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-    const path = opts.path.startsWith('/') ? opts.path.slice(1) : opts.path;
-    const url = new URL(path, normalizedBase);
+    const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
+    const url = new URL(normalizedPath, normalizedBase);
     this.applyQueryParameters(url, opts);
     return url.toString();
   }
 
-  private applyQueryParameters(url: URL, opts: HttpRequestOptions) {
-    if (opts.query) {
-      for (const [key, value] of Object.entries(opts.query)) {
+  private applyQueryParameters(url: URL, opts: HttpRequestOptions, fromUrlParts?: HttpRequestOptions['query']) {
+    const apply = (query?: HttpRequestOptions['query']) => {
+      if (!query) return;
+      for (const [key, value] of Object.entries(query)) {
         if (value === undefined) continue;
         if (Array.isArray(value)) {
           for (const entry of value) {
             url.searchParams.append(key, String(entry));
           }
         } else {
-          url.searchParams.append(key, String(value));
+          url.searchParams.set(key, String(value));
         }
       }
-    }
+    };
+
+    apply(fromUrlParts);
+    apply(opts.query);
+
     if (opts.pageSize !== undefined) {
       url.searchParams.set('limit', String(opts.pageSize));
     }
@@ -516,7 +570,75 @@ export class HttpClient {
   }
 
   private prepareRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
-    return this.cloneRequestOptions(opts);
+    const correlation = this.normalizeCorrelation(opts);
+    const resilience = this.mergeResilience(opts.resilience);
+    const agentContext = { ...this.config.defaultAgentContext, ...opts.agentContext };
+    const headers: HttpHeaders | undefined = this.mergeHeaders(this.config.defaultHeaders, opts.headers);
+    const path = this.resolvePath(opts);
+
+    return {
+      ...opts,
+      path,
+      headers,
+      resilience,
+      agentContext,
+      requestId: correlation.requestId,
+      correlationId: correlation.correlationId,
+      parentCorrelationId: correlation.parentCorrelationId,
+      correlation,
+    };
+  }
+
+  private mergeHeaders(
+    defaults?: HttpHeaders | Record<string, string | undefined>,
+    provided?: HttpHeaders | Record<string, string | undefined>,
+  ): HttpHeaders | undefined {
+    if (!defaults && !provided) return provided as HttpHeaders | undefined;
+    const result: Record<string, string> = {};
+    for (const source of [defaults, provided]) {
+      if (!source) continue;
+      for (const [key, value] of Object.entries(source)) {
+        if (value !== undefined) {
+          result[key] = value;
+        }
+      }
+    }
+    return result;
+  }
+
+  private mergeResilience(resilience?: ResilienceProfile): ResilienceProfile | undefined {
+    if (!this.config.defaultResilience && !resilience) return resilience;
+    return { ...this.config.defaultResilience, ...resilience };
+  }
+
+  private normalizeCorrelation(opts: HttpRequestOptions) {
+    const generated = this.generateRequestId();
+    const correlation = opts.correlation ?? {};
+    const requestId = opts.requestId ?? correlation.requestId ?? generated;
+    return {
+      requestId,
+      correlationId: opts.correlationId ?? correlation.correlationId,
+      parentCorrelationId: opts.parentCorrelationId ?? correlation.parentCorrelationId,
+    };
+  }
+
+  private generateRequestId(): string {
+    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? (crypto.randomUUID as () => string)()
+      : Math.random().toString(36).slice(2);
+  }
+
+  private resolvePath(opts: HttpRequestOptions): string | undefined {
+    if (opts.path) return opts.path;
+    if (opts.urlParts?.path) return opts.urlParts.path;
+    if (opts.url) {
+      try {
+        return new URL(opts.url).pathname;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   private cloneRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
@@ -524,28 +646,21 @@ export class HttpClient {
       ...opts,
       headers: opts.headers ? { ...opts.headers } : undefined,
       query: opts.query ? { ...opts.query } : undefined,
+      urlParts: opts.urlParts ? { ...opts.urlParts, query: opts.urlParts.query ? { ...opts.urlParts.query } : undefined } : undefined,
     };
   }
 
-  private async prepareAttemptOptions(opts: HttpRequestOptions): Promise<AttemptHttpRequestOptions> {
+  private async prepareAttemptOptions(
+    opts: HttpRequestOptions,
+    signal: AbortSignal,
+  ): Promise<AttemptHttpRequestOptions> {
     const cloned = this.cloneRequestOptions(opts);
     let attempt: AttemptHttpRequestOptions = {
       ...cloned,
       headers: this.buildHeaders(cloned.headers),
     };
-    if (this.config.beforeRequest) {
-      const modified = this.config.beforeRequest(attempt);
-      if (modified) {
-        attempt = {
-          ...attempt,
-          ...modified,
-          headers: this.buildHeaders((modified.headers ?? attempt.headers) as Record<string, string | undefined>),
-          query: modified.query ?? attempt.query,
-        };
-      }
-    }
 
-    attempt = await this.applyBeforeSendInterceptors(attempt);
+    attempt = await this.applyBeforeSendInterceptors(attempt, signal);
     return attempt;
   }
 
@@ -555,7 +670,7 @@ export class HttpClient {
 
   private getTimeoutMs(opts: HttpRequestOptions): number {
     const opDefaults = this.getOperationDefaults(opts);
-    return opts.timeoutMs ?? opDefaults?.timeoutMs ?? this.defaultTimeoutMs;
+    return opts.resilience?.perAttemptTimeoutMs ?? opts.timeoutMs ?? opDefaults?.timeoutMs ?? this.defaultTimeoutMs;
   }
 
   private getMaxRetries(opts: HttpRequestOptions): number {
@@ -586,18 +701,44 @@ export class HttpClient {
     return headers;
   }
 
-  private async applyBeforeSendInterceptors(opts: AttemptHttpRequestOptions): Promise<AttemptHttpRequestOptions> {
+  private async applyBeforeSendInterceptors(
+    opts: AttemptHttpRequestOptions,
+    signal: AbortSignal,
+  ): Promise<AttemptHttpRequestOptions> {
     let current = opts;
     for (const interceptor of this.interceptors) {
       if (!interceptor.beforeSend) continue;
-      const modified = await interceptor.beforeSend(current);
-      if (modified) {
-        current = {
-          ...current,
-          ...modified,
-          headers: this.buildHeaders((modified.headers ?? current.headers) as Record<string, string | undefined>),
-          query: modified.query ?? current.query,
-        };
+      const ctx: BeforeSendContext = { request: current, signal };
+      try {
+        const result = await interceptor.beforeSend(ctx as never);
+        current = ctx.request as AttemptHttpRequestOptions;
+        if (result && typeof result === 'object') {
+          current = {
+            ...current,
+            ...(result as HttpRequestOptions),
+            headers: this.buildHeaders((result as HttpRequestOptions).headers ?? current.headers),
+            query: (result as HttpRequestOptions).query ?? current.query,
+          };
+        }
+      } catch (error) {
+        try {
+          const fallback = await (interceptor.beforeSend as (opts: HttpRequestOptions) => unknown)(current);
+          if (fallback && typeof fallback === 'object') {
+            current = {
+              ...current,
+              ...(fallback as HttpRequestOptions),
+              headers: this.buildHeaders((fallback as HttpRequestOptions).headers ?? current.headers),
+              query: (fallback as HttpRequestOptions).query ?? current.query,
+            };
+          }
+        } catch (hookError) {
+          this.logger?.warn('http.interceptor.beforeSend.failed', {
+            client: this.clientName,
+            operation: opts.operation,
+            error: hookError instanceof Error ? hookError.message : hookError,
+          });
+          throw hookError;
+        }
       }
     }
     return current;
@@ -606,26 +747,57 @@ export class HttpClient {
   private async applyAfterResponseInterceptors(
     opts: HttpRequestOptions,
     response: Response,
+    attempt: number,
   ): Promise<Response> {
     let current = response;
     for (const interceptor of [...this.interceptors].reverse()) {
       if (!interceptor.afterResponse) continue;
-      current = await interceptor.afterResponse(opts, current);
+      const ctx = { request: opts, response: current, attempt };
+      try {
+        const result = await interceptor.afterResponse(ctx as never);
+        current = (ctx as { response: Response }).response;
+        if (result instanceof Response) {
+          current = result;
+        }
+      } catch (error) {
+        try {
+          const legacyResult = await (interceptor.afterResponse as (opts: HttpRequestOptions, res: Response) => Response | void)(
+            opts,
+            current,
+          );
+          if (legacyResult instanceof Response) {
+            current = legacyResult;
+          }
+        } catch (hookError) {
+          this.logger?.warn('http.interceptor.afterResponse.failed', {
+            client: this.clientName,
+            operation: opts.operation,
+            error: hookError instanceof Error ? hookError.message : hookError,
+          });
+          throw hookError;
+        }
+      }
     }
     return current;
   }
 
-  private async runErrorInterceptors(opts: HttpRequestOptions, error: unknown): Promise<void> {
+  private async runErrorInterceptors(opts: HttpRequestOptions, error: unknown, attempt: number): Promise<void> {
     for (const interceptor of [...this.interceptors].reverse()) {
       if (!interceptor.onError) continue;
+      const ctx = { request: opts, error, attempt };
       try {
-        await interceptor.onError(opts, error);
-      } catch (hookError) {
-        this.logger?.warn('http.interceptor.onError.failed', {
-          client: this.clientName,
-          operation: opts.operation,
-          error: hookError instanceof Error ? hookError.message : hookError,
-        });
+        await interceptor.onError(ctx as never);
+      } catch (firstError) {
+        try {
+          await (interceptor.onError as (opts: HttpRequestOptions, err: unknown) => void)(opts, error);
+        } catch (hookError) {
+          this.logger?.warn('http.interceptor.onError.failed', {
+            client: this.clientName,
+            operation: opts.operation,
+            error: hookError instanceof Error ? hookError.message : hookError,
+          });
+          throw firstError;
+        }
       }
     }
   }
@@ -692,7 +864,7 @@ export class HttpClient {
   private createRateLimiterContext(opts: HttpRequestOptions, attempt: number): RateLimiterContext {
     return {
       method: opts.method,
-      path: opts.path,
+      path: opts.path ?? '',
       operation: opts.operation,
       attempt,
       requestId: opts.requestId,
@@ -782,7 +954,12 @@ export class HttpClient {
     return true;
   }
 
-  private getRetryDelay(error: unknown, attempt: number, classified?: ClassifiedError): number {
+  private getRetryDelay(
+    error: unknown,
+    attempt: number,
+    classified: ClassifiedError | undefined,
+    opts: HttpRequestOptions,
+  ): number {
     if (classified?.suggestedBackoffMs !== undefined) {
       return Math.min(classified.suggestedBackoffMs, MAX_RETRY_DELAY_MS);
     }
@@ -792,9 +969,12 @@ export class HttpClient {
         return Math.min(retryAfter, MAX_RETRY_DELAY_MS);
       }
     }
-    const baseDelay = BASE_BACKOFF_MS * 2 ** (attempt - 1);
-    const jitterFactor = 1 + (Math.random() * 0.4 - 0.2);
-    return Math.min(baseDelay * jitterFactor, MAX_RETRY_DELAY_MS);
+    const baseBackoffMs = opts.resilience?.baseBackoffMs ?? BASE_BACKOFF_MS;
+    const maxBackoffMs = opts.resilience?.maxBackoffMs ?? MAX_RETRY_DELAY_MS;
+    const [minJitter, maxJitter] = opts.resilience?.jitterFactorRange ?? [0.8, 1.2];
+    const baseDelay = baseBackoffMs * 2 ** (attempt - 1);
+    const jitterFactor = minJitter + Math.random() * (maxJitter - minJitter);
+    return Math.min(baseDelay * jitterFactor, maxBackoffMs);
   }
 
   private parseRetryAfterHeader(value?: string | null): number | undefined {
@@ -918,17 +1098,20 @@ export class HttpClient {
   }
 
   private computeDeadline(opts: HttpRequestOptions, startedAt: number): number | undefined {
-    const resilienceDeadline =
+    const endToEndDeadline =
       opts.resilience?.maxEndToEndLatencyMs !== undefined
         ? startedAt + opts.resilience.maxEndToEndLatencyMs
         : undefined;
+    const overallDeadline =
+      opts.resilience?.overallTimeoutMs !== undefined ? startedAt + opts.resilience.overallTimeoutMs : undefined;
     const budgetDeadline =
       opts.budget?.maxTotalDurationMs !== undefined ? startedAt + opts.budget.maxTotalDurationMs : undefined;
 
-    if (resilienceDeadline !== undefined && budgetDeadline !== undefined) {
-      return Math.min(resilienceDeadline, budgetDeadline);
-    }
-    return resilienceDeadline ?? budgetDeadline;
+    const candidates = [endToEndDeadline, overallDeadline, budgetDeadline].filter(
+      (value): value is number => value !== undefined,
+    );
+    if (!candidates.length) return undefined;
+    return Math.min(...candidates);
   }
 
   private async classifyResponse(response: Response, bodyText?: string): Promise<ResponseClassification> {
