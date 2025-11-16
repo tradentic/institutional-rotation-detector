@@ -38,10 +38,21 @@ export interface ResilienceProfile {
   maxBackoffMs?: number;
   jitterFactorRange?: [number, number];
   maxEndToEndLatencyMs?: number;
-  // Legacy/compatibility fields retained from earlier revisions
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use policy-based prioritization via @airnub/resilient-http-policies instead.
+   */
   priority?: 'low' | 'normal' | 'high' | 'critical';
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use maxAttempts directly.
+   */
   maxAttemptsOverride?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use retryEnabled: false or maxAttempts: 1 instead.
+   */
   failFast?: boolean;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Failover logic should be implemented via custom interceptors.
+   */
   allowFailover?: boolean;
 }
 
@@ -93,6 +104,27 @@ export interface Logger {
   error(message: string, meta?: LoggerMeta): void;
 }
 
+/**
+ * Error category classification for HTTP errors.
+ *
+ * Standard v0.7 categories:
+ * - 'none': No error
+ * - 'auth': Authentication/authorization failure (401, 403)
+ * - 'validation': Client input validation error (400, 422)
+ * - 'not_found': Resource not found (404)
+ * - 'quota': Quota/payment required (402)
+ * - 'rate_limit': Rate limit exceeded (429)
+ * - 'timeout': Request timeout (408)
+ * - 'transient': Temporary server error, retryable (5xx)
+ * - 'network': Network-level error (connection failed, DNS, etc.)
+ * - 'canceled': Request was canceled by client
+ * - 'unknown': Unclassified error
+ *
+ * @deprecated Legacy categories (pre-v0.7, use modern equivalents):
+ * - 'safety': Use 'validation' or custom error handling
+ * - 'quota_exceeded': Use 'quota' or 'rate_limit'
+ * - 'server': Use 'transient' for 5xx errors
+ */
 export type ErrorCategory =
   | 'none'
   | 'auth'
@@ -105,7 +137,6 @@ export type ErrorCategory =
   | 'network'
   | 'canceled'
   | 'unknown'
-  // Legacy categories retained for backwards compatibility
   | 'safety'
   | 'quota_exceeded'
   | 'server';
@@ -258,16 +289,36 @@ export interface HttpClientConfig {
   rateLimiter?: HttpRateLimiter;
   circuitBreaker?: CircuitBreaker;
 
+  /**
+   * @deprecated Legacy hook from pre-v0.7. Use interceptors array with HttpRequestInterceptor.beforeSend instead.
+   */
   beforeRequest?: (opts: HttpRequestOptions) => void | Promise<void>;
+  /**
+   * @deprecated Legacy hook from pre-v0.7. Use interceptors array with HttpRequestInterceptor.afterResponse instead.
+   */
   afterResponse?: (opts: HttpRequestOptions, res: Response) => void | Promise<void>;
 
+  /**
+   * @deprecated Legacy hook from pre-v0.7. Use interceptors or errorClassifier instead.
+   */
   responseClassifier?: ResponseClassifier;
   errorClassifier?: ErrorClassifier | LegacyErrorClassifier;
+  /**
+   * @deprecated Legacy hook from pre-v0.7. Use @airnub/resilient-http-policies with createPolicyInterceptor instead.
+   */
   policyWrapper?: PolicyWrapper;
 
-  // Legacy configuration retained for compatibility
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use defaultResilience.perAttemptTimeoutMs instead.
+   */
   timeoutMs?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use defaultResilience.maxAttempts instead.
+   */
   maxRetries?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Set resilience per-operation via request options instead.
+   */
   operationDefaults?: Record<string, OperationDefaults>;
 }
 
@@ -295,15 +346,41 @@ export interface HttpRequestOptions {
   agentContext?: AgentContext;
   extensions?: Extensions;
 
-  // Legacy/compatibility fields
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use resilience.retryEnabled and request-level classification instead.
+   */
   idempotent?: boolean;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use resilience.perAttemptTimeoutMs or resilience.overallTimeoutMs instead.
+   */
   timeoutMs?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use resilience.maxAttempts instead.
+   */
   maxRetries?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Caching should be implemented via interceptors.
+   */
   cacheKey?: string;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Caching should be implemented via interceptors.
+   */
   cacheTtlMs?: number;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use correlation.requestId instead.
+   */
   requestId?: string;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use correlation.correlationId instead.
+   */
   correlationId?: string;
+  /**
+   * @deprecated Legacy field from pre-v0.7. Use correlation.parentCorrelationId instead.
+   */
   parentCorrelationId?: string;
+  /**
+   * @deprecated Internal field, do not use directly.
+   */
   attempt?: number;
 }
 
@@ -324,6 +401,51 @@ export interface OnErrorContext {
   attempt: number;
 }
 
+/**
+ * HTTP request interceptor for cross-cutting concerns (logging, metrics, policies, guardrails, etc.).
+ *
+ * Interceptors are the primary extension mechanism in v0.7+. They run in a well-defined order:
+ *
+ * **Execution Order:**
+ * 1. `beforeSend`: Runs in **registration order** (first registered runs first)
+ *    - Called before each HTTP attempt (including retries)
+ *    - Can mutate the request (headers, URL, body, resilience settings)
+ *    - Can throw to prevent the request (e.g., policy denial, guardrail violation)
+ *    - Receives BeforeSendContext with request and AbortSignal
+ *
+ * 2. `afterResponse`: Runs in **reverse registration order** (last registered runs first)
+ *    - Called after each successful HTTP response (including retries)
+ *    - Receives AfterResponseContext with request, response, and attempt number
+ *    - Cannot prevent further processing, but can record metrics/logs
+ *
+ * 3. `onError`: Runs in **reverse registration order** (last registered runs first)
+ *    - Called after each failed HTTP attempt (network errors, non-2xx status if classified as error)
+ *    - Receives OnErrorContext with request, error, and attempt number
+ *    - Cannot suppress the error, but can record metrics/logs
+ *
+ * **Best Practices:**
+ * - Use interceptors for: policies, guardrails, telemetry, caching, auth injection, request ID generation
+ * - Avoid heavy computation in interceptors (they run on every attempt)
+ * - Interceptors run *inside* the retry loop, so they execute once per attempt
+ * - To run logic once per logical request (not per attempt), use metrics/tracing hooks instead
+ *
+ * **Example:**
+ * ```typescript
+ * const loggingInterceptor: HttpRequestInterceptor = {
+ *   beforeSend: ({ request }) => {
+ *     console.log('Sending request:', request.operation);
+ *   },
+ *   afterResponse: ({ response, attempt }) => {
+ *     console.log('Got response:', response.status, 'on attempt', attempt);
+ *   },
+ *   onError: ({ error, attempt }) => {
+ *     console.error('Request failed on attempt', attempt, error);
+ *   },
+ * };
+ * ```
+ *
+ * @see HttpClientConfig.interceptors - Where to register interceptors
+ */
 export interface HttpRequestInterceptor {
   beforeSend?:
     | ((ctx: BeforeSendContext) => Promise<void> | void)
