@@ -1,3 +1,5 @@
+import type { HttpClient } from '@airnub/resilient-http-core';
+
 /**
  * FINRA API Client Types
  *
@@ -127,6 +129,8 @@ export interface FinraClientConfig {
   logger?: Logger;
   metrics?: MetricsSink;
   transport?: HttpTransport;
+  /** Optional resilient-http-core client to reuse instead of raw fetch. */
+  httpClient?: HttpClient;
 }
 
 // ============================================================================

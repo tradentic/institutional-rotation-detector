@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'timers/promises';
+import type { HttpClient, HttpMethod } from '@airnub/resilient-http-core';
 import type {
   FinraClientConfig,
   TokenResponse,
@@ -62,6 +63,7 @@ export class FinraClient {
   private readonly logger?: Logger;
   private readonly metrics?: MetricsSink;
   private readonly transport: HttpTransport;
+  private readonly httpClient?: HttpClient;
   private accessToken: string | null = null;
   private tokenExpiry: number = 0;
 
@@ -78,6 +80,7 @@ export class FinraClient {
     this.logger = config.logger;
     this.metrics = config.metrics;
     this.transport = config.transport ?? ((url, init) => fetch(url, init));
+    this.httpClient = config.httpClient;
   }
 
   // ==========================================================================
@@ -405,6 +408,17 @@ export class FinraClient {
   }
 
   private async executeHttp(url: string, init: RequestInit, timeoutMs?: number): Promise<Response> {
+    if (this.httpClient) {
+      const method = (init.method as HttpMethod | undefined) ?? 'GET';
+      return this.httpClient.requestRaw({
+        url,
+        method,
+        headers: init.headers as Record<string, string> | undefined,
+        body: init.body as BodyInit | null,
+        operation: 'finra.request',
+      });
+    }
+
     if (!timeoutMs) {
       try {
         return await this.transport(url, init);
