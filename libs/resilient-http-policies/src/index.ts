@@ -6,6 +6,7 @@ import type {
   HttpRequestOptions,
   RequestOutcome,
   ResilienceProfile,
+  RateLimitFeedback,
 } from "@tradentic/resilient-http-core";
 
 export type RequestClass = "interactive" | "background" | "batch";
@@ -224,6 +225,44 @@ export interface PolicyInterceptorConfig {
 }
 
 export function createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRequestInterceptor {
+  const decisions = new WeakMap<HttpRequestOptions, PolicyDecision>();
+  const starts = new WeakMap<HttpRequestOptions, number>();
+
+  const extractRateLimit = (headers?: Headers): RateLimitFeedback | undefined => {
+    if (!headers) return undefined;
+    const feedback: RateLimitFeedback = {};
+
+    const getNumber = (name: string) => {
+      const value = headers.get(name);
+      if (!value) return undefined;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    };
+
+    const limitRequests = getNumber("x-ratelimit-limit");
+    const remainingRequests = getNumber("x-ratelimit-remaining");
+    const resetRequests = getNumber("x-ratelimit-reset");
+    if (limitRequests !== undefined) feedback.limitRequests = limitRequests;
+    if (remainingRequests !== undefined) feedback.remainingRequests = remainingRequests;
+    if (resetRequests !== undefined) {
+      const resetDate = Number.isFinite(resetRequests) ? new Date(resetRequests * 1000) : undefined;
+      if (resetDate) feedback.resetRequestsAt = resetDate;
+    }
+
+    const rawHeaders: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      if (key.startsWith("x-ratelimit") || key === "retry-after") {
+        rawHeaders[key] = value;
+      }
+    });
+
+    if (Object.keys(rawHeaders).length > 0) {
+      feedback.rawHeaders = rawHeaders;
+    }
+
+    return Object.keys(feedback).length > 0 ? feedback : undefined;
+  };
+
   return {
     beforeSend: async ({ request }) => {
       const scope = buildScope(request);
@@ -231,6 +270,8 @@ export function createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRe
         scope.requestClass = config.defaultRequestClass;
       }
       const decision = await config.engine.evaluate({ scope, request });
+      decisions.set(request, decision);
+      starts.set(request, Date.now());
       if (!decision.allow) {
         throw new Error(decision.reason ?? "Request denied by policy");
       }
@@ -241,22 +282,49 @@ export function createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRe
         await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
       }
     },
-    afterResponse: async ({ request, response }) => {
+    afterResponse: async ({ request, response, attempt }) => {
       const scope = buildScope(request);
+      const decision = decisions.get(request);
+      const startedAt = starts.get(request) ?? Date.now();
+      const finishedAt = Date.now();
+      const rateLimitFeedback = extractRateLimit(response.headers);
+      const outcome: RequestOutcome = {
+        ok: response.ok,
+        status: response.status,
+        attempts: attempt,
+        startedAt,
+        finishedAt,
+        rateLimitFeedback,
+      };
       await config.engine.onResult?.({
         scope,
         request,
-        outcome: (response as any).outcome ?? { status: response.status, attempts: 1, durationMs: 0 },
-        policyKey: undefined,
+        outcome,
+        rateLimitFeedback,
+        policyKey: decision?.policyKey,
       });
     },
-    onError: async ({ request }) => {
+    onError: async ({ request, error, attempt }) => {
       const scope = buildScope(request);
+      const decision = decisions.get(request);
+      const startedAt = starts.get(request) ?? Date.now();
+      const finishedAt = Date.now();
+      const status = error instanceof Error && (error as any).status ? (error as any).status : 0;
+      const rateLimitFeedback = extractRateLimit((error as any)?.headers);
       await config.engine.onResult?.({
         scope,
         request,
-        outcome: { status: 0, attempts: 1, durationMs: 0, errorCategory: "network" as any },
-        policyKey: undefined,
+        outcome: {
+          ok: false,
+          status,
+          attempts: attempt,
+          startedAt,
+          finishedAt,
+          rateLimitFeedback,
+          errorCategory: (error as any)?.category,
+        },
+        rateLimitFeedback,
+        policyKey: decision?.policyKey,
       });
     },
   };
