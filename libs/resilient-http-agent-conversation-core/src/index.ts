@@ -378,6 +378,12 @@ export class DefaultConversationEngine implements ConversationEngine {
     });
 
     const providerMessages = mapConversationMessagesToProvider(history.messages);
+    const stream = await input.provider.completeStream({
+      ...input.providerParams,
+      messages: providerMessages,
+      agentContext: input.agentContext,
+    });
+
     const finalize = async (providerResult: ProviderCallResult) =>
       this.finalizeTurn({ conversation, input, providerResult });
 
