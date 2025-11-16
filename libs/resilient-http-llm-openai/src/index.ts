@@ -365,3 +365,321 @@ export function createOpenAIHttpClient(config: OpenAIHttpClientConfig): OpenAIHt
   return { http, responses };
 }
 
+/**
+ * Configuration for OpenAIProviderAdapter.
+ */
+export interface OpenAIProviderAdapterConfig {
+  /**
+   * The OpenAI HTTP client to use for making requests.
+   */
+  client: OpenAIHttpClient;
+  /**
+   * Default model to use if not specified in request.
+   */
+  defaultModel?: string;
+  /**
+   * Optional conversation state management.
+   * The adapter will automatically chain responses using previous_response_id.
+   */
+  conversationStateStore?: Map<string, OpenAIConversationState>;
+}
+
+/**
+ * Provider adapter for OpenAI that integrates with @airnub/agent-conversation-core.
+ *
+ * This adapter bridges the OpenAI Responses API with the generic ProviderAdapter interface,
+ * enabling use of OpenAI models within the conversation engine framework.
+ *
+ * Features:
+ * - Automatic message format conversion (ProviderMessage <-> OpenAIInputMessage)
+ * - Conversation state management with response chaining
+ * - Streaming and non-streaming support
+ * - Tool call handling
+ * - Token usage tracking
+ *
+ * @example
+ * ```typescript
+ * import { createOpenAIHttpClient } from '@airnub/http-llm-openai';
+ * import { OpenAIProviderAdapter } from '@airnub/http-llm-openai';
+ * import { DefaultConversationEngine, InMemoryConversationStore } from '@airnub/agent-conversation-core';
+ *
+ * const client = createOpenAIHttpClient({ apiKey: process.env.OPENAI_API_KEY });
+ * const adapter = new OpenAIProviderAdapter({ client, defaultModel: 'gpt-4' });
+ * const engine = new DefaultConversationEngine({
+ *   store: new InMemoryConversationStore(),
+ *   historyBuilder: new RecentNTurnsHistoryBuilder({ maxTurns: 10 }),
+ * });
+ *
+ * const conversation = await engine.store.createConversation({ title: 'My conversation' });
+ * const result = await engine.runTurn({
+ *   conversationId: conversation.id,
+ *   userMessages: [{ role: 'user', content: [{ type: 'text', text: 'Hello!' }] }],
+ *   provider: adapter,
+ *   providerParams: { metadata: { provider: 'openai', model: 'gpt-4' } },
+ * });
+ * ```
+ */
+export class OpenAIProviderAdapter implements ProviderAdapter {
+  private client: OpenAIHttpClient;
+  private defaultModel: string;
+  private conversationStateStore?: Map<string, OpenAIConversationState>;
+
+  constructor(config: OpenAIProviderAdapterConfig) {
+    this.client = config.client;
+    this.defaultModel = config.defaultModel ?? 'gpt-4o';
+    this.conversationStateStore = config.conversationStateStore;
+  }
+
+  /**
+   * Get conversation state for chaining responses.
+   */
+  getConversationState(conversationId: string): OpenAIConversationState | undefined {
+    return this.conversationStateStore?.get(conversationId);
+  }
+
+  /**
+   * Set conversation state for chaining responses.
+   */
+  setConversationState(conversationId: string, state: OpenAIConversationState): void {
+    if (this.conversationStateStore) {
+      this.conversationStateStore.set(conversationId, state);
+    }
+  }
+
+  async complete(params: ProviderCallParams): Promise<ProviderCallResult> {
+    const model = params.metadata.model || this.defaultModel;
+    const input = mapProviderMessagesToOpenAI(params.messages);
+
+    const conversationId = params.agentContext?.runId ?? params.metadata.extensions?.['conversation.id'] as string;
+    const previousResponseId = conversationId
+      ? this.getConversationState(conversationId)?.lastResponseId
+      : undefined;
+
+    const request: CreateResponseRequest = {
+      model,
+      input,
+      modalities: ['text'],
+      tools: params.tools ? mapProviderToolsToOpenAI(params.tools) : undefined,
+      toolChoice: params.toolChoice,
+      maxOutputTokens: params.maxTokens,
+      previousResponseId,
+    };
+
+    const options: CreateResponseOptions = {
+      agentContext: params.agentContext,
+      extensions: params.metadata.extensions,
+    };
+
+    const response = await this.client.responses.create(request, options);
+
+    // Update conversation state with new response ID
+    if (conversationId) {
+      this.setConversationState(conversationId, {
+        lastResponseId: response.id,
+        metadata: { model: response.model },
+      });
+    }
+
+    return mapOpenAIResponseToProviderResult(response);
+  }
+
+  async completeStream(params: ProviderCallParams): Promise<ProviderStream> {
+    if (!this.client.responses.createStream) {
+      throw new Error('Streaming not supported by this OpenAI client');
+    }
+
+    const model = params.metadata.model || this.defaultModel;
+    const input = mapProviderMessagesToOpenAI(params.messages);
+
+    const conversationId = params.agentContext?.runId ?? params.metadata.extensions?.['conversation.id'] as string;
+    const previousResponseId = conversationId
+      ? this.getConversationState(conversationId)?.lastResponseId
+      : undefined;
+
+    const request: CreateResponseRequest = {
+      model,
+      input,
+      modalities: ['text'],
+      tools: params.tools ? mapProviderToolsToOpenAI(params.tools) : undefined,
+      toolChoice: params.toolChoice,
+      maxOutputTokens: params.maxTokens,
+      previousResponseId,
+    };
+
+    const options: CreateResponseOptions = {
+      agentContext: params.agentContext,
+      extensions: params.metadata.extensions,
+    };
+
+    const openaiStream = await this.client.responses.createStream(request, options);
+
+    // Transform OpenAI stream events to ProviderStream events
+    const providerStream: ProviderStream = {
+      async *[Symbol.asyncIterator]() {
+        for await (const event of openaiStream) {
+          if (event.type === 'text-delta') {
+            yield {
+              type: 'delta',
+              delta: {
+                role: 'assistant',
+                content: [{ type: 'text', text: event.textDelta }],
+              },
+            };
+          } else if (event.type === 'tool-call') {
+            yield {
+              type: 'tool-call',
+              toolCall: event.toolCall,
+            };
+          } else if (event.type === 'done') {
+            // Update conversation state
+            if (conversationId) {
+              this.setConversationState(conversationId, {
+                lastResponseId: event.result.id,
+                metadata: { model: event.result.model },
+              });
+            }
+            return mapOpenAIResponseToProviderResult(event.result);
+          }
+        }
+
+        const finalResult = await openaiStream.final;
+        if (conversationId) {
+          this.setConversationState(conversationId, {
+            lastResponseId: finalResult.id,
+            metadata: { model: finalResult.model },
+          });
+        }
+        return mapOpenAIResponseToProviderResult(finalResult);
+      },
+      final: openaiStream.final.then((result) => {
+        if (conversationId) {
+          this.setConversationState(conversationId, {
+            lastResponseId: result.id,
+            metadata: { model: result.model },
+          });
+        }
+        return mapOpenAIResponseToProviderResult(result);
+      }),
+    };
+
+    return providerStream;
+  }
+}
+
+/**
+ * Maps ProviderMessage array to OpenAI input format.
+ */
+function mapProviderMessagesToOpenAI(messages: ProviderMessage[]): OpenAIInputMessage[] {
+  return messages.map((msg) => {
+    const role = msg.role as OpenAIRole;
+
+    // Simple text-only message
+    const textParts = msg.content.filter(
+      (part): part is ProviderTextPart => part.type === 'text'
+    );
+
+    if (textParts.length === 1 && msg.content.length === 1) {
+      // Single text content - use string format
+      return {
+        role,
+        content: textParts[0].text,
+      };
+    }
+
+    // Multi-part or complex content
+    const openaiContent = msg.content.map((part) => {
+      if (part.type === 'text') {
+        return { type: 'text', text: (part as ProviderTextPart).text };
+      }
+      // Pass through other content types as-is
+      return part as any;
+    });
+
+    return {
+      role,
+      content: openaiContent,
+    };
+  });
+}
+
+/**
+ * Maps ProviderToolDefinition array to OpenAI tool format.
+ */
+function mapProviderToolsToOpenAI(tools: ProviderToolDefinition[]): OpenAIToolDefinition[] {
+  return tools.map((tool) => ({
+    type: 'function',
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.schema,
+  }));
+}
+
+/**
+ * Maps OpenAIResponseObject to ProviderCallResult.
+ */
+function mapOpenAIResponseToProviderResult(response: OpenAIResponseObject): ProviderCallResult {
+  const message: ProviderMessage = response.providerMessage ?? {
+    role: 'assistant',
+    content: response.outputText
+      ? [{ type: 'text', text: response.outputText }]
+      : [],
+  };
+
+  return {
+    id: response.id,
+    createdAt: response.createdAt,
+    message,
+    toolCalls: response.toolCalls,
+    usage: response.usage,
+    raw: response.raw,
+  };
+}
+
+/**
+ * Import types from agent-conversation-core for the ProviderAdapter interface.
+ * These are defined inline here to match the types from that package.
+ */
+interface ProviderAdapter {
+  complete(params: ProviderCallParams): Promise<ProviderCallResult>;
+  completeStream?(params: ProviderCallParams): Promise<ProviderStream>;
+}
+
+interface ProviderCallParams {
+  messages: ProviderMessage[];
+  tools?: ProviderToolDefinition[];
+  toolChoice?: unknown;
+  maxTokens?: number;
+  metadata: ProviderCallMetadata;
+  agentContext?: AgentContext;
+}
+
+interface ProviderCallMetadata {
+  provider: string;
+  model: string;
+  extensions?: Extensions;
+}
+
+interface ProviderCallResult {
+  id: string;
+  createdAt: Date;
+  message: ProviderMessage;
+  toolCalls?: ProviderToolCall[];
+  usage?: TokenUsage;
+  raw?: unknown;
+}
+
+interface ProviderToolDefinition {
+  name: string;
+  description?: string;
+  schema?: unknown;
+}
+
+type ProviderStreamEvent =
+  | { type: 'delta'; delta: ProviderMessage }
+  | { type: 'tool-call'; toolCall: ProviderToolCall }
+  | { type: 'done'; result: ProviderCallResult };
+
+interface ProviderStream extends AsyncIterable<ProviderStreamEvent> {
+  final: Promise<ProviderCallResult>;
+}
+
