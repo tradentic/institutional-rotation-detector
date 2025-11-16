@@ -174,6 +174,39 @@ function getOutcomeFromResponse(response: Response, startedAt: number): RequestO
   };
 }
 
+function buildAggregateOutcome(
+  startedAt: number,
+  outcomes: RequestOutcome[]
+): RequestOutcome | undefined {
+  if (outcomes.length === 0) {
+    return undefined;
+  }
+
+  const finishedAt = outcomes[outcomes.length - 1].finishedAt ?? Date.now();
+  const attempts = outcomes.reduce((sum, outcome) => sum + (outcome.attempts ?? 1), 0);
+  let rateLimitFeedback: RequestOutcome["rateLimitFeedback"];
+  let errorCategory: RequestOutcome["errorCategory"];
+  for (let i = outcomes.length - 1; i >= 0; i -= 1) {
+    if (!rateLimitFeedback && outcomes[i].rateLimitFeedback) {
+      rateLimitFeedback = outcomes[i].rateLimitFeedback;
+    }
+    if (!errorCategory && outcomes[i].errorCategory) {
+      errorCategory = outcomes[i].errorCategory;
+    }
+    if (rateLimitFeedback && errorCategory) break;
+  }
+
+  return {
+    ok: outcomes.every((outcome) => outcome.ok),
+    status: outcomes[outcomes.length - 1].status,
+    errorCategory,
+    rateLimitFeedback,
+    attempts,
+    startedAt,
+    finishedAt,
+  };
+}
+
 function applyOffsetLimitDefaults(request: HttpRequestOptions, strategy: PaginationStrategy): HttpRequestOptions {
   const maybeConfig = (strategy as any).__offsetConfig as OffsetLimitConfig | undefined;
   if (!maybeConfig) return request;
@@ -274,13 +307,14 @@ async function runPagination<TItem, TRaw>(
   }
 
   const durationMs = Date.now() - startTime;
+  const aggregateOutcome = buildAggregateOutcome(startTime, outcomes);
   const result: PaginationResult<TItem, TRaw> = {
     pages,
     items,
     pageCount: pages.length,
     itemCount: items.length,
     pageOutcomes: outcomes,
-    aggregateOutcome: outcomes[outcomes.length - 1],
+    aggregateOutcome,
     truncated,
     truncationReason,
     durationMs,
