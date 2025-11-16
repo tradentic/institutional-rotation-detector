@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { HttpClient, HttpError, TimeoutError, type HttpRequestOptions } from '@tradentic/resilient-http-core';
+import { HttpClient, HttpError, TimeoutError, type HttpRequestOptions } from '@airnub/resilient-http-core';
 
 export interface IexClientConfig {
   baseUrl?: string;

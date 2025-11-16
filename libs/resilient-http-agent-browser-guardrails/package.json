@@ -1,7 +1,7 @@
 {
-  "name": "@tradentic/http-llm-openai",
+  "name": "@airnub/resilient-http-agent-browser-guardrails",
   "version": "0.2.0",
-  "description": "HTTP wrapper for OpenAI responses API",
+  "description": "Browser guardrails interceptor",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -18,7 +18,7 @@
   },
   "private": true,
   "dependencies": {
-    "@tradentic/resilient-http-core": "^0.4.0"
+    "@airnub/resilient-http-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

@@ -1,5 +1,5 @@
 {
-  "name": "@tradentic/resilient-http-pagination",
+  "name": "@airnub/resilient-http-pagination",
   "version": "0.3.0",
   "description": "Pagination utilities for resilient-http-core",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
   },
   "private": true,
   "dependencies": {
-    "@tradentic/resilient-http-core": "^0.4.0"
+    "@airnub/resilient-http-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

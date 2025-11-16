@@ -1,5 +1,5 @@
 {
-  "name": "@tradentic/resilient-http-core",
+  "name": "@airnub/resilient-http-core",
   "version": "0.4.0",
   "description": "Transport-agnostic resilient HTTP utilities for Tradentic API clients",
   "main": "./dist/index.js",

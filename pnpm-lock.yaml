@@ -120,15 +120,15 @@ importers:
 
   apps/api:
     dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../../libs/resilient-http-core
       '@supabase/supabase-js':
         specifier: ^2.81.1
         version: 2.81.1
       '@temporalio/client':
         specifier: ^1.13.2
         version: 1.13.2
-      '@tradentic/resilient-http-core':
-        specifier: workspace:*
-        version: link:../../libs/resilient-http-core
       fast-xml-parser:
         specifier: ^5.3.1
         version: 5.3.1
@@ -145,6 +145,9 @@ importers:
 
   apps/temporal-worker:
     dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../../libs/resilient-http-core
       '@grpc/grpc-js':
         specifier: ^1.14.1
         version: 1.14.1
@@ -178,9 +181,6 @@ importers:
       '@temporalio/workflow':
         specifier: ^1.13.2
         version: 1.13.2
-      '@tradentic/resilient-http-core':
-        specifier: workspace:*
-        version: link:../../libs/resilient-http-core
       decimal.js:
         specifier: ^10.6.0
         version: 10.6.0
@@ -259,7 +259,87 @@ importers:
         specifier: ^4.0.8
         version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
 
+  libs/resilient-http-agent-browser-guardrails:
+    dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../resilient-http-core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
+
+  libs/resilient-http-agent-conversation-core:
+    dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../resilient-http-core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
+
   libs/resilient-http-core:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
+
+  libs/resilient-http-llm-openai:
+    dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../resilient-http-core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
+
+  libs/resilient-http-pagination:
+    dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../resilient-http-core
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.10.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.0.8
+        version: 4.0.8(@types/node@24.10.1)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.1(@types/node@24.10.1)(typescript@5.9.3))(terser@5.44.1)(tsx@4.20.6)
+
+  libs/resilient-http-policies:
+    dependencies:
+      '@airnub/resilient-http-core':
+        specifier: workspace:*
+        version: link:../resilient-http-core
     devDependencies:
       '@types/node':
         specifier: ^24.10.1

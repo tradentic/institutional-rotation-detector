@@ -4,8 +4,8 @@ import type {
   HttpClient,
   HttpHeaders,
   HttpRequestOptions,
-} from "@tradentic/resilient-http-core";
-import { HttpClient as CoreHttpClient } from "@tradentic/resilient-http-core";
+} from "@airnub/resilient-http-core";
+import { HttpClient as CoreHttpClient } from "@airnub/resilient-http-core";
 
 export type OpenAIRole = "system" | "user" | "assistant" | "developer" | "tool";
 

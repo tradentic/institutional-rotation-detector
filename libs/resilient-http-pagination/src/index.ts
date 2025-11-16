@@ -2,7 +2,7 @@ import type {
   HttpClient,
   HttpRequestOptions,
   RequestOutcome,
-} from "@tradentic/resilient-http-core";
+} from "@airnub/resilient-http-core";
 
 export interface Page<TItem = unknown, TRaw = unknown> {
   index: number;

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@tradentic/resilient-http-core": "workspace:*",
+    "@airnub/resilient-http-core": "workspace:*",
     "@supabase/supabase-js": "^2.81.1",
     "@temporalio/client": "^1.13.2",
     "fast-xml-parser": "^5.3.1",

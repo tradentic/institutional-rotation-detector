@@ -4,7 +4,7 @@ import {
   type HttpRateLimiter,
   type HttpRequestOptions,
   type RateLimiterContext,
-} from '@tradentic/resilient-http-core';
+} from '@airnub/resilient-http-core';
 import { createDistributedRateLimiter, DistributedRateLimiter } from './distributedRateLimit';
 import { getRedisCache, generateSecCacheKey } from './redisClient';
 

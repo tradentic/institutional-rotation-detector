@@ -7,7 +7,7 @@ import type {
   RequestOutcome,
   ResilienceProfile,
   RateLimitFeedback,
-} from "@tradentic/resilient-http-core";
+} from "@airnub/resilient-http-core";
 
 export type RequestClass = "interactive" | "background" | "batch";
 

@@ -1,5 +1,5 @@
 {
-  "name": "@tradentic/resilient-http-policies",
+  "name": "@airnub/resilient-http-policies",
   "version": "0.3.0",
   "description": "Policy engine and interceptor for resilient HTTP",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
   },
   "private": true,
   "dependencies": {
-    "@tradentic/resilient-http-core": "^0.4.0"
+    "@airnub/resilient-http-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

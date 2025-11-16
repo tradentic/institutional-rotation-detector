@@ -1,4 +1,4 @@
-import type { HttpRequestInterceptor, HttpRequestOptions } from "@tradentic/resilient-http-core";
+import type { HttpRequestInterceptor, HttpRequestOptions } from "@airnub/resilient-http-core";
 
 export interface GuardrailRule {
   allowHosts?: string[];

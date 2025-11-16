@@ -8,7 +8,7 @@
       "@libs/finra-client": ["../../libs/finra-client/src"],
       "@libs/openai-client": ["../../libs/openai-client/src"],
       "@libs/unusualwhales-client": ["../../libs/unusualwhales-client/src"],
-      "@tradentic/resilient-http-core": ["../../libs/resilient-http-core/src"]
+      "@airnub/resilient-http-core": ["../../libs/resilient-http-core/src"]
     },
     "outDir": "dist",
     "resolveJsonModule": true,

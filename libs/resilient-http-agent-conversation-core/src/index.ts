@@ -1,4 +1,4 @@
-import type { AgentContext, Extensions } from "@tradentic/resilient-http-core";
+import type { AgentContext, Extensions } from "@airnub/resilient-http-core";
 
 export type ConversationId = string;
 export type TurnId = string;

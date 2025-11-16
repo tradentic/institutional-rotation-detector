@@ -1,6 +1,6 @@
-# @tradentic/resilient-http-core
+# @airnub/resilient-http-core
 
-`@tradentic/resilient-http-core` is a lightweight, transport-agnostic HTTP client that adds retries, budgets, caching, circuit
+`@airnub/resilient-http-core` is a lightweight, transport-agnostic HTTP client that adds retries, budgets, caching, circuit
 breaking, telemetry hooks, and policy wrapping to API calls. It is the foundation for all API clients in this monorepo.
 
 ## Configuration
