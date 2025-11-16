@@ -1,16 +1,16 @@
-# Resilient HTTP Core — Spec Evolution & Design Critique (No-gRPC Focus)
+# Resilient HTTP Core & Satellites — Spec Evolution & Design Critique (HTTP‑Only)
 
-> Internal guidance document summarising how the spec evolved from v0.1 → v0.6, what’s strong, what’s risky, and how to shape hooks/templates for an out‑of‑the‑box HTTP client that works for both enterprises and AI agents. This document intentionally excludes any gRPC plans.
+> Internal guidance document summarising how the **core** spec evolved from v0.1 → v0.6 and how the **satellite libraries** evolved, what’s strong, what’s risky, and how to shape hooks/templates for an out‑of‑the‑box HTTP client that works for both enterprises and AI agents. This document intentionally excludes any gRPC plans.
 
 ---
 
-## 1. Evolution Overview (v0.1 → v0.6 + Roadmap)
+## 1. Core Evolution Overview (v0.1 → v0.6 + Roadmap)
 
 ### 1.1 v0.1 — Unifying the HTTP Mess
 
 **Core themes**
 
-- Monorepo‑driven origin (FINRA, UnusualWhales, OpenAI, Temporal worker) but with an explicit goal of being portable and domain‑agnostic.
+- Monorepo‑driven origin (FINRA, UnusualWhales, OpenAI, worker services) with an explicit goal of being portable and domain‑agnostic.
 - Fetch‑first design with a pluggable `HttpTransport` abstraction and adapters such as `createAxiosTransport`.
 - Centralised cross‑cutting concerns:
   - Retries with jitter backoff and `Retry-After` support.
@@ -19,7 +19,7 @@
 - A generic `HttpClient` defined via:
   - `BaseHttpClientConfig` for global configuration.
   - `HttpRequestOptions` for per‑request configuration.
-  - `policyWrapper` as a generic escape hatch to let external resilience libraries (Cockatiel / Resilience4ts, etc.) wrap attempts.
+  - `policyWrapper` as a generic escape hatch to let external resilience libraries wrap attempts.
 
 **Intent:** one resilient HTTP client to serve all libraries in the monorepo, with strong bias toward zero hard dependencies and domain‑agnostic design.
 
@@ -41,7 +41,7 @@
   - `TracingAdapter` for tracing (OTEL‑friendly, but no OTEL hard dependency).
 - **Streaming hook**
   - `requestRaw` that returns the raw `Response` and performs only a single attempt.
-  - Streaming and SSE are left to higher‑level libraries (e.g. OpenAI client), keeping core free of protocol‑specific complexity.
+  - Streaming and SSE are left to higher‑level libraries (e.g. provider clients), keeping core free of protocol‑specific complexity.
 
 **Intent:** make the client friendly for AI/agent use cases and observability without hard‑wiring any particular LLM or tracing stack.
 
@@ -159,9 +159,9 @@ This matches how modern HTTP libraries and platform SDKs structure themselves: a
 
 ---
 
-## 2. Strong Design Choices vs Future Pain Points
+## 2. Core Strengths vs Future Pain Points
 
-### 2.1 Strong Design Choices
+### 2.1 Strong Core Design Choices
 
 These elements are solid and should age well:
 
@@ -169,7 +169,7 @@ These elements are solid and should age well:
    - `HttpTransport` with adapters (e.g. axios) keeps you portable across runtimes (Node, browser, edge) and frameworks.
 
 2. **No mandatory external deps**
-   - No hard dependency on OTEL, Cockatiel, axios, or specific logging/metrics libraries.
+   - No hard dependency on OTEL, specific resilience libraries, axios, or logging/metrics libraries.
    - Makes it attractive for both small codebases and enterprises with strict dependency policies.
 
 3. **Clear core vs satellite boundary**
@@ -178,11 +178,11 @@ These elements are solid and should age well:
 
 4. **Observability‑first design**
    - Request IDs, correlation IDs, parent correlation IDs.
-   - AgentContext + `extensions` are propagated into metrics/logging/traces.
+   - AgentContext + `extensions` propagated into metrics/logging/traces.
    - Enables centralised analysis and debugging in complex systems.
 
 5. **Resilience aligned with industry practice**
-   - Retry/backoff, timeouts, circuit breakers, rate limiting, budgets, and error categorisation mirror patterns used in mainstream resilience libraries.
+   - Retry/backoff, timeouts, circuit breakers, rate limiting, budgets, and error categorisation mirror mainstream resilience patterns.
 
 6. **Interceptors (v0.6)**
    - A standard, composable middleware pattern that users already expect from libraries like Axios.
@@ -191,7 +191,7 @@ These decisions give you a strong foundation for both small services and large e
 
 ---
 
-### 2.2 Things Likely to Bite Later
+### 2.2 Core Issues Likely to Bite Later
 
 #### 2.2.1 Dual Hook Systems: `beforeRequest/afterResponse` vs Interceptors
 
@@ -213,8 +213,6 @@ If both are supported in the implementation without clear rules, you now have tw
 - Mark `beforeRequest`/`afterResponse` as **deprecated** in the spec.
 - Document interceptor execution order clearly (global interceptors, client‑specific, operation‑specific, etc.).
 
-This keeps backward compatibility while avoiding long‑term ambiguity.
-
 ---
 
 #### 2.2.2 Overlapping Resilience Layers & Retry Storms
@@ -233,7 +231,7 @@ If callers use **all three**, it’s easy to accidentally nest retries and creat
 - Confusing behaviour when different layers disagree on budgets.
 - Harder to reason about latency and load.
 
-**Recommendation**
+**Recommendations**
 
 - Declare a single **normative retry layer**:
   - `HttpClient` + `ResilienceProfile` is the primary retry mechanism.
@@ -242,7 +240,7 @@ If callers use **all three**, it’s easy to accidentally nest retries and creat
 - Ensure the policy engine does **not** independently call retries that conflict with `HttpClient`.
 - Make it explicit in the spec that all retry decisions must respect `ResilienceProfile`.
 
-Long term, you may want a v1.0 step that formally deprecates `policyWrapper` in favour of policy interceptors.
+Long term, plan a v1.0 step that formally deprecates `policyWrapper` in favour of policy interceptors.
 
 ---
 
@@ -289,7 +287,7 @@ You now have three places to put metadata:
 **Risks**
 
 - Different teams or satellites duplicating the same concepts in multiple places.
-- Inconsistent naming for the same logical fields (e.g. `tenantId` vs `tenant` vs `customer`).
+- Inconsistent naming for the same logical fields.
 
 **Recommendations**
 
@@ -337,7 +335,7 @@ These are small but worth tightening before v1.0.
 
 ---
 
-## 3. Hook & Plugin Surfaces to Prioritise
+## 3. Core Hook & Plugin Surfaces to Prioritise
 
 For an HTTP client that both enterprises and AI agents are happy to adopt, these are the most important extension points.
 
@@ -401,13 +399,13 @@ This gives enterprises the isolation patterns they expect without bloating the c
 
 ---
 
-## 4. Out‑of‑the‑Box Experience & Template Setups
+## 4. Out‑of‑the‑Box Core Experience & Template Setups
 
-Right now the spec is very interface‑heavy, which is great for flexibility but doesn’t yet shout “clone this and you’re productive in 5 minutes”.
+Right now the core spec is very interface‑heavy, which is great for flexibility but doesn’t yet shout “clone this and you’re productive in 5 minutes”.
 
 To fix that, standardise some **default implementations** and **template setups**.
 
-### 4.1 Default Implementations (No External Dependencies)
+### 4.1 Default Core Implementations (No External Dependencies)
 
 Provide a helper like:
 
@@ -438,7 +436,7 @@ This yields a **Template 0**: fully self‑contained, zero‑deps, ready‑to‑
 
 ---
 
-### 4.2 Opinionated Template Setups (Documentation Patterns)
+### 4.2 Core‑Only Opinionated Templates (Documentation Patterns)
 
 Add short, copy‑pastable templates in the docs/spec to demonstrate real usage.
 
@@ -456,8 +454,7 @@ Example characteristics:
 - In‑memory cache.
 - Simple per‑operation overrides for timeouts.
 
-
-#### Template B — Production Microservice
+#### Template B — Production Microservice (Core‑Only)
 
 Goals:
 
@@ -467,106 +464,428 @@ Goals:
 Example characteristics:
 
 - `createHttpClient` with:
-  - Redis `HttpCache` implementation.
-  - Redis‑backed `HttpRateLimiter`.
+  - Redis or other external `HttpCache` implementation.
+  - External `HttpRateLimiter` implementation.
   - OTEL adapters wired to the existing `TracingAdapter` and `MetricsSink` interfaces.
 - A `createPolicyInterceptor` configured with:
   - Per‑client budgets.
   - Per‑operation `ResilienceProfile` overrides.
-- Logging adapter to something like pino/winston.
-
-
-#### Template C — AI Agent / LLM Pipeline Client
-
-Goals:
-
-- Optimised for AI provider calls.
-- Integration with agent frameworks.
-
-Example characteristics:
-
-- Same as Template B, plus:
-  - `ErrorClassifier` tuned for LLM provider semantics (rate limits, safety blocks, quota, etc.).
-  - Standard `extensions` usage:
-    - `ai.provider`, `ai.model`, `ai.operation`, `ai.tenant`, `ai.tool`.
-  - A small helper for building per‑request `ResilienceProfile` based on task type:
-    - Interactive vs background vs batch.
-- Plays nicely with `agent-conversation-core` and provider wrappers.
+- Logging adapter to a structured logger (pino/winston/etc.).
 
 These templates live in docs/specs but dramatically lower activation energy for real‑world use.
 
 ---
 
-## 5. Clarifying Metadata Semantics
+## 5. Satellite Libraries — Evolution & Critique
 
-To prevent drift and double‑tagging, add a dedicated section in the spec that defines metadata rules.
-
-### 5.1 AgentContext
-
-`AgentContext` should answer: **Who/what is making this call?**
-
-- `agent`: name or identifier of the agent or service.
-- `runId`: unique run or task ID.
-- `labels`: stable, low‑cardinality properties (`"env": "prod"`, `"component": "billing-worker"`).
-- `metadata`: additional structured info that is stable over the life of that agent run.
-
-### 5.2 Extensions
-
-`extensions` should answer: **What extra attributes does this specific request have that might affect policies or routing?**
-
-Examples:
-
-- AI provider: `ai.provider`, `ai.model`, `ai.operation`, `ai.tool`, `ai.tenant`.
-- Tenanting: `tenant.id`, `tenant.tier`.
-- Feature flags: `feature.experimentId`, `feature.variant`.
-
-### 5.3 Telemetry Meta
-
-Telemetry meta (for logging/metrics/tracing) should be **derived** from `AgentContext`, `extensions`, correlation IDs, and the final `RequestOutcome`.
-
-- Logging meta: high‑level tags + error details.
-- Metrics: status, latency, request volume, rate limit feedback.
-- Tracing: span attributes mapping key metadata and correlation IDs.
-
-Avoid introducing *new* semantic keys at the telemetry layer; that keeps semantics consistent across different observability backends.
+This section covers the satellite libraries and how they support the core: pagination, policies, agent conversation, browser guardrails, and the OpenAI HTTP client.
 
 ---
 
-## 6. Concrete Next Spec Steps (v0.7 → v1.0 Path)
+### 5.1 `@airnub/resilient-http-pagination`
+
+#### 5.1.1 Evolution: v0.1 → v0.2
+
+**v0.1**
+
+- Very small, elegant helper library.
+- Works against a minimal `JsonHttpClient` interface (`requestJson<T>`).
+- Two primitives:
+  - `paginateAll` — collect everything into memory.
+  - `paginateIterator` — async iterator over pages.
+- Caller supplies:
+  - Initial request.
+  - `getNextRequest(lastPage, state)` → next `JsonRequestOptions | null`.
+  - `extractItems(page)` → items.
+- Resilience completely delegated to the underlying client.
+
+**v0.2**
+
+- Hard-targets `resilient-http-core` v0.6.
+- Introduces:
+  - `PaginationModel` (`offset-limit`, `cursor`, `link-header`, `custom`).
+  - `PaginationStrategy` and `PageExtractor` abstractions.
+  - Run-level `PaginationLimits` (max pages, max items, max end-to-end latency).
+  - `PaginationResilience` and `PaginationObserver`.
+  - `Page<TItem>` and `PaginationResult<TItem>` with a run-level `RequestOutcome`.
+- Two main APIs:
+  - `paginate(options)` → collects pages & items, returns `PaginationResult<TItem>`.
+  - `paginateStream(options)` → async generator yielding pages, then returning the `PaginationResult` when done.
+
+#### 5.1.2 Strengths
+
+- **Clean separation of responsibilities**
+  - Strategies understand how to move between pages.
+  - Extractors understand what to pull from each response.
+  - Core loop is generic and reusable.
+
+- **Run-level limits and budget awareness**
+  - `maxPages`, `maxItems`, `maxEndToEndLatencyMs` fit the resilience story and are exactly what you want for long-running agent scrapes.
+
+- **Alignment with core v0.6**
+  - Reusing `ResilienceProfile` and `RequestOutcome` keeps pagination as "just another operation" in your telemetry model.
+
+#### 5.1.3 Pain Points & Risks
+
+- **Complexity jump from v0.1 to v0.2**
+  - v0.1 is "anyone can use this in 2 minutes"; v0.2 requires more conceptual overhead.
+  - If both APIs remain, you risk duplicated mental models and confusion.
+
+- **Type-erasure friction**
+  - `PageExtraction.state?: unknown` and generic strategies mean frequent downcasts in real code.
+
+- **Telemetry precision vs implementation reality**
+  - If your implementation approximates per-page attempt counts or outcomes, you risk misleading metrics. Better to provide simpler but accurate signals.
+
+#### 5.1.4 Gaps & Recommended Hooks
+
+- **Out-of-the-box presets**
+  - Ship helpers like `paginateOffsetLimit` and `paginateCursor` for common patterns, where users only specify a handful of obvious fields.
+
+- **AI-friendly patterns**
+  - Provide wrappers that:
+    - Fetch up to `N` items or stop when a predicate returns true.
+    - Respect a per-run latency or token budget in a way that maps directly to an agent turn.
+
+---
+
+### 5.2 `@airnub/resilient-http-policies`
+
+#### 5.2.1 Evolution: v0.1 → v0.2
+
+**v0.1**
+
+- Simple adapter package:
+  - Re-exported a `PolicyWrapper` type from core.
+  - `createNoopPolicyWrapper()` — identity wrapper.
+  - `createCockatielPolicyWrapper()` — plug a third-party resilience library into core’s `policyWrapper`.
+
+**v0.2**
+
+- Becomes a full **policy engine**:
+  - `PolicyScope` (client, operation, agent, provider, model, bucket).
+  - `RequestClass` (`interactive | background | batch`).
+  - `PolicyDefinition` with rate limits, concurrency caps, resilience hints, priority.
+  - `PolicyEngine` interface (`evaluate` + `onResult`).
+  - `InMemoryPolicyEngine` as the first implementation.
+  - `createPolicyInterceptor` to turn the engine into a `HttpRequestInterceptor`.
+
+#### 5.2.2 Strengths
+
+- **Expressive scope model**
+  - Can differentiate between OpenAI calls vs internal APIs, interactive vs batch, or multiple tenants.
+
+- **Clean integration point**
+  - Interceptor simply derives scope from `HttpRequestOptions` + `AgentContext` + `extensions`, calls `engine.evaluate`, applies decisions, and notifies `engine.onResult` afterwards.
+
+- **Good separation from core**
+  - Core only knows about interceptors and profiles; policy complexity is entirely in this satellite.
+
+#### 5.2.3 Pain Points & Risks
+
+- **Overlap with guardrails**
+  - Policies can deny requests, and so can browser guardrails. Without clear docs, devs won’t know whether a rejected request came from policies or guardrails.
+
+- **High cognitive overhead for simple use cases**
+  - For small projects that just want "3 retries and don’t exceed X RPS", a full policy engine feels heavy.
+
+- **In-memory engine limitations**
+  - Works well for single-process tests and local dev.
+  - Not suitable by default for multi-process / multi-pod deployments where quotas must be shared.
+
+- **Overlap with `ResilienceProfile` semantics**
+  - Many policy hints (latency budgets, fail-fast behaviour) mirror what `ResilienceProfile` already does. If you treat them as fully independent axes, configs can drift.
+
+#### 5.2.4 Gaps & Recommended Hooks
+
+- **Minimal path for common cases**
+  - Provide helpers like:
+    - `createBasicRateLimitPolicy({ clientName, rps, burst })`.
+    - `createBasicConcurrencyPolicy({ clientName, maxConcurrent })`.
+  - Wrap these into simple factories so users can get started without learning the full engine.
+
+- **Config loading story**
+  - Add guidance or helpers for loading `PolicyDefinition[]` from YAML/JSON config so policies can be managed outside of code.
+
+---
+
+### 5.3 `@airnub/agent-conversation-core` (v0.1)
+
+#### 5.3.1 What It Is
+
+- A provider-agnostic **conversation and turn model**:
+  - `Conversation`, `ConversationTurn`, `ConversationMessage` types.
+  - `ProviderAdapter` abstraction for LLMs.
+  - `ConversationStore` interface with an in-memory implementation.
+  - `ConversationEngine` that builds history, delegates to providers, and records turns and provider call records.
+
+- Tightly aligned with HTTP core telemetry:
+  - Uses `AgentContext` and `extensions` to thread conversation/turn IDs and AI metadata down into `HttpRequestOptions`.
+
+#### 5.3.2 Strengths
+
+- **Clean separation from HTTP core**
+  - Core doesn’t know about conversations, tools, or prompts; it only sees metadata.
+
+- **Provider adapter boundary is well-defined**
+  - Allows building provider-specific adapters (OpenAI, etc.) on top of `http-llm-openai` without contaminating the core.
+
+- **Turn-centric design**
+  - Fits the mental model of “LLM call → response → recorded turn” while remaining vendor-agnostic.
+
+#### 5.3.3 Pain Points & Risks
+
+- **Streaming support is under-specified**
+  - The provider adapter includes streaming capabilities, but the `ConversationEngine` API is non-streaming.
+  - Real-world usage will expect streaming for UX; you’ll need a `runStreamingTurn` or equivalent.
+
+- **Message `content: unknown`**
+  - Flexible but awkward for daily use; most consumers expect either text or structured tool calls.
+
+- **Naïve storage**
+  - `ConversationStore` is simple by design, but it’s easy for users to implement stores that:
+    - Scan entire conversations on every turn.
+    - Grow unbounded in length.
+    - Lack a story for truncation, archiving, or summarisation.
+
+#### 5.3.4 Gaps & Recommended Hooks
+
+- **History strategies based on budgets**
+  - Introduce a `HistoryBuilder` concept that composes messages until a token/size budget is reached, rather than a fixed count.
+
+- **Tool-calling model**
+  - Extend message and turn models to capture tool-call flows in a structured way without overcomplicating the base types.
+
+---
+
+### 5.4 `@airnub/agent-browser-guardrails` (v0.1)
+
+#### 5.4.1 What It Is
+
+- A **guardrail layer for HTTP browsing** expressed as a `HttpRequestInterceptor`.
+- Core concepts:
+  - `GuardrailScope` (agent, tool, tenant, kind).
+  - `GuardrailRule` with URL/method/header/body constraints and an `effect` (`allow` / `deny`).
+  - `GuardrailEngine` + `InMemoryGuardrailEngine`.
+  - `createBrowserGuardrailsInterceptor` that derives scope from `AgentContext` + `extensions`, evaluates rules, and throws `GuardrailViolationError` on deny.
+
+#### 5.4.2 Strengths
+
+- **Strict HTTP-surface focus**
+  - Only cares about hosts, paths, methods, headers, and body constraints; doesn’t try to be a generic content-safety system.
+
+- **Consistent scoping with the rest of the ecosystem**
+  - Uses the same kind of agent/tool/tenant scopes as policies and core metadata.
+
+- **Default-deny stance for agents**
+  - Encourages safe-by-default browsing behaviour.
+
+#### 5.4.3 Pain Points & Risks
+
+- **Overlap with policy engine in user perception**
+  - Both can deny requests; it’s not always obvious to app developers which layer did so without good logging.
+
+- **Pattern matching is intentionally minimal**
+  - Prefix/exact matches are a good v0.1 tradeoff but might prove too weak for complex API patterns.
+
+#### 5.4.4 Gaps & Recommended Hooks
+
+- **Pre-baked profiles**
+  - Provide pre-defined rule sets like:
+    - `safeReadOnlyWebBrowser(agentName)` → HTTPS-only, GET/HEAD-only, small bodies.
+    - `internalApiOnly(toolId, hosts[])` → allow-list specific hosts, enforce headers, block arbitrary auth.
+
+- **Admin/debug visibility**
+  - Helpers to inspect rules, compute a dry-run decision for a given URL and scope, and explain which rule would fire.
+
+---
+
+### 5.5 `@airnub/http-llm-openai` (v0.1)
+
+#### 5.5.1 What It Is
+
+- A thin OpenAI HTTP client built on `resilient-http-core`, focused on:
+  - Responses API.
+  - Embeddings.
+  - Model listing.
+- Key pieces:
+  - `OpenAiHttpClient` wrapping `HttpClient`.
+  - `OpenAiResponsesClient` for non-streaming + streaming calls.
+  - `OpenAiEmbeddingsClient` and `OpenAiModelsClient`.
+  - `createOpenAiErrorClassifier` tuned for OpenAI error semantics.
+  - Strong use of `AgentContext` and `extensions['ai.*']`.
+
+#### 5.5.2 Strengths
+
+- **Deliberately scoped**
+  - Focuses on modern OpenAI APIs rather than trying to be a full general SDK.
+
+- **Designed to integrate with agent-conversation-core**
+  - Provider adapters can cleanly map conversation messages to Responses API requests and feed back usage and IDs.
+
+- **Error classification baked in**
+  - First-class classifier gives you better retry and policy decisions.
+
+#### 5.5.3 Pain Points & Risks
+
+- **API churn**
+  - OpenAI evolves quickly; you’ll need to keep types at least loosely in sync or risk surprises for coding agents.
+
+- **Boundary creep risk**
+  - There’s a temptation to put conversation, history, or tool logic into this package “because it’s OpenAI-specific.” Keeping the boundary clean is critical.
+
+#### 5.5.4 Gaps & Recommended Hooks
+
+- **Opinionated defaults**
+  - Provide `createDefaultOpenAiClient({ apiKey })` with sane defaults for resilience and metadata wiring.
+
+- **Helpers for continuation**
+  - Export helpers for building `previous_response_id` continuation requests from earlier responses to make it easy to chain calls correctly.
+
+---
+
+## 6. Stacks & Templates Across Core + Satellites
+
+Right now, everything is **beautifully decomposed** but not yet assembled into fully opinionated stacks. To hit the "complete out-of-the-box experience with no external dependencies by default" goal, you should define a small set of stack factories that wire core + satellites together.
+
+### 6.1 Stack 1 — Basic HTTP Core Stack (No AI)
+
+Goals:
+
+- Minimal configuration.
+- Good defaults.
+- No external dependencies.
+
+Characteristics:
+
+- Uses `createDefaultHttpClient` from the core.
+- Adds:
+  - In-memory pagination support via `resilient-http-pagination` v0.2 with built-in offset/cursor presets.
+  - Optional basic policy interceptor using in-memory policies for backoff and simple rate limits.
+- Intended for small services and CLI tools.
+
+### 6.2 Stack 2 — LLM Provider Client Stack (OpenAI-Focused)
+
+Goals:
+
+- Turnkey stack for calling OpenAI reliably.
+
+Characteristics:
+
+- `HttpClient` with:
+  - OpenAI base URL.
+  - OpenAI error classifier.
+  - `ResilienceProfile` tuned for OpenAI latency and retry expectations.
+- `PolicyInterceptor` configured for:
+  - Per-model limits and priorities.
+- `OpenAiHttpClient` with:
+  - Responses client.
+  - Embeddings client.
+  - Models client.
+
+All of this can still avoid external dependencies by default; external rate limit stores are optional.
+
+### 6.3 Stack 3 — Agentic HTTP + Browser Stack
+
+Goals:
+
+- Provide a complete HTTP + LLM + browsing substrate for agents.
+
+Characteristics:
+
+- Includes all of Stack 2.
+- Adds:
+  - `agent-conversation-core` with:
+    - In-memory conversation store.
+    - Simple history strategy (e.g. recent N turns or approximate token budget).
+  - `agent-browser-guardrails` with:
+    - Safe browsing defaults for a named agent or tool.
+  - `resilient-http-pagination` for agent-driven paginated scrapes.
+  - `resilient-http-policies` for:
+    - Per-tenant/per-agent policy rules.
+    - Simple concurrency limits on browsing and provider traffic.
+
+For all stacks, provide example code snippets and configuration templates so users and coding agents can bootstrap quickly.
+
+---
+
+## 7. Metadata Semantics Recap
+
+To prevent drift and double-tagging across core and satellites, standardise metadata semantics.
+
+### 7.1 AgentContext
+
+`AgentContext` answers: **Who/what is making this call?**
+
+- `agent`: name or identifier of the agent or service.
+- `runId`: unique ID for this run/task.
+- `labels`: stable, low-cardinality properties (`"env": "prod"`, `"component": "billing-worker"`).
+- `metadata`: structured info stable for the life of the run.
+
+### 7.2 Extensions
+
+`extensions` answers: **What extra attributes does this specific request have that might affect policies or routing?**
+
+Examples:
+
+- AI provider:
+  - `ai.provider`, `ai.model`, `ai.operation`, `ai.tool`, `ai.tenant`.
+- Tenanting:
+  - `tenant.id`, `tenant.tier`.
+- Feature flags:
+  - `feature.experimentId`, `feature.variant`.
+
+### 7.3 Telemetry Meta
+
+Telemetry meta is **derived** from `AgentContext`, `extensions`, correlation IDs, and `RequestOutcome`.
+
+- Logging meta: tags + error details.
+- Metrics: status, latency, request volume, rate limit feedback.
+- Tracing: span attributes mapping key metadata and correlation IDs.
+
+Avoid introducing new semantic keys at the telemetry layer; this keeps the model consistent across backends and satellites.
+
+---
+
+## 8. Concrete Next Spec Steps (v0.7 → v1.0 Path)
 
 To move toward a stable v1.0 that is attractive for both small teams and enterprises:
 
-1. **Canonicalise Interceptors**
+1. **Canonicalise Interceptors in Core**
    - Declare `HttpRequestInterceptor` the official extension mechanism.
    - Implement `beforeRequest`/`afterResponse` as a compatibility layer, marked deprecated.
 
 2. **Unify Resilience Layering**
-   - Define `HttpClient` + `ResilienceProfile` as the single normative retry and backoff mechanism.
+   - Define `HttpClient` + `ResilienceProfile` as the single normative retry/backoff mechanism.
    - Mark `policyWrapper` as a legacy/advanced hook and discourage it for new implementations.
 
-3. **Add Out‑of‑the‑Box Defaults**
+3. **Add Out-of-the-Box Core Defaults**
    - Ship `createDefaultHttpClient` with no external dependencies and sane defaults.
-   - Document Template A/B/C setups (small service, production, AI pipeline).
+   - Document Template A/B (small service, production) at the core level.
 
-4. **Clarify Metadata Semantics**
+4. **Integrate Satellites into Stack Templates**
+   - Define Stack 1/2/3 factories (basic HTTP, LLM provider, agentic HTTP + browser).
+   - Provide code examples and recommended configurations in the docs.
+
+5. **Clarify Metadata Semantics**
    - Add explicit guidance for what belongs in `AgentContext`, `extensions`, and telemetry meta.
-   - Publish a recommended key table for AI and multi‑tenant use cases.
+   - Publish a recommended key table for AI and multi-tenant use cases.
 
-5. **Introduce Idempotency Keys**
+6. **Introduce Idempotency Keys**
    - Add `idempotencyKey` to `HttpRequestOptions`.
    - Document how to implement idempotency via an interceptor.
 
-6. **Lock In Core Contracts, Move Everything Else to Satellites**
+7. **Lock In Core Contracts, Move Everything Else to Satellites**
    - Treat the following as the frozen core API surface:
-     - `HttpClient`, `HttpRequestOptions`, `HttpResponse` shape (if defined), `HttpTransport`.
+     - `HttpClient`, `HttpRequestOptions`, `HttpTransport`.
      - `AgentContext`, `ResilienceProfile`, `ErrorClassifier`, `RateLimitFeedback`, `RequestOutcome`.
      - `HttpRequestInterceptor`, `MetricsSink`, `Logger`, `TracingAdapter`.
-   - Continue to refactor pagination, policies, telemetry adapters, agents, and guardrails into satellite libraries.
+   - Continue to refactor pagination, policies, telemetry adapters, agents, and guardrails as satellites with their own versioned specs.
 
-With these changes, `resilient-http-core` becomes a compact, stable, no‑deps HTTP resilience substrate that:
+With these changes, `resilient-http-core` plus its satellites becomes a compact, stable, HTTP-only resilience substrate that:
 
 - Works out of the box in simple apps.
-- Scales into a fully observable production layout.
-- Is a natural base for AI agents and HTTP‑based provider SDKs.
-- Avoids feature creep and ambiguity by pushing opinions into documented templates and satellites.
+- Scales into fully observable production layouts.
+- Is a natural base for AI agents and HTTP-based provider SDKs.
+- Avoids feature creep and ambiguity by pushing opinions into documented stacks and satellite libraries.
 
