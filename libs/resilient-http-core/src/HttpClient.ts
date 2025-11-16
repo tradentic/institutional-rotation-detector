@@ -98,7 +98,7 @@ export class HttpClient {
             durationMs: 0,
             status: 200,
             cacheHit: true,
-            attempt: 0,
+            attempts: 0,
             requestId: preparedOpts.requestId,
             correlationId: preparedOpts.correlationId,
             parentCorrelationId: preparedOpts.parentCorrelationId,
@@ -237,7 +237,9 @@ export class HttpClient {
     let lastError: unknown;
     let lastClassified: ClassifiedError | undefined;
     let lastStatus: number | undefined;
+    let lastRateLimit: RateLimitFeedback | undefined;
 
+    let lastAttemptOpts: AttemptHttpRequestOptions | HttpRequestOptions = opts;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       let attemptOpts: AttemptHttpRequestOptions | HttpRequestOptions = opts;
       let attemptContext: RateLimiterContext | undefined;
@@ -245,6 +247,7 @@ export class HttpClient {
       try {
         const controller = new AbortController();
         attemptOpts = await this.prepareAttemptOptions(opts, controller.signal);
+        lastAttemptOpts = attemptOpts;
         attemptContext = this.createRateLimiterContext(attemptOpts, attempt);
         const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
         this.logger?.debug('http.request.attempt', logMeta);
@@ -285,14 +288,15 @@ export class HttpClient {
         response = await this.applyAfterResponseInterceptors(attemptOpts, response, attempt);
         await this.config.afterResponse?.(response, attemptOpts);
 
-        const rateLimit = this.extractRateLimit(response.headers);
+        lastRateLimit = this.extractRateLimit(response.headers) ?? lastRateLimit;
         const finishedAt = Date.now();
-        const outcome: RequestOutcome = {
+        const aggregateOutcome: RequestOutcome = {
           ok: true,
           status: attemptResult.status,
           attempts: attempt,
           startedAt,
           finishedAt,
+          rateLimitFeedback: lastRateLimit,
         };
 
         const parsedValue = await this.resolveResponseValue<T>(
@@ -303,16 +307,16 @@ export class HttpClient {
         await this.recordMetrics({
           client: this.clientName,
           operation: attemptOpts.operation,
-          durationMs,
+          durationMs: finishedAt - startedAt,
           status: attemptResult.status,
-          attempt,
+          attempts: attempt,
           requestId: attemptOpts.requestId,
           correlationId: attemptOpts.correlationId,
           parentCorrelationId: attemptOpts.parentCorrelationId,
           agentContext: attemptOpts.agentContext,
           extensions: attemptOpts.extensions,
-          rateLimit,
-          outcome,
+          rateLimit: lastRateLimit,
+          outcome: aggregateOutcome,
         });
         this.logger?.info('http.request.success', {
           ...logMeta,
@@ -335,27 +339,9 @@ export class HttpClient {
           classifiedError?.category ??
           (error instanceof HttpError ? error.category : error instanceof TimeoutError ? 'timeout' : 'network');
         const rateLimit = this.extractRateLimit(error instanceof HttpError ? error.headers : undefined);
-        const finishedAt = Date.now();
-        const outcome: RequestOutcome | undefined =
-          attempt === maxAttempts
-            ? { ok: false, status, errorCategory: category, attempts: attempt, startedAt, finishedAt }
-            : undefined;
-
-        await this.recordMetrics({
-          client: this.clientName,
-          operation: attemptOpts.operation ?? opts.operation,
-          durationMs,
-          status,
-          attempt,
-          requestId: attemptOpts.requestId,
-          correlationId: attemptOpts.correlationId,
-          parentCorrelationId: attemptOpts.parentCorrelationId,
-          errorCategory: category,
-          agentContext: attemptOpts.agentContext,
-          extensions: attemptOpts.extensions,
-          rateLimit,
-          outcome,
-        });
+        if (rateLimit) {
+          lastRateLimit = rateLimit;
+        }
         if (attemptContext) {
           await this.callOptionalHook('rateLimiter.onError', () =>
             this.config.rateLimiter?.onError?.(rateLimitKey, error, attemptContext as RateLimiterContext),
@@ -382,6 +368,31 @@ export class HttpClient {
         }
 
         if (!retryable) {
+          const finishedAt = Date.now();
+          const aggregateOutcome: RequestOutcome = {
+            ok: false,
+            status,
+            errorCategory: category,
+            attempts: attempt,
+            startedAt,
+            finishedAt,
+            rateLimitFeedback: lastRateLimit,
+          };
+          await this.recordMetrics({
+            client: this.clientName,
+            operation: attemptOpts.operation ?? opts.operation,
+            durationMs: finishedAt - startedAt,
+            status,
+            attempts: attempt,
+            requestId: attemptOpts.requestId,
+            correlationId: attemptOpts.correlationId,
+            parentCorrelationId: attemptOpts.parentCorrelationId,
+            errorCategory: category,
+            agentContext: attemptOpts.agentContext,
+            extensions: attemptOpts.extensions,
+            rateLimit: lastRateLimit,
+            outcome: aggregateOutcome,
+          });
           throw error;
         }
 
@@ -396,6 +407,34 @@ export class HttpClient {
         await this.sleep(delay);
       }
     }
+
+    const finishedAt = Date.now();
+    const status = lastStatus ?? 0;
+    const aggregateOutcome: RequestOutcome = {
+      ok: false,
+      status,
+      errorCategory: lastClassified?.category ?? (lastStatus === 408 ? 'timeout' : undefined),
+      attempts: maxAttempts,
+      startedAt,
+      finishedAt,
+      rateLimitFeedback: lastRateLimit,
+    };
+    const metricsOpts = lastAttemptOpts ?? opts;
+    await this.recordMetrics({
+      client: this.clientName,
+      operation: metricsOpts.operation ?? opts.operation,
+      durationMs: finishedAt - startedAt,
+      status,
+      attempts: maxAttempts,
+      requestId: metricsOpts.requestId,
+      correlationId: metricsOpts.correlationId,
+      parentCorrelationId: metricsOpts.parentCorrelationId,
+      errorCategory: aggregateOutcome.errorCategory,
+      agentContext: metricsOpts.agentContext,
+      extensions: metricsOpts.extensions,
+      rateLimit: lastRateLimit,
+      outcome: aggregateOutcome,
+    });
 
     if (lastStatus === 408 || (deadline !== undefined && Date.now() >= deadline)) {
       throw new TimeoutError('Request timed out');
