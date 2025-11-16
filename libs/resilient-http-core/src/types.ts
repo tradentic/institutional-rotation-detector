@@ -1,264 +1,232 @@
-export interface HttpCache {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void>;
-  delete(key: string): Promise<void>;
-}
+export type HttpMethod =
+  | 'GET'
+  | 'HEAD'
+  | 'POST'
+  | 'PUT'
+  | 'PATCH'
+  | 'DELETE'
+  | 'OPTIONS';
 
-export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export type HttpHeaders = Record<string, string>;
 
-export type ResiliencePriority = 'low' | 'normal' | 'high' | 'critical';
-
-export interface ResilienceProfile {
-  priority?: ResiliencePriority;
-  maxEndToEndLatencyMs?: number;
-  maxAttemptsOverride?: number;
-  failFast?: boolean;
-  allowFailover?: boolean;
+export interface UrlParts {
+  baseUrl?: string;
+  path?: string;
+  query?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface AgentContext {
-  /**
-   * Logical name/identifier of the calling agent, component, or workflow.
-   */
   agent?: string;
-
-  /**
-   * Stable identifier for the current agent run / job / workflow.
-   */
   runId?: string;
-
-  /**
-   * Low-cardinality tags describing this agent run.
-   */
   labels?: Record<string, string>;
-
-  /**
-   * Opaque metadata bag for agent frameworks and higher-level tooling.
-   */
   metadata?: Record<string, unknown>;
 }
 
-export interface HttpRequestBudget {
-  maxTotalDurationMs?: number;
-  maxAttempts?: number;
-}
+export type Extensions = Record<string, unknown>;
 
-export interface RateLimiterContext {
-  method: string;
-  path: string;
-  operation: string;
-  attempt: number;
+export interface CorrelationInfo {
   requestId?: string;
   correlationId?: string;
   parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-  [key: string]: unknown;
 }
 
-export interface HttpRateLimiter {
-  throttle(key: string, context: RateLimiterContext): Promise<void>;
-  onSuccess?(key: string, context: RateLimiterContext): void | Promise<void>;
-  onError?(key: string, error: unknown, context: RateLimiterContext): void | Promise<void>;
-}
-
-export interface CircuitBreaker {
-  beforeRequest(key: string): Promise<void>;
-  onSuccess(key: string): Promise<void>;
-  onFailure(key: string, error: unknown): Promise<void>;
-}
-
-export type LoggerMeta = Record<string, unknown> & {
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-};
-
-export interface Logger {
-  debug(message: string, meta?: LoggerMeta): void;
-  info(message: string, meta?: LoggerMeta): void;
-  warn(message: string, meta?: LoggerMeta): void;
-  error(message: string, meta?: LoggerMeta): void;
+export interface ResilienceProfile {
+  maxAttempts?: number; // default 1
+  perAttemptTimeoutMs?: number;
+  overallTimeoutMs?: number;
+  retryEnabled?: boolean; // default true when maxAttempts>1
+  failFast?: boolean;
+  policyBucket?: string;
 }
 
 export type ErrorCategory =
+  | 'none'
   | 'transient'
-  | 'rate_limit'
-  | 'validation'
+  | 'rateLimit'
   | 'auth'
-  | 'safety'
+  | 'validation'
   | 'quota'
-  | 'unknown'
-  // Legacy categories retained for backwards compatibility
-  | 'not_found'
-  | 'quota_exceeded'
-  | 'server'
-  | 'network'
-  | 'timeout';
-
-export interface ErrorContext {
-  request: HttpRequestOptions;
-  response?: Response;
-  error?: unknown;
-}
+  | 'safety'
+  | 'canceled'
+  | 'timeout'
+  | 'unknown';
 
 export interface ClassifiedError {
   category: ErrorCategory;
-  retryable: boolean;
-  suggestedBackoffMs?: number;
-  policyKey?: string;
+  reason?: string;
+  statusCode?: number;
+  retryable?: boolean;
 }
 
 export interface ErrorClassifier {
-  classify(ctx: ErrorContext): ClassifiedError;
-}
-
-export interface FallbackHint {
-  retryAfterMs?: number;
-  downgrade?: string;
-  reason?: string;
-  [key: string]: unknown;
+  classifyNetworkError(err: unknown): ClassifiedError;
+  classifyResponse(response: Response): ClassifiedError;
 }
 
 export interface RateLimitFeedback {
-  limitRequests?: number;
-  remainingRequests?: number;
-  resetRequestsAt?: Date;
-  limitTokens?: number;
-  remainingTokens?: number;
-  resetTokensAt?: Date;
-  rawHeaders?: Record<string, string>;
+  isRateLimited: boolean;
+  resetAt?: Date;
+  limit?: number;
+  remaining?: number;
 }
 
 export interface RequestOutcome {
   ok: boolean;
   status?: number;
-  errorCategory?: ErrorCategory;
+  errorCategory: ErrorCategory;
   attempts: number;
-  startedAt: number;
-  finishedAt: number;
+  startedAt: Date;
+  finishedAt: Date;
+  rateLimitFeedback?: RateLimitFeedback;
+}
+
+export interface BeforeSendContext {
+  request: HttpRequestOptions;
+  signal: AbortSignal;
+}
+
+export interface AfterResponseContext {
+  request: HttpRequestOptions;
+  response: Response;
+  attempt: number;
+}
+
+export interface ErrorContext {
+  request: HttpRequestOptions;
+  error: unknown;
+  attempt: number;
+}
+
+export interface HttpRequestInterceptor {
+  beforeSend?(ctx: BeforeSendContext): Promise<void> | void;
+  afterResponse?(ctx: AfterResponseContext): Promise<void> | void;
+  onError?(ctx: ErrorContext): Promise<void> | void;
+}
+
+export interface HttpCacheEntry {
+  status: number;
+  headers: HttpHeaders;
+  body: ArrayBuffer;
+  expiresAt?: Date;
+}
+
+export interface HttpCache {
+  get(key: string): Promise<HttpCacheEntry | null> | HttpCacheEntry | null;
+  set(key: string, entry: HttpCacheEntry): Promise<void> | void;
+  delete?(key: string): Promise<void> | void;
+}
+
+export interface RateLimiterContext {
+  clientName: string;
+  operation: string;
+  method: HttpMethod;
+  extensions?: Extensions;
+}
+
+export interface HttpRateLimiter {
+  acquire(ctx: RateLimiterContext): Promise<void>;
+}
+
+export interface CircuitBreakerContext {
+  clientName: string;
+  operation: string;
+}
+
+export interface HttpCircuitBreaker {
+  beforeRequest(ctx: CircuitBreakerContext): Promise<void> | void;
+  afterRequest(ctx: CircuitBreakerContext, outcome: RequestOutcome): Promise<void> | void;
+}
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface Logger {
+  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void;
 }
 
 export interface MetricsRequestInfo {
-  client: string;
+  clientName: string;
   operation: string;
+  method: HttpMethod;
+  url: string;
+  status?: number;
+  errorCategory: ErrorCategory;
   durationMs: number;
-  status: number;
-  attempt?: number;
-  cacheHit?: boolean;
-  errorCategory?: ErrorCategory;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
+  attempts: number;
+  rateLimitFeedback?: RateLimitFeedback;
   agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-  rateLimit?: RateLimitFeedback;
+  extensions?: Extensions;
+  correlation?: CorrelationInfo;
   outcome?: RequestOutcome;
 }
 
 export interface MetricsSink {
-  recordRequest?(info: MetricsRequestInfo): void | Promise<void>;
+  recordRequest(info: MetricsRequestInfo): void;
 }
 
-export interface HttpTransport {
-  (url: string, init: RequestInit): Promise<Response>;
-}
-
-export interface ResponseClassification {
-  treatAsError?: boolean;
-  overrideStatus?: number;
-  category?: ErrorCategory;
-  fallback?: FallbackHint;
-}
-
-export type ResponseClassifier = (
-  response: Response,
-  bodyText?: string,
-) => Promise<ResponseClassification | void> | ResponseClassification | void;
-
-export interface TracingSpan {
-  setAttribute(key: string, value: string | number | boolean | null): void;
-  recordException(error: unknown): void;
+export interface Span {
+  setAttribute(key: string, value: unknown): void;
   end(): void;
 }
 
-export interface TracingStartOptions {
-  attributes?: Record<string, string | number | boolean | null>;
-  agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-}
-
 export interface TracingAdapter {
-  startSpan(name: string, options?: TracingStartOptions): TracingSpan;
-}
-
-export interface PolicyContext {
-  client: string;
-  operation: string;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-}
-
-export type PolicyWrapper = <T>(fn: () => Promise<T>, context: PolicyContext) => Promise<T>;
-
-export interface OperationDefaults {
-  timeoutMs?: number;
-  maxRetries?: number;
-  idempotent?: boolean;
-}
-
-export interface BaseHttpClientConfig {
-  baseUrl?: string;
-  clientName: string;
-  timeoutMs?: number;
-  maxRetries?: number;
-  logger?: Logger;
-  metrics?: MetricsSink;
-  cache?: HttpCache;
-  rateLimiter?: HttpRateLimiter;
-  circuitBreaker?: CircuitBreaker;
-  policyWrapper?: PolicyWrapper;
-  transport?: HttpTransport;
-  tracing?: TracingAdapter;
-  responseClassifier?: ResponseClassifier;
-  errorClassifier?: ErrorClassifier;
-  resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;
-  beforeRequest?: (opts: HttpRequestOptions) => HttpRequestOptions | void;
-  afterResponse?: (response: Response, opts: HttpRequestOptions) => void | Promise<void>;
-  interceptors?: HttpRequestInterceptor[];
-  operationDefaults?: Record<string, OperationDefaults>;
+  startRequestSpan(info: {
+    clientName: string;
+    operation: string;
+    method: HttpMethod;
+    url: string;
+    correlation?: CorrelationInfo;
+    agentContext?: AgentContext;
+    extensions?: Extensions;
+  }): Span | null;
 }
 
 export interface HttpRequestOptions {
   method: HttpMethod;
-  path: string;
+  url?: string;
+  urlParts?: UrlParts;
+  headers?: HttpHeaders;
+  body?: BodyInit | null;
   operation: string;
-  query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
-  headers?: Record<string, string | undefined>;
-  body?: unknown;
   idempotent?: boolean;
-  timeoutMs?: number;
-  maxRetries?: number;
+  idempotencyKey?: string;
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+  resilience?: ResilienceProfile;
+  cacheEnabled?: boolean;
   cacheKey?: string;
   cacheTtlMs?: number;
-  budget?: HttpRequestBudget;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Record<string, unknown>;
-  resilience?: ResilienceProfile;
-  pageSize?: number;
-  pageOffset?: number;
+  attempt?: number;
 }
 
-export interface HttpRequestInterceptor {
-  beforeSend?(opts: HttpRequestOptions): Promise<HttpRequestOptions> | HttpRequestOptions;
-  afterResponse?(opts: HttpRequestOptions, res: Response): Promise<Response> | Response;
-  onError?(opts: HttpRequestOptions, error: unknown): Promise<void> | void;
+export interface HttpClientConfig {
+  clientName: string;
+  baseUrl?: string;
+  transport: HttpTransport;
+  defaultHeaders?: HttpHeaders;
+  defaultResilience?: ResilienceProfile;
+  logger?: Logger;
+  metrics?: MetricsSink;
+  tracing?: TracingAdapter;
+  interceptors?: HttpRequestInterceptor[];
+  cache?: HttpCache;
+  rateLimiter?: HttpRateLimiter;
+  circuitBreaker?: HttpCircuitBreaker;
+  defaultAgentContext?: AgentContext;
+  errorClassifier?: ErrorClassifier;
 }
+
+export interface DefaultHttpClientConfig {
+  clientName: string;
+  baseUrl?: string;
+  logger?: Logger;
+}
+
+export interface HttpClient {
+  requestRaw(options: HttpRequestOptions): Promise<Response>;
+  requestJson<T = unknown>(options: HttpRequestOptions): Promise<T>;
+  requestText(options: HttpRequestOptions): Promise<string>;
+  requestArrayBuffer(options: HttpRequestOptions): Promise<ArrayBuffer>;
+}
+
+export type HttpTransport = (url: string, init: RequestInit) => Promise<Response>;

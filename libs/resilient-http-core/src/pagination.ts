@@ -1,5 +1,4 @@
-import { HttpClient } from './HttpClient';
-import type { HttpRequestOptions } from './types';
+import type { HttpClient, HttpRequestOptions } from './types';
 
 export interface PaginationState<TPage> {
   pageIndex: number;
