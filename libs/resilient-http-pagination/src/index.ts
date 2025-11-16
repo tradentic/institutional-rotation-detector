@@ -130,16 +130,71 @@ function getLimits(limits?: PaginationLimits): Required<PaginationLimits> {
   };
 }
 
+function mergeAgentContext(base?: any, next?: any) {
+  if (!base && !next) return undefined;
+  const labels = { ...(base?.labels ?? {}), ...(next?.labels ?? {}) };
+  return { ...base, ...next, labels };
+}
+
+function applyRequestDefaults(
+  base: HttpRequestOptions,
+  next: HttpRequestOptions
+): HttpRequestOptions {
+  return {
+    ...base,
+    ...next,
+    correlation: next.correlation ?? base.correlation,
+    agentContext: mergeAgentContext(base.agentContext, next.agentContext),
+    headers: { ...(base.headers as Record<string, string> | undefined), ...(next.headers as Record<string, string> | undefined) },
+    query: { ...(base.query as Record<string, unknown> | undefined), ...(next.query as Record<string, unknown> | undefined) },
+    extensions: { ...(base.extensions ?? {}), ...(next.extensions ?? {}) },
+    resilience: { ...(base.resilience ?? {}), ...(next.resilience ?? {}) },
+  };
+}
+
+type InternalPaginationOptions<TItem, TRaw> = PaginateOptions<TItem, TRaw> & {
+  stopWhen?: (item: TItem, page: Page<TItem, TRaw>) => boolean;
+};
+
+type PageEmitter<TItem, TRaw> = (page: Page<TItem, TRaw>, outcome: RequestOutcome) => Promise<void>;
+
+function getOutcomeFromResponse(response: Response, startedAt: number): RequestOutcome {
+  const finishedAt = Date.now();
+  const provided = (response as any).outcome as RequestOutcome | undefined;
+  if (provided) {
+    return provided;
+  }
+  return {
+    status: response.status,
+    ok: response.ok,
+    attempts: 1,
+    startedAt,
+    finishedAt,
+    durationMs: finishedAt - startedAt,
+  };
+}
+
+function applyOffsetLimitDefaults(request: HttpRequestOptions, strategy: PaginationStrategy): HttpRequestOptions {
+  const maybeConfig = (strategy as any).__offsetConfig as OffsetLimitConfig | undefined;
+  if (!maybeConfig) return request;
+  const query = { ...(request.query as Record<string, unknown> | undefined) };
+  query[maybeConfig.offsetParam ?? "offset"] = 0;
+  query[maybeConfig.limitParam ?? "limit"] = maybeConfig.pageSize;
+  return { ...request, query };
+}
+
 async function runPagination<TItem, TRaw>(
-  options: PaginateOptions<TItem, TRaw> & { stopWhen?: (item: TItem, page: Page<TItem, TRaw>) => boolean; yieldPages?: boolean }
-): Promise<{ result: PaginationResult<TItem, TRaw>; yieldedPages: Page<TItem, TRaw>[]; outcomes: RequestOutcome[] }> {
+  options: InternalPaginationOptions<TItem, TRaw>,
+  emitPage?: PageEmitter<TItem, TRaw>
+): Promise<PaginationResult<TItem, TRaw>> {
   const { client, extractor, strategy, observer, decoder = defaultDecoder, stopWhen } = options;
   const limits = getLimits(options.limits);
   const startTime = Date.now();
   const pages: Page<TItem, TRaw>[] = [];
   const outcomes: RequestOutcome[] = [];
   let items: TItem[] = [];
-  let request = options.initialRequest;
+  const baseRequest = options.initialRequest;
+  let request = applyOffsetLimitDefaults({ ...baseRequest }, strategy);
   let truncated = false;
   let truncationReason: PaginationResult<TItem, TRaw>["truncationReason"];
 
@@ -152,9 +207,14 @@ async function runPagination<TItem, TRaw>(
     await observer.onStart(ctx);
   }
 
-  for (let pageIndex = 0; pageIndex < limits.maxPages; pageIndex += 1) {
-    const durationMs = Date.now() - startTime;
-    if (durationMs > limits.maxDurationMs) {
+  for (let pageIndex = 0; ; pageIndex += 1) {
+    if (pageIndex >= limits.maxPages) {
+      truncated = true;
+      truncationReason = "maxPages";
+      break;
+    }
+    const elapsed = Date.now() - startTime;
+    if (elapsed > limits.maxDurationMs) {
       truncated = true;
       truncationReason = "maxDurationMs";
       break;
@@ -165,6 +225,7 @@ async function runPagination<TItem, TRaw>(
       break;
     }
 
+    const requestStart = Date.now();
     const response = await client.requestRaw(request);
     const raw = await decoder.decode(response);
     const extraction = extractor.extractPage(raw, pageIndex);
@@ -174,18 +235,17 @@ async function runPagination<TItem, TRaw>(
       raw: extraction.raw,
       request,
     };
-    pages.push(page);
-    items = items.concat(page.items);
 
-    const outcome: RequestOutcome = (response as any).outcome ?? {
-      status: response.status,
-      attempts: 1,
-      durationMs: 0,
-    };
+    const outcome = getOutcomeFromResponse(response, requestStart);
+    pages.push(page);
     outcomes.push(outcome);
+    items = items.concat(page.items);
 
     if (observer?.onPage) {
       await observer.onPage(page, outcome);
+    }
+    if (emitPage) {
+      await emitPage(page, outcome);
     }
 
     let shouldStop = false;
@@ -210,7 +270,7 @@ async function runPagination<TItem, TRaw>(
     if (!decision.hasNext || !decision.nextRequest) {
       break;
     }
-    request = { ...decision.nextRequest };
+    request = applyRequestDefaults(baseRequest, decision.nextRequest);
   }
 
   const durationMs = Date.now() - startTime;
@@ -230,31 +290,66 @@ async function runPagination<TItem, TRaw>(
     await observer.onComplete(result);
   }
 
-  return { result, yieldedPages: pages, outcomes };
+  return result;
 }
 
 export async function paginate<TItem = unknown, TRaw = unknown>(
   options: PaginateOptions<TItem, TRaw>
 ): Promise<PaginationResult<TItem, TRaw>> {
-  const { result } = await runPagination({ ...options });
-  return result;
+  return runPagination({ ...options });
 }
 
 export async function* paginateStream<TItem = unknown, TRaw = unknown>(
   options: PaginateOptions<TItem, TRaw>
 ): AsyncGenerator<Page<TItem, TRaw>, PaginationResult<TItem, TRaw>, void> {
-  const { result, yieldedPages } = await runPagination({ ...options, yieldPages: true });
-  for (const page of yieldedPages) {
-    yield page;
+  const queue: Page<TItem, TRaw>[] = [];
+  let notify: (() => void) | undefined;
+  let completed = false;
+
+  const resultPromise = (async () => {
+    try {
+      const result = await runPagination({ ...options }, async (page) => {
+        queue.push(page);
+        if (notify) {
+          notify();
+          notify = undefined;
+        }
+      });
+      return result;
+    } finally {
+      completed = true;
+      if (notify) {
+        notify();
+        notify = undefined;
+      }
+    }
+  })();
+
+  while (!completed || queue.length > 0) {
+    if (queue.length === 0) {
+      await new Promise<void>((resolve) => {
+        notify = resolve;
+      });
+      continue;
+    }
+    const next = queue.shift();
+    if (next) {
+      yield next;
+    }
   }
-  return result;
+
+  return await resultPromise;
 }
 
 export function createOffsetLimitStrategy(config: OffsetLimitConfig): PaginationStrategy {
   const offsetParam = config.offsetParam ?? "offset";
   const limitParam = config.limitParam ?? "limit";
-  return {
-    getNextPage({ pageIndex, lastRequest }) {
+  const strategy: PaginationStrategy & { __offsetConfig?: OffsetLimitConfig } = {
+    getNextPage({ pageIndex, lastRequest, lastExtraction }) {
+      const hasItems = (lastExtraction.items ?? []).length > 0;
+      if (!hasItems) {
+        return { hasNext: false };
+      }
       const nextOffset = (pageIndex + 1) * config.pageSize;
       const query = { ...(lastRequest.query as Record<string, unknown> | undefined) };
       query[offsetParam] = nextOffset;
@@ -266,6 +361,8 @@ export function createOffsetLimitStrategy(config: OffsetLimitConfig): Pagination
       return { hasNext: true, nextRequest };
     },
   };
+  strategy.__offsetConfig = config;
+  return strategy;
 }
 
 export function createCursorStrategy(config: CursorConfig): PaginationStrategy {
