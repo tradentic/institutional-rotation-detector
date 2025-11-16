@@ -317,6 +317,7 @@ export class HttpClient {
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       let attemptOpts: AttemptHttpRequestOptions | HttpRequestOptions = opts;
       let attemptContext: RateLimiterContext | undefined;
+      let resolvedUrl: string | undefined;
       const attemptStart = Date.now();
       try {
         const controller = new AbortController();
@@ -326,7 +327,7 @@ export class HttpClient {
         const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
         this.logger?.debug('http.request.attempt', logMeta);
 
-        const resolvedUrl = this.buildUrl(attemptOpts);
+        resolvedUrl = this.buildUrl(attemptOpts);
 
         const executeAttempt = async () =>
           this.runAttempt({
@@ -458,7 +459,7 @@ export class HttpClient {
             clientName: this.clientName,
             operation: attemptOpts.operation ?? opts.operation,
             method: attemptOpts.method,
-            url: resolvedUrl,
+            url: resolvedUrl ?? this.safeBuildUrl(attemptOpts),
             durationMs: finishedAt - startedAt,
             status,
             attempts: attempt,

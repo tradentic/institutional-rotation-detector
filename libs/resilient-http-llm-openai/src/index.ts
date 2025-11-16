@@ -366,6 +366,14 @@ export function createOpenAIHttpClient(config: OpenAIHttpClientConfig): OpenAIHt
 }
 
 /**
+ * Conversation state entry with timestamp for TTL management.
+ */
+interface ConversationStateEntry {
+  state: OpenAIConversationState;
+  lastAccessedAt: number;
+}
+
+/**
  * Configuration for OpenAIProviderAdapter.
  */
 export interface OpenAIProviderAdapterConfig {
@@ -379,9 +387,33 @@ export interface OpenAIProviderAdapterConfig {
   defaultModel?: string;
   /**
    * Optional conversation state management.
-   * The adapter will automatically chain responses using previous_response_id.
+   * If not provided, a managed store with TTL and size limits will be created automatically.
+   *
+   * **Warning:** If you provide your own Map, it will NOT be automatically cleaned up.
+   * Use the built-in managed store (by omitting this option) to prevent memory leaks.
    */
   conversationStateStore?: Map<string, OpenAIConversationState>;
+  /**
+   * Time-to-live for conversation states in milliseconds.
+   * States older than this will be automatically cleaned up.
+   * Default: 3600000 (1 hour)
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateTtlMs?: number;
+  /**
+   * Maximum number of conversation states to keep in memory.
+   * When exceeded, least recently used states will be evicted.
+   * Default: 1000
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateMaxSize?: number;
+  /**
+   * Interval for automatic cleanup of expired states in milliseconds.
+   * Default: 300000 (5 minutes)
+   * Set to 0 to disable automatic cleanup (cleanup will still happen on access).
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateCleanupIntervalMs?: number;
 }
 
 /**
@@ -423,27 +455,143 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
   private client: OpenAIHttpClient;
   private defaultModel: string;
   private conversationStateStore?: Map<string, OpenAIConversationState>;
+  private managedStateStore?: Map<string, ConversationStateEntry>;
+  private stateTtlMs: number;
+  private stateMaxSize: number;
+  private cleanupTimer?: NodeJS.Timeout | number;
 
   constructor(config: OpenAIProviderAdapterConfig) {
     this.client = config.client;
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
-    this.conversationStateStore = config.conversationStateStore;
+    this.stateTtlMs = config.conversationStateTtlMs ?? 3600000; // 1 hour default
+    this.stateMaxSize = config.conversationStateMaxSize ?? 1000;
+
+    if (config.conversationStateStore) {
+      // User-provided store - no automatic cleanup
+      this.conversationStateStore = config.conversationStateStore;
+    } else {
+      // Managed store with TTL and size limits
+      this.managedStateStore = new Map();
+      const cleanupIntervalMs = config.conversationStateCleanupIntervalMs ?? 300000; // 5 minutes default
+      if (cleanupIntervalMs > 0) {
+        this.cleanupTimer = setInterval(() => {
+          this.cleanupExpiredStates();
+        }, cleanupIntervalMs);
+        // Prevent the timer from keeping the process alive
+        if (typeof this.cleanupTimer === 'object' && 'unref' in this.cleanupTimer) {
+          this.cleanupTimer.unref();
+        }
+      }
+    }
+  }
+
+  /**
+   * Clean up expired conversation states based on TTL.
+   * This is called automatically by the cleanup timer and on access.
+   */
+  private cleanupExpiredStates(): void {
+    if (!this.managedStateStore) return;
+
+    const now = Date.now();
+    const expiredKeys: string[] = [];
+
+    for (const [conversationId, entry] of this.managedStateStore) {
+      if (now - entry.lastAccessedAt > this.stateTtlMs) {
+        expiredKeys.push(conversationId);
+      }
+    }
+
+    for (const key of expiredKeys) {
+      this.managedStateStore.delete(key);
+    }
+  }
+
+  /**
+   * Evict least recently used states when max size is exceeded.
+   */
+  private evictLruIfNeeded(): void {
+    if (!this.managedStateStore) return;
+    if (this.managedStateStore.size <= this.stateMaxSize) return;
+
+    // Find the LRU entry
+    let lruKey: string | undefined;
+    let lruTime = Infinity;
+
+    for (const [conversationId, entry] of this.managedStateStore) {
+      if (entry.lastAccessedAt < lruTime) {
+        lruTime = entry.lastAccessedAt;
+        lruKey = conversationId;
+      }
+    }
+
+    if (lruKey) {
+      this.managedStateStore.delete(lruKey);
+    }
   }
 
   /**
    * Get conversation state for chaining responses.
+   * Automatically cleans up expired states on access.
    */
   getConversationState(conversationId: string): OpenAIConversationState | undefined {
-    return this.conversationStateStore?.get(conversationId);
+    if (this.conversationStateStore) {
+      return this.conversationStateStore.get(conversationId);
+    }
+
+    if (this.managedStateStore) {
+      this.cleanupExpiredStates();
+      const entry = this.managedStateStore.get(conversationId);
+      if (entry) {
+        // Update last access time (LRU tracking)
+        entry.lastAccessedAt = Date.now();
+        return entry.state;
+      }
+    }
+
+    return undefined;
   }
 
   /**
    * Set conversation state for chaining responses.
+   * Automatically enforces size limits via LRU eviction.
    */
   setConversationState(conversationId: string, state: OpenAIConversationState): void {
     if (this.conversationStateStore) {
       this.conversationStateStore.set(conversationId, state);
+      return;
     }
+
+    if (this.managedStateStore) {
+      this.managedStateStore.set(conversationId, {
+        state,
+        lastAccessedAt: Date.now(),
+      });
+      this.evictLruIfNeeded();
+    }
+  }
+
+  /**
+   * Manually clear all conversation states.
+   * Useful for testing or explicit cleanup.
+   */
+  clearConversationStates(): void {
+    if (this.conversationStateStore) {
+      this.conversationStateStore.clear();
+    } else if (this.managedStateStore) {
+      this.managedStateStore.clear();
+    }
+  }
+
+  /**
+   * Destroy the adapter and clean up resources.
+   * Call this when you're done with the adapter to prevent memory leaks.
+   */
+  destroy(): void {
+    if (this.cleanupTimer !== undefined) {
+      clearInterval(this.cleanupTimer as any);
+      this.cleanupTimer = undefined;
+    }
+    this.clearConversationStates();
   }
 
   async complete(params: ProviderCallParams): Promise<ProviderCallResult> {
