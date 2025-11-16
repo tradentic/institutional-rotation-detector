@@ -6,7 +6,6 @@ import type {
   HttpRequestOptions,
   RequestOutcome,
   ResilienceProfile,
-  RateLimitFeedback,
 } from "@airnub/resilient-http-core";
 
 export type RequestClass = "interactive" | "background" | "batch";
@@ -78,31 +77,52 @@ export interface PolicyDefinition {
   failureMode?: FailureMode;
 }
 
-export interface PolicyRequestContext {
-  scope: PolicyScope;
-  request: HttpRequestOptions;
-  correlationId?: string;
-}
+export type PolicyEffect = "allow" | "delay" | "deny";
 
 export interface PolicyDecision {
-  allow: boolean;
-  delayMs?: number;
-  reason?: string;
-  appliedResilience?: ResilienceProfile;
+  effect: PolicyEffect;
+  delayBeforeSendMs?: number;
+  resilienceOverride?: ResilienceProfile;
   policyKey?: PolicyKey;
+  reason?: string;
 }
 
-export interface PolicyResultContext {
+export interface PolicyOutcome {
+  policyKey?: PolicyKey;
+  delayMs?: number;
+  denied?: boolean;
+  buckets?: string[];
+}
+
+export interface PolicyEvaluationContext {
   scope: PolicyScope;
   request: HttpRequestOptions;
-  outcome: RequestOutcome;
-  rateLimitFeedback?: unknown;
-  policyKey?: PolicyKey;
+}
+
+export interface PolicyEvaluationResult {
+  decision: PolicyDecision;
+  outcome?: PolicyOutcome;
 }
 
 export interface PolicyEngine {
-  evaluate(ctx: PolicyRequestContext): Promise<PolicyDecision>;
-  onResult?(ctx: PolicyResultContext): Promise<void> | void;
+  evaluate(ctx: PolicyEvaluationContext): Promise<PolicyEvaluationResult>;
+  onResult?(scope: PolicyScope, outcome: RequestOutcome, policyOutcome?: PolicyOutcome):
+    | Promise<void>
+    | void;
+}
+
+export class PolicyDeniedError extends Error {
+  readonly policyKey?: PolicyKey;
+  readonly scope: PolicyScope;
+  readonly reason?: string;
+
+  constructor(options: { message?: string; policyKey?: PolicyKey; scope: PolicyScope; reason?: string }) {
+    super(options.message ?? "Request denied by policy");
+    this.name = "PolicyDeniedError";
+    this.policyKey = options.policyKey;
+    this.scope = options.scope;
+    this.reason = options.reason;
+  }
 }
 
 function matchesString(value: string | undefined, matcher?: StringMatcher): boolean {
@@ -118,13 +138,20 @@ function matchesMethod(value: HttpMethod, matcher?: HttpMethod | HttpMethod[]): 
   return value === matcher;
 }
 
+export interface InMemoryPolicyEngineConfig {
+  policies: PolicyDefinition[];
+}
+
 export class InMemoryPolicyEngine implements PolicyEngine {
   private definitions: PolicyDefinition[];
   private rateLimits: Map<string, { windowStart: number; count: number }> = new Map();
   private concurrency: Map<string, number> = new Map();
+  private queues: Map<string, number> = new Map();
 
   constructor(definitions: PolicyDefinition[] = []) {
-    this.definitions = definitions.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    this.definitions = definitions
+      .slice()
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.key.localeCompare(b.key));
   }
 
   private matchScope(scope: PolicyScope, selector: ScopeSelector): boolean {
@@ -145,68 +172,170 @@ export class InMemoryPolicyEngine implements PolicyEngine {
 
   private renderBucket(template: string | undefined, scope: PolicyScope): string {
     if (!template) return `${scope.clientName}:${scope.operation}`;
-    return template
-      .replace("${clientName}", scope.clientName)
-      .replace("${operation}", scope.operation)
-      .replace("${aiModel}", scope.aiModel ?? "")
-      .replace("${aiProvider}", scope.aiProvider ?? "")
-      .replace("${tenantId}", scope.tenantId ?? "");
+    return template.replace(/\$\{(.*?)\}/g, (_, key) => {
+      const value = (scope as any)[key];
+      return value == null ? "" : String(value);
+    });
   }
 
-  async evaluate(ctx: PolicyRequestContext): Promise<PolicyDecision> {
-    const definition = this.definitions.find((def) => this.matchScope(ctx.scope, def.selector));
-    if (!definition) {
-      return { allow: true };
-    }
-
-    if (definition.rateLimit) {
-      const bucket = this.renderBucket(definition.rateLimit.bucketKeyTemplate, ctx.scope);
-      const now = Date.now();
-      const entry = this.rateLimits.get(bucket) ?? { windowStart: now, count: 0 };
-      if (now - entry.windowStart >= definition.rateLimit.windowMs) {
-        entry.windowStart = now;
-        entry.count = 0;
-      }
-      if (entry.count >= definition.rateLimit.maxRequests) {
-        return { allow: false, reason: "rateLimit", policyKey: definition.key };
-      }
-      entry.count += 1;
-      this.rateLimits.set(bucket, entry);
-    }
-
-    if (definition.concurrency) {
-      const bucket = this.renderBucket(definition.concurrency.bucketKeyTemplate, ctx.scope);
-      const inFlight = this.concurrency.get(bucket) ?? 0;
-      if (inFlight >= definition.concurrency.maxConcurrent) {
-        return { allow: false, reason: "concurrency", policyKey: definition.key };
-      }
-      this.concurrency.set(bucket, inFlight + 1);
-    }
-
-    return {
-      allow: true,
-      appliedResilience: definition.resilienceOverride?.resilience,
-      policyKey: definition.key,
-    };
+  private pickDefinition(scope: PolicyScope): PolicyDefinition | undefined {
+    return this.definitions.find((def) => this.matchScope(scope, def.selector));
   }
 
-  async onResult(ctx: PolicyResultContext): Promise<void> {
-    if (!ctx.policyKey) return;
-    const definition = this.definitions.find((d) => d.key === ctx.policyKey);
-    if (!definition?.concurrency) return;
-    const bucket = this.renderBucket(definition.concurrency.bucketKeyTemplate, ctx.scope);
+  private applyRateLimit(definition: PolicyDefinition, scope: PolicyScope, now: number, outcome: PolicyOutcome) {
+    if (!definition.rateLimit) return undefined;
+    const bucket = this.renderBucket(definition.rateLimit.bucketKeyTemplate, scope);
+    outcome.buckets = [...(outcome.buckets ?? []), bucket];
+    const entry = this.rateLimits.get(bucket) ?? { windowStart: now, count: 0 };
+    if (now - entry.windowStart >= definition.rateLimit.windowMs) {
+      entry.windowStart = now;
+      entry.count = 0;
+    }
+    if (entry.count >= definition.rateLimit.maxRequests) {
+      return { bucket, exceeded: true } as const;
+    }
+    entry.count += 1;
+    this.rateLimits.set(bucket, entry);
+    return { bucket, exceeded: false } as const;
+  }
+
+  private applyConcurrency(definition: PolicyDefinition, scope: PolicyScope, outcome: PolicyOutcome) {
+    if (!definition.concurrency) return { bucket: undefined, allowed: true } as const;
+    const bucket = this.renderBucket(definition.concurrency.bucketKeyTemplate, scope);
+    outcome.buckets = [...(outcome.buckets ?? []), bucket];
     const inFlight = this.concurrency.get(bucket) ?? 0;
-    this.concurrency.set(bucket, Math.max(0, inFlight - 1));
+    if (inFlight >= definition.concurrency.maxConcurrent) {
+      return { bucket, allowed: false } as const;
+    }
+    this.concurrency.set(bucket, inFlight + 1);
+    return { bucket, allowed: true } as const;
+  }
+
+  async evaluate(ctx: PolicyEvaluationContext): Promise<PolicyEvaluationResult> {
+    const now = Date.now();
+    const definition = this.pickDefinition(ctx.scope);
+    if (!definition) {
+      return { decision: { effect: "allow" } };
+    }
+
+    const outcome: PolicyOutcome = { policyKey: definition.key, buckets: [] };
+    try {
+      const rateLimitResult = this.applyRateLimit(definition, ctx.scope, now, outcome);
+      if (rateLimitResult?.exceeded) {
+        const queueSize = this.queues.get(rateLimitResult.bucket) ?? 0;
+        if (definition.queue && queueSize < definition.queue.maxQueueSize) {
+          this.queues.set(rateLimitResult.bucket, queueSize + 1);
+          const delay = definition.queue.maxQueueTimeMs;
+          outcome.delayMs = delay;
+          return {
+            decision: {
+              effect: "delay",
+              delayBeforeSendMs: delay,
+              policyKey: definition.key,
+              reason: "rateLimit",
+            },
+            outcome,
+          };
+        }
+        return {
+          decision: { effect: "deny", policyKey: definition.key, reason: "rateLimit" },
+          outcome: { ...outcome, denied: true },
+        };
+      }
+
+      const concurrencyResult = this.applyConcurrency(definition, ctx.scope, outcome);
+      if (concurrencyResult.bucket && !concurrencyResult.allowed) {
+        const queueSize = this.queues.get(concurrencyResult.bucket) ?? 0;
+        if (definition.queue && queueSize < definition.queue.maxQueueSize) {
+          this.queues.set(concurrencyResult.bucket, queueSize + 1);
+          const delay = definition.queue.maxQueueTimeMs;
+          outcome.delayMs = delay;
+          return {
+            decision: {
+              effect: "delay",
+              delayBeforeSendMs: delay,
+              policyKey: definition.key,
+              reason: "concurrency",
+            },
+            outcome,
+          };
+        }
+        return {
+          decision: { effect: "deny", policyKey: definition.key, reason: "concurrency" },
+          outcome: { ...outcome, denied: true },
+        };
+      }
+
+      const delay = outcome.delayMs;
+      return {
+        decision: {
+          effect: delay && delay > 0 ? "delay" : "allow",
+          delayBeforeSendMs: delay,
+          resilienceOverride: definition.resilienceOverride?.resilience,
+          policyKey: definition.key,
+          reason: definition.description,
+        },
+        outcome,
+      };
+    } catch (err) {
+      const failMode = definition.failureMode ?? "failOpen";
+      if (failMode === "failClosed") {
+        return {
+          decision: { effect: "deny", policyKey: definition.key, reason: (err as Error)?.message },
+          outcome: { ...outcome, denied: true },
+        };
+      }
+      return { decision: { effect: "allow" }, outcome };
+    }
+  }
+
+  async onResult(scope: PolicyScope, outcome: RequestOutcome, policyOutcome?: PolicyOutcome): Promise<void> {
+    const key = policyOutcome?.policyKey;
+    if (!key) return;
+    const definition = this.definitions.find((d) => d.key === key);
+    if (!definition) return;
+
+    if (definition.concurrency && policyOutcome?.buckets) {
+      for (const bucket of policyOutcome.buckets) {
+        const inFlight = this.concurrency.get(bucket) ?? 0;
+        if (inFlight > 0) {
+          this.concurrency.set(bucket, inFlight - 1);
+        }
+      }
+    }
+
+    if (definition.queue && policyOutcome?.buckets) {
+      for (const bucket of policyOutcome.buckets) {
+        const queued = this.queues.get(bucket) ?? 0;
+        if (queued > 0) {
+          this.queues.set(bucket, queued - 1);
+        }
+      }
+    }
   }
 }
 
-function buildScope(request: HttpRequestOptions): PolicyScope {
+export function createInMemoryPolicyEngine(config: InMemoryPolicyEngineConfig): PolicyEngine {
+  return new InMemoryPolicyEngine(config.policies);
+}
+
+function buildScope(
+  request: HttpRequestOptions,
+  classify?: (request: HttpRequestOptions) => RequestClass,
+): PolicyScope {
   const extensions = request.extensions ?? {};
+  const classified = classify?.(request);
+  const baseClass = classified
+    ? classified
+    : request.method === "GET" || request.method === "HEAD"
+      ? "interactive"
+      : "background";
+  const requestClass = (extensions["request.class"] as RequestClass | undefined) ?? baseClass;
   return {
     clientName: request.clientName ?? "unknown",
     operation: request.operation ?? "unknown",
     method: request.method,
-    requestClass: extensions["request.class"] as RequestClass | undefined,
+    requestClass,
     aiProvider: extensions["ai.provider"] as string | undefined,
     aiModel: extensions["ai.model"] as string | undefined,
     aiOperation: extensions["ai.operation"] as string | undefined,
@@ -219,114 +348,120 @@ function buildScope(request: HttpRequestOptions): PolicyScope {
   };
 }
 
-export interface PolicyInterceptorConfig {
+export interface PolicyInterceptorOptions {
   engine: PolicyEngine;
+  classifyRequestClass?: (request: HttpRequestOptions) => RequestClass;
+  /** @deprecated use classifyRequestClass */
   defaultRequestClass?: RequestClass;
 }
 
-export function createPolicyInterceptor(config: PolicyInterceptorConfig): HttpRequestInterceptor {
-  const decisions = new WeakMap<HttpRequestOptions, PolicyDecision>();
+export function createPolicyInterceptor(options: PolicyInterceptorOptions): HttpRequestInterceptor {
+  const evaluations = new WeakMap<HttpRequestOptions, PolicyEvaluationResult>();
   const starts = new WeakMap<HttpRequestOptions, number>();
-
-  const extractRateLimit = (headers?: Headers): RateLimitFeedback | undefined => {
-    if (!headers) return undefined;
-    const feedback: RateLimitFeedback = {};
-
-    const getNumber = (name: string) => {
-      const value = headers.get(name);
-      if (!value) return undefined;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    };
-
-    const limitRequests = getNumber("x-ratelimit-limit");
-    const remainingRequests = getNumber("x-ratelimit-remaining");
-    const resetRequests = getNumber("x-ratelimit-reset");
-    if (limitRequests !== undefined) feedback.limitRequests = limitRequests;
-    if (remainingRequests !== undefined) feedback.remainingRequests = remainingRequests;
-    if (resetRequests !== undefined) {
-      const resetDate = Number.isFinite(resetRequests) ? new Date(resetRequests * 1000) : undefined;
-      if (resetDate) feedback.resetRequestsAt = resetDate;
-    }
-
-    const rawHeaders: Record<string, string> = {};
-    headers.forEach((value, key) => {
-      if (key.startsWith("x-ratelimit") || key === "retry-after") {
-        rawHeaders[key] = value;
-      }
-    });
-
-    if (Object.keys(rawHeaders).length > 0) {
-      feedback.rawHeaders = rawHeaders;
-    }
-
-    return Object.keys(feedback).length > 0 ? feedback : undefined;
-  };
 
   return {
     beforeSend: async ({ request }) => {
-      const scope = buildScope(request);
-      if (!scope.requestClass && config.defaultRequestClass) {
-        scope.requestClass = config.defaultRequestClass;
-      }
-      const decision = await config.engine.evaluate({ scope, request });
-      decisions.set(request, decision);
+      const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
+      const evaluation = await options.engine.evaluate({ scope, request });
+      evaluations.set(request, evaluation);
       starts.set(request, Date.now());
-      if (!decision.allow) {
-        throw new Error(decision.reason ?? "Request denied by policy");
+      const decision = evaluation.decision;
+      if (decision.effect === "deny") {
+        throw new PolicyDeniedError({ policyKey: decision.policyKey, scope, reason: decision.reason });
       }
-      if (decision.appliedResilience) {
-        request.resilience = { ...request.resilience, ...decision.appliedResilience };
+      if (decision.resilienceOverride) {
+        request.resilience = { ...(request.resilience ?? {}), ...decision.resilienceOverride };
       }
-      if (decision.delayMs && decision.delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, decision.delayMs));
+      if (decision.effect === "delay" && (decision.delayBeforeSendMs ?? 0) > 0) {
+        await new Promise((resolve) => setTimeout(resolve, decision.delayBeforeSendMs));
       }
     },
     afterResponse: async ({ request, response, attempt }) => {
-      const scope = buildScope(request);
-      const decision = decisions.get(request);
+      const evaluation = evaluations.get(request);
+      const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
       const startedAt = starts.get(request) ?? Date.now();
       const finishedAt = Date.now();
-      const rateLimitFeedback = extractRateLimit(response.headers);
       const outcome: RequestOutcome = {
         ok: response.ok,
         status: response.status,
         attempts: attempt,
         startedAt,
         finishedAt,
-        rateLimitFeedback,
       };
-      await config.engine.onResult?.({
-        scope,
-        request,
-        outcome,
-        rateLimitFeedback,
-        policyKey: decision?.policyKey,
-      });
+      await options.engine.onResult?.(scope, outcome, evaluation?.outcome);
     },
     onError: async ({ request, error, attempt }) => {
-      const scope = buildScope(request);
-      const decision = decisions.get(request);
+      const evaluation = evaluations.get(request);
+      const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
       const startedAt = starts.get(request) ?? Date.now();
       const finishedAt = Date.now();
-      const status = error instanceof Error && (error as any).status ? (error as any).status : 0;
-      const rateLimitFeedback = extractRateLimit((error as any)?.headers);
-      await config.engine.onResult?.({
+      const status = (error as any)?.status ?? 0;
+      await options.engine.onResult?.(
         scope,
-        request,
-        outcome: {
+        {
           ok: false,
           status,
           attempts: attempt,
           startedAt,
           finishedAt,
-          rateLimitFeedback,
           errorCategory: (error as any)?.category,
         },
-        rateLimitFeedback,
-        policyKey: decision?.policyKey,
-      });
+        evaluation?.outcome,
+      );
     },
   };
+}
+
+export interface BasicRateLimitOptions {
+  key: PolicyKey;
+  clientName: string;
+  maxRps: number;
+  maxBurst?: number;
+  selector?: Partial<ScopeSelector>;
+}
+
+export function createBasicRateLimitPolicy(opts: BasicRateLimitOptions): PolicyDefinition {
+  const windowMs = 1000;
+  const maxRequests = opts.maxBurst ?? opts.maxRps;
+  return {
+    key: opts.key,
+    selector: { clientName: opts.clientName, ...(opts.selector ?? {}) },
+    rateLimit: {
+      maxRequests,
+      windowMs,
+    },
+  };
+}
+
+export interface BasicConcurrencyOptions {
+  key: PolicyKey;
+  clientName: string;
+  maxConcurrent: number;
+  selector?: Partial<ScopeSelector>;
+}
+
+export function createBasicConcurrencyPolicy(opts: BasicConcurrencyOptions): PolicyDefinition {
+  return {
+    key: opts.key,
+    selector: { clientName: opts.clientName, ...(opts.selector ?? {}) },
+    concurrency: { maxConcurrent: opts.maxConcurrent },
+  };
+}
+
+export interface BasicPolicyEngineOptions {
+  clientName: string;
+  rateLimit?: BasicRateLimitOptions;
+  concurrency?: BasicConcurrencyOptions;
+}
+
+export function createBasicInMemoryPolicyEngine(opts: BasicPolicyEngineOptions): PolicyEngine {
+  const policies: PolicyDefinition[] = [];
+  if (opts.rateLimit) {
+    policies.push(createBasicRateLimitPolicy({ ...opts.rateLimit, clientName: opts.clientName }));
+  }
+  if (opts.concurrency) {
+    policies.push(createBasicConcurrencyPolicy({ ...opts.concurrency, clientName: opts.clientName }));
+  }
+  return createInMemoryPolicyEngine({ policies });
 }
 
