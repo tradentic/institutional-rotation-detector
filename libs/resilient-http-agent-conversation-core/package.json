@@ -1,7 +1,7 @@
 {
-  "name": "@airnub/resilient-http-core",
-  "version": "0.4.0",
-  "description": "Transport-agnostic resilient HTTP utilities for Tradentic API clients",
+  "name": "@airnub/resilient-http-agent-conversation-core",
+  "version": "0.2.0",
+  "description": "Provider-agnostic conversation engine",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,16 +16,10 @@
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
-  "keywords": [
-    "http",
-    "resilience",
-    "retry",
-    "cache",
-    "rate-limiter"
-  ],
-  "author": "Tradentic",
-  "license": "UNLICENSED",
   "private": true,
+  "dependencies": {
+    "@airnub/resilient-http-core": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.9.3",

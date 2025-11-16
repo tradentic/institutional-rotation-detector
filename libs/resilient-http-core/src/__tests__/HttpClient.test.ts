@@ -782,7 +782,8 @@ describe('HttpClient v0.4', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: true }), { status: 500 }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const classifier: ErrorClassifier = {
-      classify: vi.fn(() => ({ category: 'rate_limit', retryable: true, suggestedBackoffMs: 1234 })),
+      classifyNetworkError: vi.fn(() => ({ category: 'transient', retryable: true })),
+      classifyResponse: vi.fn(() => ({ category: 'rate_limit', retryable: true, suggestedBackoffMs: 1234 })),
     };
     const client = createClient({ transport, errorClassifier: classifier, maxRetries: 2 });
 
@@ -796,6 +797,6 @@ describe('HttpClient v0.4', () => {
     await promise;
 
     expect(transport).toHaveBeenCalledTimes(2);
-    expect(classifier.classify).toHaveBeenCalled();
+    expect(classifier.classifyResponse).toHaveBeenCalled();
   });
 });
