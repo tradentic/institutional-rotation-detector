@@ -58,6 +58,10 @@ export class HttpClient {
     this.errorClassifier = config.errorClassifier ?? new DefaultErrorClassifier();
   }
 
+  getClientName(): string {
+    return this.clientName;
+  }
+
   async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
     const response = await this.requestRaw(opts);
     if (!response.ok) {
