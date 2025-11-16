@@ -30,5 +30,10 @@
   "devDependencies": {
     "tsx": "^4.19.2"
   },
+  "pnpm": {
+    "overrides": {
+      "@tradentic/resilient-http-core": "npm:@airnub/resilient-http-core@0.7.0"
+    }
+  },
   "packageManager": "pnpm@10.20.0"
 }
