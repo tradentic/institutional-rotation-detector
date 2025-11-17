@@ -335,6 +335,8 @@ export async function fetchDailyHoldings(
 
   const targets = new Set(targetCusips.map((cusip) => cusip.toUpperCase()));
   let totalUpserted = 0;
+  const errors: Array<{ fund: string; error: string }> = [];
+  const warnings: Array<{ fund: string; message: string }> = [];
 
   for (const fund of funds) {
     // Resolve ETF entity with datasource configuration
@@ -342,7 +344,9 @@ export async function fetchDailyHoldings(
     try {
       etfEntity = await resolveEtfEntity(supabase, fund);
     } catch (error) {
-      console.error(`Unable to resolve ETF entity for ${fund}:`, error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[fetchDailyHoldings] Unable to resolve ETF entity for ${fund}:`, error);
+      errors.push({ fund, error: `Entity resolution failed: ${errorMsg}` });
       continue;
     }
 
@@ -351,14 +355,20 @@ export async function fetchDailyHoldings(
     try {
       download = await downloadIsharesHoldings(etfEntity);
     } catch (error) {
-      console.error(`Failed to fetch holdings for ${fund}:`, error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[fetchDailyHoldings] Failed to fetch holdings for ${fund}:`, error);
+      errors.push({ fund, error: `Holdings download failed: ${errorMsg}` });
       continue;
     }
 
     const { asof, holdings } = download;
     const matching = holdings.filter((holding) => targets.has(holding.cusip));
     if (matching.length === 0) {
-      console.info(`No holdings matched target CUSIPs for ${fund} on ${asof}`);
+      console.info(`[fetchDailyHoldings] No holdings matched target CUSIPs for ${fund} on ${asof}`);
+      warnings.push({
+        fund,
+        message: `No matching holdings found for ${targetCusips.length} target CUSIPs on ${asof}`,
+      });
       continue;
     }
 
@@ -376,14 +386,14 @@ export async function fetchDailyHoldings(
         throw existing.error;
       }
     } else if (existing.data) {
-      console.info(`Skipping ${fund} on ${asof}; holdings already cached.`);
+      console.info(`[fetchDailyHoldings] Skipping ${fund} on ${asof}; holdings already cached.`);
       continue;
     }
 
     const rows = matching.map((holding) => {
       const shares = normalizeShares(holding.shares);
       console.info(
-        `ETF holding ${fund} ${asof}: ${holding.ticker} (${holding.cusip}) shares=${shares} weight=${holding.weight.toFixed(4)}`
+        `[fetchDailyHoldings] ETF holding ${fund} ${asof}: ${holding.ticker} (${holding.cusip}) shares=${shares} weight=${holding.weight.toFixed(4)}`
       );
       return {
         holder_id: etfEntity.entity_id,
@@ -401,7 +411,34 @@ export async function fetchDailyHoldings(
       throw error;
     }
     totalUpserted += rows.length;
+    console.log(`[fetchDailyHoldings] ✓ Upserted ${rows.length} holdings for ${fund} on ${asof}`);
   }
+
+  // Log summary
+  if (errors.length > 0) {
+    console.warn(`\n${'='.repeat(80)}`);
+    console.warn(`⚠️  ETF INGESTION ERRORS (${errors.length} funds failed)`);
+    console.warn(`${'='.repeat(80)}`);
+    for (const { fund, error } of errors) {
+      console.warn(`  - ${fund}: ${error}`);
+    }
+    console.warn(`${'='.repeat(80)}\n`);
+  }
+
+  if (warnings.length > 0) {
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`ℹ️  ETF INGESTION WARNINGS (${warnings.length} funds)`);
+    console.log(`${'='.repeat(80)}`);
+    for (const { fund, message } of warnings) {
+      console.log(`  - ${fund}: ${message}`);
+    }
+    console.log(`${'='.repeat(80)}\n`);
+  }
+
+  console.log(
+    `[fetchDailyHoldings] Summary: ${totalUpserted} holdings upserted, ` +
+    `${errors.length} errors, ${warnings.length} warnings`
+  );
 
   return totalUpserted;
 }

@@ -7,6 +7,7 @@ import type {
   AnalyzeRotationEventResult,
 } from '../activities/rotation-analysis.activities';
 import { isQuarterEndEOWString } from '../lib/tradingCalendar';
+import type { RotationDetectResult } from './types';
 
 const activities = proxyActivities<{
   detectDumpEvents: (cik: string, quarter: { start: string; end: string }) => Promise<any[]>;
@@ -55,7 +56,10 @@ export interface RotationDetectInput {
   quarterEnd: string;
 }
 
-export async function rotationDetectWorkflow(input: RotationDetectInput) {
+export type { RotationDetectResult };
+
+export async function rotationDetectWorkflow(input: RotationDetectInput): Promise<RotationDetectResult> {
+  const startTime = Date.now();
   const bounds = {
     start: input.quarterStart,
     end: input.quarterEnd,
@@ -73,6 +77,11 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
   const uhf = await activities.uhf(input.cik, bounds);
   const options = await activities.optionsOverlay(input.cik, bounds);
   const shortRelief = await activities.shortReliefV2(input.cik, bounds);
+
+  const clusterIds: string[] = [];
+  const analyses: AnalyzeRotationEventResult[] = [];
+  let highConfidenceCount = 0;
+  const warnings: string[] = [];
 
   for (const anchor of anchors) {
     // Use proper trading calendar to detect end-of-window dumps
@@ -96,6 +105,11 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       indexPenalty: penaltyResult.penalty,
       eow,
     });
+
+    // Track high confidence rotations (R-score > 0.7 is typical threshold)
+    if (scoreResult?.rScore && scoreResult.rScore > 0.7) {
+      highConfidenceCount++;
+    }
 
     // Persist index penalty with provenance
     await activities.persistIndexPenalty(
@@ -123,6 +137,9 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
       },
     });
 
+    clusterIds.push(anchor.clusterId);
+    analyses.push(analysis);
+
     await activities.buildEdges(
       [
         { entityId: anchor.seller, cusip: input.cusips[0], equityDelta: anchor.delta, optionsDelta: 0 },
@@ -148,6 +165,75 @@ export async function rotationDetectWorkflow(input: RotationDetectInput) {
     });
     await child.result();
   }
+
+  // Add warnings if no rotation detected
+  if (anchors.length === 0) {
+    warnings.push('No dump events detected - this may indicate:');
+    warnings.push('  1. No significant institutional rotation occurred');
+    warnings.push('  2. Missing 13F data (check if entity files 13F)');
+    warnings.push('  3. CUSIP resolution failed (check cusip_issuer_map)');
+  }
+
+  const endTime = Date.now();
+  const avgConfidence = analyses.length > 0
+    ? analyses.reduce((sum, a) => sum + a.confidence, 0) / analyses.length
+    : 0;
+  const highAnomalyCount = analyses.filter(a => a.anomalyScore >= 7).length;
+
+  return {
+    status: anchors.length > 0 ? 'success' : 'partial_success',
+    message: anchors.length > 0
+      ? `Detected ${anchors.length} rotation events for ${input.ticker} in ${input.quarter}${highConfidenceCount > 0 ? ` (${highConfidenceCount} high-confidence)` : ''}`
+      : `No rotation events detected for ${input.ticker} in ${input.quarter}`,
+    metrics: {
+      processed: 1,
+      succeeded: anchors.length,
+      failed: 0,
+      skipped: 0,
+    },
+    timing: {
+      startedAt: new Date(startTime).toISOString(),
+      completedAt: new Date(endTime).toISOString(),
+      durationMs: endTime - startTime,
+    },
+    entity: {
+      ticker: input.ticker,
+      cik: input.cik,
+      cusips: input.cusips,
+    },
+    dateRange: {
+      start: bounds.start,
+      end: bounds.end,
+    },
+    quarter: input.quarter,
+    rotationEvents: {
+      dumpEventsDetected: anchors.length,
+      highConfidenceCount,
+      clusterIds,
+    },
+    signals: {
+      uptake,
+      uhf,
+      options,
+      shortRelief,
+    },
+    aiAnalysis: analyses.length > 0 ? {
+      eventsAnalyzed: analyses.length,
+      avgConfidence,
+      highAnomalyCount,
+    } : undefined,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    links: anchors.length > 0 ? {
+      rotationEvents: clusterIds,
+      queries: [
+        `-- View rotation events for ${input.ticker} in ${input.quarter}`,
+        `SELECT cluster_id, anchor_filing, r_score, dumpz, u_same, u_next`,
+        `FROM rotation_events`,
+        `WHERE issuer_cik = '${input.cik}' AND cluster_id IN (${clusterIds.map(id => `'${id}'`).join(',')})`,
+        `ORDER BY r_score DESC;`,
+      ],
+    } : undefined,
+  };
 }
 
 // Note: isQuarterEndEOWString is now used instead of this function.
