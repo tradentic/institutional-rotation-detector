@@ -1464,6 +1464,140 @@ await testEnv.teardown();
 7. **Testing** - Use `@temporalio/testing` for unit tests
 8. **Versioning** - Use workflow versioning for safe upgrades
 
+### 🔥 CRITICAL: Always Return Meaningful Workflow Results
+
+**Every workflow MUST return a structured result** that provides visibility in the Temporal UI for debugging and monitoring.
+
+#### The Standard Pattern
+
+All workflows should return a result type that extends `WorkflowExecutionSummary`:
+
+```typescript
+interface WorkflowExecutionSummary {
+  status: 'success' | 'partial_success' | 'failed';
+  message: string;
+  metrics: {
+    processed: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+  };
+  timing?: {
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+  };
+  entity: {
+    ticker?: string;
+    cik?: string;
+    cusips?: string[];
+  };
+  warnings?: string[];
+  errors?: string[];
+}
+```
+
+#### Required Implementation Steps
+
+1. **Track timing** - Capture `startTime` and calculate `durationMs`
+2. **Collect warnings** - Non-fatal issues that don't stop execution
+3. **Collect errors** - Failures that should be visible
+4. **Set status correctly**:
+   - `'success'` - No warnings or errors
+   - `'partial_success'` - Has warnings but completed
+   - `'failed'` - Critical failure (caught in try/catch)
+5. **Use descriptive messages** - Clear, concise summary of what happened
+6. **Return results even on failure** - Use try/catch to return structured failure results
+
+#### Example Implementation
+
+```typescript
+export async function myWorkflow(input: MyInput): Promise<MyResult> {
+  const startTime = Date.now();
+  const startedAt = new Date().toISOString();
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  try {
+    // Set search attributes
+    await upsertWorkflowSearchAttributes({
+      ticker: input.ticker,
+      cik: input.cik,
+    });
+
+    // Do work...
+    const result = await activities.doSomething(input);
+
+    // Collect warnings
+    if (result.missingData) {
+      warnings.push(`Missing data: ${result.missingData}`);
+    }
+
+    // Return comprehensive result
+    return {
+      status: warnings.length > 0 ? 'partial_success' : 'success',
+      message: `Processed ${input.ticker} successfully`,
+      metrics: {
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      timing: {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+      },
+      entity: {
+        ticker: input.ticker,
+        cik: input.cik,
+      },
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  } catch (error) {
+    // Even failures return structured results
+    return {
+      status: 'failed',
+      message: `Failed to process ${input.ticker}: ${error.message}`,
+      metrics: { processed: 1, succeeded: 0, failed: 1, skipped: 0 },
+      timing: {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+      },
+      entity: { ticker: input.ticker, cik: input.cik },
+      errors: [error.message],
+    };
+  }
+}
+```
+
+#### Anti-Patterns to Avoid
+
+❌ **NEVER return void** - Provides zero visibility in Temporal UI
+❌ **NEVER return simple values** (boolean, number) - No context or debugging info
+❌ **NEVER throw without catching** - Temporal shows exception but no structured result
+❌ **NEVER omit warnings** - Silent partial failures are impossible to debug
+❌ **NEVER use vague messages** - "Done" or "OK" provides no useful information
+
+#### Why This Matters
+
+Without meaningful workflow results:
+- ❌ Debugging is nearly impossible
+- ❌ No visibility into what was processed
+- ❌ Warnings and partial failures are hidden
+- ❌ Performance analysis is impossible
+- ❌ Audit trails are incomplete
+
+With meaningful workflow results:
+- ✅ Instant status visibility in Temporal UI
+- ✅ Clear error and warning messages
+- ✅ Performance metrics for optimization
+- ✅ Complete audit trail
+- ✅ Easy troubleshooting and debugging
+
+**See the full guide:** `docs/internal/CODING_AGENT_GUIDELINES.md` (search for "Meaningful Workflow Results")
+
 ---
 
 ## Related Documentation
