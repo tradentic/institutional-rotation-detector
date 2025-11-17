@@ -412,10 +412,14 @@ export async function fetchATSWeekly(
       }> = [];
 
       for (const row of rows) {
-        // Debug: Log first row's fields
+        // Debug: Log first row's fields and values
         if (rows.indexOf(row) === 0) {
           const fields = Array.from(row.keys());
           console.log(`[fetchATSWeekly] DEBUG: First row fields: ${fields.join(', ')}`);
+          console.log(`[fetchATSWeekly] DEBUG: mpid value: ${row.get('mpid')}`);
+          console.log(`[fetchATSWeekly] DEBUG: atsmpid value: ${row.get('atsmpid')}`);
+          console.log(`[fetchATSWeekly] DEBUG: marketparticipantidentifier value: ${row.get('marketparticipantidentifier')}`);
+          console.log(`[fetchATSWeekly] DEBUG: summarytypecode value: ${row.get('summarytypecode')}`);
         }
 
         const symbol = extractSymbol(row);
