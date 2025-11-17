@@ -307,139 +307,150 @@ export async function fetchATSWeekly(
   const cusips = await loadCusips(supabase, cik);
   const ticker = await loadTickerForCik(supabase, cik);
 
-  // Create set of identifiers to match (CUSIPs + ticker)
-  const identifiers = new Set(cusips);
-  if (ticker) {
-    identifiers.add(ticker.toUpperCase());
-  }
+  // Validate that we have proper CUSIPs (9 alphanumeric characters)
+  const validCusips = Array.from(cusips).filter(c => /^[0-9A-Z]{9}$/.test(c));
 
-  // If still no identifiers exist, skip
-  if (identifiers.size === 0) {
-    console.log(`[fetchATSWeekly] No CUSIP mappings or ticker found for CIK ${cik}, skipping`);
+  if (validCusips.length === 0) {
+    console.warn(
+      `[fetchATSWeekly] No valid CUSIPs found for CIK ${cik} (ticker: ${ticker}). ` +
+      `CUSIPs must be 9 alphanumeric characters. Found: ${Array.from(cusips).join(', ')}`
+    );
+    console.error(
+      `[fetchATSWeekly] Cannot fetch ATS data without valid CUSIPs. ` +
+      `Please resolve CUSIP for CIK ${cik} using resolveCIK activity.`
+    );
     return 0;
   }
 
-  console.log(`[fetchATSWeekly] Fetching ATS data for CIK ${cik} (ticker: ${ticker}, CUSIPs: ${Array.from(cusips).join(', ')}) from ${dateRange.start} to ${dateRange.end}`);
+  // Use first CUSIP for storage (most issuers have only one CUSIP)
+  const primaryCusip = validCusips[0];
 
-  // Fetch date range using ticker (issueSymbolIdentifier per FINRA API)
-  const dataset: unknown[] = [];
-  if (ticker) {
-    const records = await finra.queryWeeklySummary({
-      compareFilters: [
-        {
-          compareType: 'EQUAL',
-          fieldName: 'issueSymbolIdentifier',
-          fieldValue: ticker.toUpperCase(),
-        },
-        {
-          compareType: 'GREATER',
-          fieldName: 'weekStartDate',
-          fieldValue: dateRange.start,
-        },
-        {
-          compareType: 'LESSER',
-          fieldName: 'weekStartDate',
-          fieldValue: dateRange.end,
-        },
-      ],
-    });
-    dataset.push(...records);
+  console.log(
+    `[fetchATSWeekly] Fetching ATS data for CIK ${cik} ` +
+    `(ticker: ${ticker}, CUSIP: ${primaryCusip}) from ${dateRange.start} to ${dateRange.end}`
+  );
+
+  if (!ticker) {
+    console.log(`[fetchATSWeekly] No ticker found for CIK ${cik}, skipping`);
+    return 0;
   }
 
-  const rows = normalizeRows(dataset as Record<string, unknown>[]);
+  // Enumerate all weeks in the date range
+  const weeks: string[] = [];
+  const startDate = new Date(dateRange.start + 'T00:00:00Z');
+  const endDate = new Date(dateRange.end + 'T00:00:00Z');
 
-  console.log(`[fetchATSWeekly] Retrieved ${rows.length} total ATS weekly records from FINRA`);
+  // Find first Sunday on or before start date
+  let current = new Date(startDate);
+  while (current.getUTCDay() !== 0) {
+    current.setUTCDate(current.getUTCDate() - 1);
+  }
 
-  // Group by week_end date, then by (cusip, venue)
-  const dataByWeek = new Map<string, Map<string, { shares: number; trades: number | null }>>();
+  // Collect all Sunday dates (week endings) in range
+  while (current <= endDate) {
+    const weekEnd = current.toISOString().slice(0, 10);
+    weeks.push(weekEnd);
+    current.setUTCDate(current.getUTCDate() + 7);
+  }
 
-  for (const row of rows) {
-    const cusip = extractCusip(row);
-    const symbol = extractSymbol(row);
-    const identifier = cusip || symbol;
+  if (weeks.length === 0) {
+    console.log(`[fetchATSWeekly] No weeks found in date range ${dateRange.start} to ${dateRange.end}`);
+    return 0;
+  }
 
-    if (!identifier || !identifiers.has(identifier)) continue;
+  console.log(`[fetchATSWeekly] Fetching ${weeks.length} weeks: ${weeks[0]} to ${weeks[weeks.length - 1]}`);
 
-    // FINRA API returns weekStartDate (Monday), we need to convert to week end (Sunday)
-    const weekStartValue = row.get('weekstartdate') ||
-                          row.get('summarystartdate') ||
-                          row.get('week_start');
+  let totalUpserts = 0;
 
-    if (!weekStartValue) {
-      console.warn(`[fetchATSWeekly] Missing week start date for identifier ${identifier}, skipping`);
-      continue;
-    }
+  for (const weekEnd of weeks) {
+    try {
+      // Convert week end (Sunday) to week start (Monday) for FINRA API
+      const weekEndDate = new Date(weekEnd + 'T00:00:00Z');
+      const weekStartDate = new Date(weekEndDate);
+      weekStartDate.setUTCDate(weekStartDate.getUTCDate() - 6);
+      const weekStart = weekStartDate.toISOString().slice(0, 10);
 
-    const weekStart = weekStartValue instanceof Date
-      ? weekStartValue.toISOString().slice(0, 10)
-      : String(weekStartValue);
+      console.log(`[fetchATSWeekly] Fetching week ${weekStart} to ${weekEnd} for ${ticker}`);
 
-    // Convert week start (Monday) to week end (Sunday) by adding 6 days
-    const weekStartDate = new Date(weekStart + 'T00:00:00Z');
-    const weekEndDate = new Date(weekStartDate);
-    weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6);
-    const weekEnd = weekEndDate.toISOString().slice(0, 10);
+      // Fetch venue-level ATS data using FINRA OTC Transparency API
+      // Use summaryTypeCode filter to get venue breakdowns (not symbol-level aggregates)
+      const dataset = await finra.queryWeeklySummary({
+        compareFilters: [
+          {
+            compareType: 'EQUAL',
+            fieldName: 'weekStartDate',
+            fieldValue: weekStart,
+          },
+          {
+            compareType: 'EQUAL',
+            fieldName: 'summaryTypeCode',
+            fieldValue: 'ATS_W_SMBL', // ATS venue-level data
+          },
+          {
+            compareType: 'EQUAL',
+            fieldName: 'issueSymbolIdentifier',
+            fieldValue: ticker.toUpperCase(),
+          },
+        ],
+      });
 
-    const shares = extractAtsShares(row);
-    if (shares === null) {
-      console.warn(`[fetchATSWeekly] Missing ATS share quantity for identifier ${identifier} on week ${weekEnd}, skipping`);
-      continue;
-    }
-
-    const trades = extractAtsTrades(row);
-    const venue = extractVenue(row);
-    const key = `${identifier}:${venue}`;
-
-    if (!dataByWeek.has(weekEnd)) {
-      dataByWeek.set(weekEnd, new Map());
-    }
-
-    const weekData = dataByWeek.get(weekEnd)!;
-    const entry = weekData.get(key);
-    if (entry) {
-      entry.shares += shares;
-      if (trades !== null) {
-        entry.trades = (entry.trades ?? 0) + trades;
+      if (!Array.isArray(dataset) || dataset.length === 0) {
+        console.log(`[fetchATSWeekly] No ATS data found for ${ticker} on week ${weekEnd}`);
+        continue;
       }
-    } else {
-      weekData.set(key, { shares, trades });
+
+      const rows = normalizeRows(dataset as Record<string, unknown>[]);
+      console.log(`[fetchATSWeekly] Retrieved ${rows.length} venue records for ${ticker} on week ${weekEnd}`);
+
+      // Parse venue-level records and store with CUSIP (not ticker)
+      const venueRecords: Array<{
+        week_end: string;
+        cusip: string;
+        venue: string;
+        shares: number;
+        trades: number | null;
+      }> = [];
+
+      for (const row of rows) {
+        const symbol = extractSymbol(row);
+        if (!symbol || symbol.toUpperCase() !== ticker.toUpperCase()) continue;
+
+        const venue = extractVenueId(row, 'ATS');
+        const shares = extractAtsShares(row);
+        const trades = extractAtsTrades(row);
+
+        if (shares === null || !venue) continue;
+
+        venueRecords.push({
+          week_end: weekEnd,
+          cusip: primaryCusip, // ✓ Use actual CUSIP, not ticker
+          venue,
+          shares: Math.round(shares),
+          trades: trades !== null ? Math.round(trades) : null,
+        });
+      }
+
+      if (venueRecords.length > 0) {
+        const { error } = await supabase
+          .from('ats_weekly')
+          .upsert(venueRecords, { onConflict: 'week_end,cusip,venue' });
+
+        if (error) {
+          console.error(`[fetchATSWeekly] Error upserting ${venueRecords.length} records for week ${weekEnd}:`, error);
+        } else {
+          console.log(
+            `[fetchATSWeekly] ✓ Upserted ${venueRecords.length} venue records for ${ticker} (CUSIP: ${primaryCusip}) on week ${weekEnd}`
+          );
+          totalUpserts += venueRecords.length;
+        }
+      }
+    } catch (error) {
+      console.error(`[fetchATSWeekly] Error fetching ATS data for week ${weekEnd}:`, error);
+      // Continue with other weeks even if one fails
     }
   }
 
-  if (dataByWeek.size === 0) {
-    console.log(`[fetchATSWeekly] No ATS weekly data found for CIK ${cik} (ticker: ${ticker}, identifiers: ${Array.from(identifiers).join(', ')}) in range ${dateRange.start} to ${dateRange.end}`);
-    console.log(`[fetchATSWeekly] This is expected if FINRA has no data for this security, or if dates don't align with actual week-ending dates`);
-    return 0;
-  }
-
-  const weekDates = Array.from(dataByWeek.keys()).sort();
-  console.log(`[fetchATSWeekly] Found ${dataByWeek.size} weeks with data for CIK ${cik}: ${weekDates.join(', ')}`);
-
-  let upserts = 0;
-  for (const [week, cusipVenueTotals] of dataByWeek) {
-    const payload = Array.from(cusipVenueTotals.entries()).map(([key, totals]) => {
-      const [cusip, venue] = key.split(':');
-      return {
-        week_end: week,
-        cusip,
-        venue,
-        shares: Math.round(totals.shares),
-        trades:
-          totals.trades === null || totals.trades === undefined
-            ? null
-            : Math.round(totals.trades),
-      };
-    });
-    const upsert = await supabase
-      .from('ats_weekly')
-      .upsert(payload, { onConflict: 'week_end,cusip,venue' })
-      .select('week_end');
-    if (upsert.error) {
-      throw upsert.error;
-    }
-    upserts += payload.length;
-  }
-  return upserts;
+  return totalUpserts;
 }
 
 function parseDate(value: string): Date {

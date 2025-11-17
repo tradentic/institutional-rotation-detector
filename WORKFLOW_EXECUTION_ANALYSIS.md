@@ -5,6 +5,52 @@
 
 ---
 
+## ✅ FIXES APPLIED (Latest Update)
+
+All identified issues have been addressed:
+
+### Issue #1: ATS Venue = "UNKNOWN" ✅ FIXED
+- **Location**: `apps/temporal-worker/src/activities/finra.activities.ts:298-454`
+- **Fix**: Rewrote `fetchATSWeekly` to use venue-level FINRA API (`summaryTypeCode: 'ATS_W_SMBL'`)
+- **Changes**:
+  - Now fetches actual venue breakdowns (SIGMA, UBSA, MLIX, etc.) instead of aggregated data
+  - Validates CUSIPs are proper 9-character format before processing
+  - Stores venue IDs using `extractVenueId` function
+
+### Issue #2: Ticker Stored as CUSIP ✅ FIXED
+- **Location**: `apps/temporal-worker/src/activities/finra.activities.ts:298-454`
+- **Fix**: Always stores actual CUSIP (not ticker) in `ats_weekly` table
+- **Changes**:
+  - Validates CUSIPs before fetching (line 311)
+  - Uses `primaryCusip` variable throughout (line 326)
+  - Explicitly stores CUSIP on line 426: `cusip: primaryCusip`
+  - Rejects workflow if no valid CUSIP available (line 318-322)
+
+### Issue #3: Zero Rotation Detection ℹ️ DOCUMENTED
+- **Status**: Design limitation, not a bug
+- **Explanation**: System requires 13F filings which issuers don't file (only fund managers do)
+- **No fix required**: Working as designed for issuer vs. fund manager distinction
+
+### Issue #4: ETF Ingestion Silent Failures ✅ IMPROVED
+- **Location**: `apps/temporal-worker/src/activities/etf.activities.ts:318-444`
+- **Fix**: Enhanced error handling and reporting in `fetchDailyHoldings`
+- **Changes**:
+  - Collects all errors and warnings during ingestion (lines 338-339)
+  - Logs comprehensive summary at end (lines 417-441)
+  - Provides specific error messages for each ETF failure
+  - Continues processing other ETFs even if some fail
+
+### Validation Framework Added ✅ NEW
+- **Location**: `apps/temporal-worker/src/activities/data-validation.activities.ts`
+- **Purpose**: Prevent future regressions with automated data quality checks
+- **Functions**:
+  - `validateATSWeeklyData()` - Checks for UNKNOWN venues, invalid CUSIPs, ticker fallbacks
+  - `validateETFHoldings()` - Checks for missing entities, stale holdings
+  - `validateCUSIPResolution()` - Checks for proper CUSIP format and resolution
+  - `validateIngestionWorkflow()` - Comprehensive validation combining all checks
+
+---
+
 ## Executive Summary
 
 The workflows completed successfully without throwing errors, but produced incorrect results due to:

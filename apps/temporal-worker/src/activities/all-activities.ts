@@ -11,6 +11,9 @@ export * from './compute.activities';
 // CUSIP resolution with self-healing fallback
 export * from './cusip-resolution.activities';
 
+// Data validation activities
+export * from './data-validation.activities';
+
 // SEC EDGAR filing activities
 export * from './edgar.activities';
 
