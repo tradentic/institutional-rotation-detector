@@ -1,5 +1,6 @@
 import { fetchTransport } from './transport/fetchTransport';
 import type {
+  AfterResponseContext,
   AgentContext,
   BaseHttpClientConfig,
   BeforeSendContext,
@@ -15,6 +16,7 @@ import type {
   HttpTransport,
   Logger,
   MetricsRequestInfo,
+  OnErrorContext,
   OperationDefaults,
   RateLimitFeedback,
   RateLimiterContext,
@@ -148,7 +150,7 @@ export class HttpClient {
           : undefined,
         afterResponse: config.afterResponse
           ? ({ request, response }: { request: HttpRequestOptions; response: Response }) =>
-              config.afterResponse?.(response, request)
+              config.afterResponse?.(request, response)
           : undefined,
       });
     }
@@ -263,16 +265,16 @@ export class HttpClient {
       client: this.clientName,
       operation: opts.operation,
       method: opts.method,
-      path: opts.path,
+      path: opts.path ?? null,
       requestId: opts.requestId ?? opts.correlation?.requestId ?? null,
     };
 
     const correlation = opts.correlation;
     if (correlation?.correlationId ?? opts.correlationId) {
-      attributes['correlation_id'] = correlation?.correlationId ?? opts.correlationId;
+      attributes['correlation_id'] = correlation?.correlationId ?? opts.correlationId ?? null;
     }
     if (correlation?.parentCorrelationId ?? opts.parentCorrelationId) {
-      attributes['parent_correlation_id'] = correlation?.parentCorrelationId ?? opts.parentCorrelationId;
+      attributes['parent_correlation_id'] = correlation?.parentCorrelationId ?? opts.parentCorrelationId ?? null;
     }
 
     const agentContext = opts.agentContext;
@@ -337,7 +339,7 @@ export class HttpClient {
             deadline,
             parseJson: executeOptions.parseJson,
             controller,
-            url: resolvedUrl,
+            url: resolvedUrl!,
           });
 
         const runner = this.config.policyWrapper
@@ -735,12 +737,12 @@ export class HttpClient {
 
   private normalizeCorrelation(opts: HttpRequestOptions) {
     const generated = this.generateRequestId();
-    const correlation = opts.correlation ?? {};
-    const requestId = opts.requestId ?? correlation.requestId ?? generated;
+    const correlation = opts.correlation;
+    const requestId = opts.requestId ?? correlation?.requestId ?? generated;
     return {
       requestId,
-      correlationId: opts.correlationId ?? correlation.correlationId,
-      parentCorrelationId: opts.parentCorrelationId ?? correlation.parentCorrelationId,
+      correlationId: opts.correlationId ?? correlation?.correlationId,
+      parentCorrelationId: opts.parentCorrelationId ?? correlation?.parentCorrelationId,
     };
   }
 
@@ -876,7 +878,7 @@ export class HttpClient {
       if (!interceptor.afterResponse) continue;
       const ctx = { request: opts, response: current, attempt };
       try {
-        const result = await interceptor.afterResponse(ctx as never);
+        const result = await (interceptor.afterResponse as (ctx: AfterResponseContext) => Promise<void | Response> | void | Response)(ctx);
         current = (ctx as { response: Response }).response;
         if (result instanceof Response) {
           current = result;
@@ -908,7 +910,7 @@ export class HttpClient {
       if (!interceptor.onError) continue;
       const ctx = { request: opts, error, attempt };
       try {
-        await interceptor.onError(ctx as never);
+        await (interceptor.onError as (ctx: OnErrorContext) => Promise<void> | void)(ctx);
       } catch (firstError) {
         try {
           await (interceptor.onError as (opts: HttpRequestOptions, err: unknown) => void)(opts, error);
@@ -1016,10 +1018,10 @@ export class HttpClient {
   ): ClassifiedError | undefined {
     const classifier = this.config.errorClassifier ?? this.defaultErrorClassifier;
     try {
-      if (response && typeof classifier.classifyResponse === 'function') {
+      if (response && 'classifyResponse' in classifier && typeof classifier.classifyResponse === 'function') {
         return classifier.classifyResponse(response, undefined, { request, response, error });
       }
-      if (typeof classifier.classifyNetworkError === 'function') {
+      if ('classifyNetworkError' in classifier && typeof classifier.classifyNetworkError === 'function') {
         return classifier.classifyNetworkError(error, { request, response, error });
       }
       if (typeof classifier.classify === 'function') {
@@ -1087,7 +1089,7 @@ export class HttpClient {
 
   private shouldRetry(error: unknown, classified: ClassifiedError | undefined, idempotent: boolean): boolean {
     if (classified) {
-      return classified.retryable;
+      return classified.retryable ?? false;
     }
     if (!idempotent) {
       return false;

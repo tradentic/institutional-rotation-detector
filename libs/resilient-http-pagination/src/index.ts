@@ -146,7 +146,7 @@ function applyRequestDefaults(
     correlation: next.correlation ?? base.correlation,
     agentContext: mergeAgentContext(base.agentContext, next.agentContext),
     headers: { ...(base.headers as Record<string, string> | undefined), ...(next.headers as Record<string, string> | undefined) },
-    query: { ...(base.query as Record<string, unknown> | undefined), ...(next.query as Record<string, unknown> | undefined) },
+    query: { ...base.query, ...next.query },
     extensions: { ...(base.extensions ?? {}), ...(next.extensions ?? {}) },
     resilience: { ...(base.resilience ?? {}), ...(next.resilience ?? {}) },
   };
@@ -170,7 +170,6 @@ function getOutcomeFromResponse(response: Response, startedAt: number): RequestO
     attempts: 1,
     startedAt,
     finishedAt,
-    durationMs: finishedAt - startedAt,
   };
 }
 
@@ -210,7 +209,7 @@ function buildAggregateOutcome(
 function applyOffsetLimitDefaults(request: HttpRequestOptions, strategy: PaginationStrategy): HttpRequestOptions {
   const maybeConfig = (strategy as any).__offsetConfig as OffsetLimitConfig | undefined;
   if (!maybeConfig) return request;
-  const query = { ...(request.query as Record<string, unknown> | undefined) };
+  const query = { ...request.query };
   query[maybeConfig.offsetParam ?? "offset"] = 0;
   query[maybeConfig.limitParam ?? "limit"] = maybeConfig.pageSize;
   return { ...request, query };
@@ -232,7 +231,7 @@ async function runPagination<TItem, TRaw>(
   let truncationReason: PaginationResult<TItem, TRaw>["truncationReason"];
 
   const ctx: PaginationObserverContext<TItem, TRaw> = {
-    clientName: options.initialRequest.clientName ?? client.getClientName?.() ?? "unknown",
+    clientName: options.initialRequest.operation ?? "unknown",
     operation: options.initialRequest.operation ?? "unknown",
     limits,
   };
@@ -385,7 +384,7 @@ export function createOffsetLimitStrategy(config: OffsetLimitConfig): Pagination
         return { hasNext: false };
       }
       const nextOffset = (pageIndex + 1) * config.pageSize;
-      const query = { ...(lastRequest.query as Record<string, unknown> | undefined) };
+      const query = { ...lastRequest.query };
       query[offsetParam] = nextOffset;
       query[limitParam] = config.pageSize;
       const nextRequest: HttpRequestOptions = {
@@ -407,7 +406,7 @@ export function createCursorStrategy(config: CursorConfig): PaginationStrategy {
       if (nextCursor == null) {
         return { hasNext: false };
       }
-      const query = { ...(lastRequest.query as Record<string, unknown> | undefined) };
+      const query = { ...lastRequest.query };
       query[config.cursorParam] = nextCursor;
       const nextRequest: HttpRequestOptions = { ...lastRequest, query };
       return { hasNext: true, nextRequest };
@@ -455,7 +454,6 @@ export async function paginateCursor<TItem = unknown, TRaw = any>(
 export async function paginateUntil<TItem = unknown, TRaw = any>(
   options: PaginateUntilOptions<TItem, TRaw>
 ): Promise<PaginationResult<TItem, TRaw>> {
-  const { result } = await runPagination({ ...options, stopWhen: options.stopWhen });
-  return result;
+  return await runPagination({ ...options, stopWhen: options.stopWhen });
 }
 

@@ -1,9 +1,12 @@
 import type {
+  AfterResponseContext,
   AgentContext,
+  BeforeSendContext,
   Extensions,
   HttpMethod,
   HttpRequestInterceptor,
   HttpRequestOptions,
+  OnErrorContext,
   RequestOutcome,
   ResilienceProfile,
 } from "@airnub/resilient-http-core";
@@ -332,7 +335,7 @@ function buildScope(
       : "background";
   const requestClass = (extensions["request.class"] as RequestClass | undefined) ?? baseClass;
   return {
-    clientName: request.clientName ?? "unknown",
+    clientName: request.operation ?? "unknown",
     operation: request.operation ?? "unknown",
     method: request.method,
     requestClass,
@@ -360,7 +363,7 @@ export function createPolicyInterceptor(options: PolicyInterceptorOptions): Http
   const starts = new WeakMap<HttpRequestOptions, number>();
 
   return {
-    beforeSend: async ({ request }) => {
+    beforeSend: async ({ request }: BeforeSendContext) => {
       const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
       const evaluation = await options.engine.evaluate({ scope, request });
       evaluations.set(request, evaluation);
@@ -376,7 +379,7 @@ export function createPolicyInterceptor(options: PolicyInterceptorOptions): Http
         await new Promise((resolve) => setTimeout(resolve, decision.delayBeforeSendMs));
       }
     },
-    afterResponse: async ({ request, response, attempt }) => {
+    afterResponse: async ({ request, response, attempt }: AfterResponseContext) => {
       const evaluation = evaluations.get(request);
       const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
       const startedAt = starts.get(request) ?? Date.now();
@@ -390,7 +393,7 @@ export function createPolicyInterceptor(options: PolicyInterceptorOptions): Http
       };
       await options.engine.onResult?.(scope, outcome, evaluation?.outcome);
     },
-    onError: async ({ request, error, attempt }) => {
+    onError: async ({ request, error, attempt }: OnErrorContext) => {
       const evaluation = evaluations.get(request);
       const scope = buildScope(request, options.classifyRequestClass ?? (() => options.defaultRequestClass as any));
       const startedAt = starts.get(request) ?? Date.now();

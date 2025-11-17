@@ -95,15 +95,14 @@ export class SecClient {
         baseUrl: config.baseUrl,
         cache: sharedSecCache,
         rateLimiter: new DistributedHttpRateLimiter(limiter),
-        resolveBaseUrl: (opts: HttpRequestOptions) => this.resolveBaseUrl(opts.path),
-        beforeRequest: (opts: HttpRequestOptions) => ({
-          ...opts,
-          headers: {
+        resolveBaseUrl: (opts: HttpRequestOptions) => opts.path ? this.resolveBaseUrl(opts.path) : undefined,
+        beforeRequest: (opts: HttpRequestOptions) => {
+          opts.headers = {
             ...opts.headers,
             'User-Agent': this.config.userAgent,
             'Accept-Encoding': 'gzip, deflate',
-          },
-        }),
+          };
+        },
       });
   }
 

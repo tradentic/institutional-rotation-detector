@@ -50,14 +50,13 @@ export class IexClient {
         clientName: 'iex',
         baseUrl: this.baseUrl,
         maxRetries: this.maxRetries,
-        beforeRequest: (opts: HttpRequestOptions) => ({
-          ...opts,
-          headers: {
+        beforeRequest: (opts: HttpRequestOptions) => {
+          opts.headers = {
             ...opts.headers,
             'User-Agent': this.userAgent,
             Accept: 'text/csv, application/octet-stream',
-          },
-        }),
+          };
+        },
         operationDefaults: {
           'hist.downloadDaily': {
             timeoutMs: this.histDownloadTimeoutMs,
