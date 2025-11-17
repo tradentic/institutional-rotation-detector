@@ -317,7 +317,8 @@ export function createOpenAIHttpClient(config: OpenAIHttpClientConfig): OpenAIHt
                     yield { type: "text-delta", textDelta };
                   }
                   if (parsed?.type?.includes?.("tool_call")) {
-                    const toolCall = mapToolCalls([parsed.tool_call ?? parsed]).at(0);
+                    const toolCallData = parsed.tool_call ?? parsed;
+                    const toolCall = toolCallData ? mapToolCalls([toolCallData])?.at(0) : undefined;
                     if (toolCall) {
                       yield { type: "tool-call", toolCall };
                     }
@@ -661,6 +662,9 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
 
     const openaiStream = await this.client.responses.createStream(request, options);
 
+    // Capture `this` reference for use inside generator
+    const self = this;
+
     // Transform OpenAI stream events to ProviderStream events
     const providerStream: ProviderStream = {
       async *[Symbol.asyncIterator]() {
@@ -681,7 +685,7 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
           } else if (event.type === 'done') {
             // Update conversation state
             if (conversationId) {
-              this.setConversationState(conversationId, {
+              self.setConversationState(conversationId, {
                 lastResponseId: event.result.id,
                 metadata: { model: event.result.model },
               });
@@ -692,7 +696,7 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
 
         const finalResult = await openaiStream.final;
         if (conversationId) {
-          this.setConversationState(conversationId, {
+          self.setConversationState(conversationId, {
             lastResponseId: finalResult.id,
             metadata: { model: finalResult.model },
           });
@@ -701,7 +705,7 @@ export class OpenAIProviderAdapter implements ProviderAdapter {
       },
       final: openaiStream.final.then((result) => {
         if (conversationId) {
-          this.setConversationState(conversationId, {
+          self.setConversationState(conversationId, {
             lastResponseId: result.id,
             metadata: { model: result.model },
           });

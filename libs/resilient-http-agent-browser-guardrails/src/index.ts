@@ -1,5 +1,6 @@
 import type {
   AgentContext,
+  BeforeSendContext,
   Extensions,
   HttpHeaders,
   HttpMethod,
@@ -385,7 +386,7 @@ function getBodySizeBytes(request: HttpRequestOptions): number | undefined {
 
 export function createHttpGuardrailInterceptor(options: HttpGuardrailInterceptorOptions): HttpRequestInterceptor {
   return {
-    beforeSend: async ({ request }) => {
+    beforeSend: async ({ request }: BeforeSendContext) => {
       const resolvedUrl = resolveUrl(request);
       const scope: GuardrailScope = {
         kind: "http-request",
