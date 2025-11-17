@@ -2,14 +2,14 @@ import { createSupabaseClient } from '../lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSecClient } from '../lib/secClient';
 
-interface QAReportInput {
+export interface QAReportInput {
   ticker: string;
   from: string;
   to: string;
   minPct?: number;
 }
 
-interface QAReportOutput {
+export interface QAReportOutput {
   ticker: string;
   cik: string | null;
   dateRange: { from: string; to: string };

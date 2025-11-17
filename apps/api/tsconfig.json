@@ -4,22 +4,18 @@
     "module": "ESNext",
     "lib": ["ES2022", "DOM"],
     "moduleResolution": "node",
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "resolveJsonModule": true,
-    "baseUrl": ".",
-    "paths": {
-      "@airnub/resilient-http-core": ["../libs/resilient-http-core/src/index.ts"]
-    },
     "outDir": "./dist",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitReturns": true,
-    "forceConsistentCasingInFileNames": true
+    "noImplicitReturns": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
