@@ -412,6 +412,12 @@ export async function fetchATSWeekly(
       }> = [];
 
       for (const row of rows) {
+        // Debug: Log first row's fields
+        if (rows.indexOf(row) === 0) {
+          const fields = Array.from(row.keys());
+          console.log(`[fetchATSWeekly] DEBUG: First row fields: ${fields.join(', ')}`);
+        }
+
         const symbol = extractSymbol(row);
         if (!symbol || symbol.toUpperCase() !== ticker.toUpperCase()) continue;
 
@@ -419,7 +425,12 @@ export async function fetchATSWeekly(
         const shares = extractAtsShares(row);
         const trades = extractAtsTrades(row);
 
-        if (shares === null || !venue) continue;
+        console.log(`[fetchATSWeekly] DEBUG: Parsed row - symbol: ${symbol}, venue: ${venue}, shares: ${shares}, trades: ${trades}`);
+
+        if (shares === null || !venue) {
+          console.log(`[fetchATSWeekly] DEBUG: Skipping row - shares is null: ${shares === null}, venue is falsy: ${!venue}`);
+          continue;
+        }
 
         venueRecords.push({
           week_end: weekEnd,
