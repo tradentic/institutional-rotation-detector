@@ -209,8 +209,32 @@ async function resolveCusipFromSecApi(
       return null;
     }
 
-    // Get first result from array
-    const result = parsed[0];
+    // Find result with exact ticker match (case-insensitive)
+    // CRITICAL: Must use exact match to avoid returning wrong company
+    // (e.g., searching "BLK" must not return "BBLKF")
+    const result = parsed.find(r =>
+      r.ticker?.toUpperCase() === ticker.toUpperCase()
+    );
+
+    if (!result) {
+      console.log(
+        `[sec-api.io] No exact ticker match found for ${ticker} ` +
+        `(API returned ${parsed.length} result(s) but none matched exactly)`
+      );
+      return null;
+    }
+
+    // Validate CIK matches - REJECT if mismatch (not just warn)
+    if (cik && result.cik) {
+      const normalizedCik = cik.padStart(10, '0');
+      const parsedCik = result.cik.padStart(10, '0');
+      if (normalizedCik !== parsedCik) {
+        console.warn(
+          `[sec-api.io] CIK mismatch: expected ${normalizedCik}, got ${parsedCik} - REJECTING result`
+        );
+        return null;
+      }
+    }
 
     // Extract CUSIPs - can be in 'cusip' (space-separated) or 'cusips' (array)
     let cusips: string[] = [];
@@ -228,17 +252,6 @@ async function resolveCusipFromSecApi(
     if (validCusips.length === 0) {
       console.log(`[sec-api.io] No valid CUSIPs found for ${ticker}`);
       return null;
-    }
-
-    // Optionally validate CIK matches
-    if (cik && result.cik) {
-      const normalizedCik = cik.padStart(10, '0');
-      const parsedCik = result.cik.padStart(10, '0');
-      if (normalizedCik !== parsedCik) {
-        console.warn(
-          `[sec-api.io] CIK mismatch: expected ${normalizedCik}, got ${parsedCik}`
-        );
-      }
     }
 
     console.log(`[sec-api.io] ✓ Resolved ${ticker} → CUSIP: ${validCusips.join(', ')}`);
