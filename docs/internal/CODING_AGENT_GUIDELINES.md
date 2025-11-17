@@ -1216,3 +1216,451 @@ For more details, consult:
 4. **Reasoning Effort** tuning → Quality vs speed
 
 Following these guidelines ensures maximum performance and cost-effectiveness.
+
+---
+
+## 🔥 CRITICAL: Meaningful Workflow Results for Temporal UI Debugging
+
+**The fourth most important concept:** ALL Temporal workflows MUST return structured, meaningful results using the `WorkflowExecutionSummary` pattern.
+
+### Why This Matters
+
+**Problem:** Workflows that return simple values or `void` make debugging impossible in the Temporal UI. When something goes wrong, you have no visibility into what happened, what was processed, or where it failed.
+
+**Solution:** Every workflow returns a comprehensive result object with status, metrics, timing, warnings, and errors.
+
+### The Golden Pattern
+
+**Use the `WorkflowExecutionSummary` interface** (defined in `apps/temporal-worker/src/workflows/types.ts`):
+
+```typescript
+interface WorkflowExecutionSummary {
+  status: 'success' | 'partial_success' | 'failed';
+  message: string;
+  metrics: {
+    processed: number;
+    succeeded: number;
+    failed: number;
+    skipped: number;
+  };
+  timing?: {
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+  };
+  entity: {
+    ticker?: string;
+    cik?: string;
+    cusips?: string[];
+  };
+  dateRange?: { start: string; end: string; };
+  warnings?: string[];
+  errors?: string[];
+  links?: {
+    rotationEvents?: string[];
+    filings?: string[];
+    queries?: string[];
+  };
+}
+```
+
+### Required Fields
+
+**EVERY workflow result MUST include:**
+
+1. ✅ **status** - 'success', 'partial_success', or 'failed'
+2. ✅ **message** - Human-readable summary (1-2 sentences)
+3. ✅ **metrics** - Counts of processed/succeeded/failed/skipped items
+4. ✅ **timing** - startedAt, completedAt, durationMs
+5. ✅ **entity** - ticker, cik, or other identifiers
+6. ✅ **warnings** - Array of non-fatal issues encountered
+7. ✅ **errors** - Array of error messages (for partial failures)
+
+### Standard Implementation Pattern
+
+**✅ CORRECT - Comprehensive workflow result:**
+
+```typescript
+export async function myWorkflow(input: MyInput): Promise<MyResult> {
+  const startTime = Date.now();
+  const startedAt = new Date().toISOString();
+
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  let succeeded = 0;
+  let failed = 0;
+
+  try {
+    // Set search attributes for queryability
+    await upsertWorkflowSearchAttributes({
+      ticker: input.ticker,
+      cik: input.cik,
+      runKind: input.runKind,
+    });
+
+    // Do work...
+    const result = await activities.doSomething(input);
+
+    if (result.warnings) {
+      warnings.push(...result.warnings);
+    }
+
+    succeeded = result.itemsProcessed;
+
+    // Check for issues
+    if (result.missingData) {
+      warnings.push(`Missing data: ${result.missingData}`);
+    }
+
+    // Return comprehensive result
+    return {
+      status: warnings.length > 0 ? 'partial_success' : 'success',
+      message: `Successfully processed ${succeeded} items for ${input.ticker}`,
+      metrics: {
+        processed: succeeded + failed,
+        succeeded,
+        failed,
+        skipped: 0,
+      },
+      timing: {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+      },
+      entity: {
+        ticker: input.ticker,
+        cik: input.cik,
+      },
+      warnings: warnings.length > 0 ? warnings : undefined,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  } catch (error) {
+    // Even failures should return structured results
+    return {
+      status: 'failed',
+      message: `Failed to process ${input.ticker}: ${error.message}`,
+      metrics: {
+        processed: succeeded + failed,
+        succeeded,
+        failed: failed + 1,
+        skipped: 0,
+      },
+      timing: {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+      },
+      entity: {
+        ticker: input.ticker,
+        cik: input.cik,
+      },
+      warnings,
+      errors: [...errors, error.message],
+    };
+  }
+}
+```
+
+**❌ WRONG - No meaningful result:**
+
+```typescript
+export async function myWorkflow(input: MyInput): Promise<void> {
+  // Does work but returns nothing
+  await activities.doSomething(input);
+  // ❌ Temporal UI shows: undefined
+  // ❌ No way to know what happened
+  // ❌ No visibility into warnings or partial failures
+}
+```
+
+**❌ WRONG - Simple value return:**
+
+```typescript
+export async function myWorkflow(input: MyInput): Promise<number> {
+  const count = await activities.doSomething(input);
+  return count;
+  // ❌ Temporal UI shows: 42
+  // ❌ What does 42 mean? Items processed? Errors? Success or partial?
+  // ❌ No timing, no warnings, no debugging info
+}
+```
+
+### Real-World Examples from This Codebase
+
+**Example 1: `rotationDetectWorkflow` (apps/temporal-worker/src/workflows/rotationDetect.workflow.ts)**
+
+```typescript
+export async function rotationDetectWorkflow(input: RotationDetectInput): Promise<RotationDetectResult> {
+  const startTime = Date.now();
+  const startedAt = new Date().toISOString();
+
+  await upsertWorkflowSearchAttributes({
+    ticker: input.ticker,
+    cik: input.cik,
+    runKind: input.runKind,
+    windowKey: input.quarter,
+  });
+
+  const anchors = await activities.detectDumpEvents(input.cik, bounds);
+  const uptake = await activities.uptakeFromFilings(input.cik, bounds);
+  // ... more activities
+
+  return {
+    status: anchors.length > 0 ? 'success' : 'partial_success',
+    message: `Detected ${anchors.length} rotation events for ${input.ticker} in ${input.quarter}`,
+    metrics: {
+      processed: 1,
+      succeeded: anchors.length,
+      failed: 0,
+      skipped: 0,
+    },
+    timing: {
+      startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+    },
+    entity: {
+      ticker: input.ticker,
+      cik: input.cik,
+    },
+    quarter: input.quarter,
+    rotationEvents: {
+      dumpEventsDetected: anchors.length,
+      highConfidenceCount: anchors.filter(a => a.rScore > 5).length,
+      clusterIds: anchors.map(a => a.clusterId),
+    },
+    signals: { uptake, uhf, options, shortRelief },
+  };
+}
+```
+
+**Why this is excellent:**
+- ✅ Clear status (success/partial_success/failed)
+- ✅ Descriptive message visible in UI
+- ✅ Detailed metrics (dump events, high confidence count)
+- ✅ Timing information for performance analysis
+- ✅ Entity identification for searching
+- ✅ Workflow-specific data (signals computed)
+
+**Example 2: `ingestQuarterWorkflow` (apps/temporal-worker/src/workflows/ingestQuarter.workflow.ts)**
+
+```typescript
+export async function ingestQuarterWorkflow(input: IngestQuarterInput): Promise<IngestQuarterResult> {
+  const startTime = Date.now();
+  const warnings: string[] = [];
+
+  const activityCounts = {};
+
+  try {
+    const filings = await activities.fetchFilings(input.cik, bounds);
+    activityCounts.filingsFetched = filings.length;
+
+    const positions13f = await activities.parse13FInfoTables(filings13F);
+    activityCounts.positions13f = positions13f;
+
+    // ... more activities
+
+    if (activityCounts.atsWeekly === 0) {
+      warnings.push('No ATS weekly data found - venue analysis unavailable');
+    }
+
+    return {
+      status: 'success',
+      message: `Successfully ingested ${input.quarter} for ${input.ticker}`,
+      metrics: {
+        processed: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+      },
+      timing: {
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+      },
+      entity: {
+        ticker: input.ticker,
+        cik: input.cik,
+      },
+      quarter: input.quarter,
+      activities: activityCounts,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
+  } catch (error) {
+    return {
+      status: 'failed',
+      message: `Failed to ingest ${input.quarter}: ${error.message}`,
+      // ... rest of error result
+    };
+  }
+}
+```
+
+**Why this is excellent:**
+- ✅ Activity-level breakdown (filings fetched, positions parsed)
+- ✅ Warnings for missing data (non-fatal)
+- ✅ Try/catch returns structured result even on failure
+- ✅ Clear messaging for debugging
+
+### Debugging in Temporal UI
+
+With proper workflow results, the Temporal UI shows:
+
+**Successful execution:**
+```
+Status: ✓ Completed
+Result:
+{
+  "status": "success",
+  "message": "Detected 3 rotation events for AAPL in 2024Q1",
+  "metrics": { "processed": 1, "succeeded": 3, "failed": 0, "skipped": 0 },
+  "timing": { "startedAt": "2024-03-15T10:00:00Z", "completedAt": "2024-03-15T10:05:23Z", "durationMs": 323000 },
+  "entity": { "ticker": "AAPL", "cik": "0000320193" }
+}
+```
+
+**Partial success:**
+```
+Status: ✓ Completed
+Result:
+{
+  "status": "partial_success",
+  "message": "Ingested 2024Q1 for AAPL with warnings",
+  "warnings": [
+    "No ATS weekly data found - venue analysis unavailable",
+    "CUSIP fallback used for ticker AAPL - manual fix required"
+  ],
+  "metrics": { "processed": 1, "succeeded": 1, "failed": 0, "skipped": 0 }
+}
+```
+
+**Without proper results:**
+```
+Status: ✓ Completed
+Result: undefined
+❌ No information! What happened? Did it work?
+```
+
+### Benefits of This Pattern
+
+1. **Instant Visibility** - See status at a glance in Temporal UI
+2. **Easy Debugging** - Warnings and errors are immediately visible
+3. **Performance Tracking** - Timing data for optimization
+4. **Queryability** - Search attributes + structured results
+5. **Audit Trail** - Complete record of what was processed
+6. **Partial Success Handling** - Differentiate between total failure and partial issues
+7. **Reproducibility** - All inputs and results logged
+
+### Workflow Result Checklist
+
+When creating or modifying a workflow:
+
+- [ ] Returns a type extending `WorkflowExecutionSummary` (or specialized interface)
+- [ ] Includes all required fields (status, message, metrics, timing, entity)
+- [ ] Sets search attributes via `upsertWorkflowSearchAttributes`
+- [ ] Tracks start time and calculates duration
+- [ ] Collects warnings array for non-fatal issues
+- [ ] Collects errors array for failures
+- [ ] Returns structured result even on exceptions (try/catch)
+- [ ] Uses clear, descriptive messages (not vague like "Done" or "OK")
+- [ ] Includes workflow-specific metrics (dump events, filings parsed, etc.)
+- [ ] Status reflects reality: 'success' only if no warnings, 'partial_success' if warnings, 'failed' if exception
+
+### Common Anti-Patterns to Avoid
+
+**❌ NEVER return void:**
+```typescript
+// ❌ BAD: Zero visibility
+async function myWorkflow(): Promise<void> { ... }
+```
+
+**❌ NEVER return just boolean:**
+```typescript
+// ❌ BAD: No context
+async function myWorkflow(): Promise<boolean> { ... }
+```
+
+**❌ NEVER return just a number:**
+```typescript
+// ❌ BAD: Ambiguous
+async function myWorkflow(): Promise<number> { ... }
+```
+
+**❌ NEVER return generic objects without structure:**
+```typescript
+// ❌ BAD: No standard fields
+async function myWorkflow(): Promise<{ data: any }> { ... }
+```
+
+**❌ NEVER omit warnings:**
+```typescript
+// ❌ BAD: Silent partial failures
+return { status: 'success', message: 'Done' };
+// Missing warnings array - user doesn't know about CUSIP fallback!
+```
+
+**❌ NEVER throw without returning a result:**
+```typescript
+// ❌ BAD: Temporal shows exception but no structured failure result
+throw new Error('Something went wrong');
+// Should catch and return structured failure result
+```
+
+### Testing Workflow Results
+
+When testing workflows, verify the result structure:
+
+```typescript
+describe('myWorkflow', () => {
+  it('should return comprehensive result', async () => {
+    const result = await myWorkflow({ ticker: 'AAPL', cik: '0000320193' });
+
+    // Verify required fields
+    expect(result.status).toMatch(/^(success|partial_success|failed)$/);
+    expect(result.message).toBeTruthy();
+    expect(result.metrics).toHaveProperty('processed');
+    expect(result.metrics).toHaveProperty('succeeded');
+    expect(result.metrics).toHaveProperty('failed');
+    expect(result.metrics).toHaveProperty('skipped');
+    expect(result.timing).toHaveProperty('startedAt');
+    expect(result.timing).toHaveProperty('completedAt');
+    expect(result.timing).toHaveProperty('durationMs');
+    expect(result.entity).toHaveProperty('ticker');
+    expect(result.entity).toHaveProperty('cik');
+  });
+
+  it('should include warnings for partial success', async () => {
+    const result = await myWorkflow({ ticker: 'TEST' });
+
+    if (result.status === 'partial_success') {
+      expect(result.warnings).toBeDefined();
+      expect(result.warnings.length).toBeGreaterThan(0);
+    }
+  });
+});
+```
+
+### Summary
+
+**The Golden Rules for Workflow Results:**
+
+1. ✅ **ALWAYS** return `WorkflowExecutionSummary` or specialized extension
+2. ✅ **ALWAYS** include status, message, metrics, timing, entity
+3. ✅ **ALWAYS** collect warnings for non-fatal issues
+4. ✅ **ALWAYS** collect errors for failures
+5. ✅ **ALWAYS** return structured result even on exceptions
+6. ✅ **ALWAYS** set search attributes for queryability
+7. ❌ **NEVER** return void, boolean, or simple numbers
+8. ❌ **NEVER** omit warnings or errors
+9. ❌ **NEVER** use vague messages like "Done" or "OK"
+10. ❌ **NEVER** throw without catching and returning structured failure
+
+**This pattern is CRITICAL for production systems.** Without meaningful workflow results, debugging is nearly impossible, and users have no visibility into what happened during execution.
+
+**📚 Reference:**
+- Workflow result types: `apps/temporal-worker/src/workflows/types.ts`
+- Workflow patterns: `docs/architecture/WORKFLOWS.md`
+- Real examples: `apps/temporal-worker/src/workflows/*.workflow.ts`
+
+---
