@@ -360,13 +360,25 @@ export async function fetchATSWeekly(
 
     if (!identifier || !identifiers.has(identifier)) continue;
 
-    const weekEndValue = row.get('weekenddate') ||
-                        row.get('weekending') ||
-                        row.get('weekof') ||
-                        row.get('week_end');
-    const weekEnd = weekEndValue instanceof Date
-      ? weekEndValue.toISOString().slice(0, 10)
-      : String(weekEndValue);
+    // FINRA API returns weekStartDate (Monday), we need to convert to week end (Sunday)
+    const weekStartValue = row.get('weekstartdate') ||
+                          row.get('summarystartdate') ||
+                          row.get('week_start');
+
+    if (!weekStartValue) {
+      console.warn(`[fetchATSWeekly] Missing week start date for identifier ${identifier}, skipping`);
+      continue;
+    }
+
+    const weekStart = weekStartValue instanceof Date
+      ? weekStartValue.toISOString().slice(0, 10)
+      : String(weekStartValue);
+
+    // Convert week start (Monday) to week end (Sunday) by adding 6 days
+    const weekStartDate = new Date(weekStart + 'T00:00:00Z');
+    const weekEndDate = new Date(weekStartDate);
+    weekEndDate.setUTCDate(weekEndDate.getUTCDate() + 6);
+    const weekEnd = weekEndDate.toISOString().slice(0, 10);
 
     const shares = extractAtsShares(row);
     if (shares === null) {
