@@ -431,15 +431,22 @@ export async function fetchATSWeekly(
 
         console.log(`[fetchATSWeekly] DEBUG: Parsed row - symbol: ${symbol}, venue: ${venue}, shares: ${shares}, trades: ${trades}`);
 
-        if (shares === null || !venue) {
-          console.log(`[fetchATSWeekly] DEBUG: Skipping row - shares is null: ${shares === null}, venue is falsy: ${!venue}`);
+        if (shares === null) {
+          console.log(`[fetchATSWeekly] DEBUG: Skipping row - shares is null`);
           continue;
+        }
+
+        // If venue is missing, use 'ATS_AGGREGATE' placeholder for symbol-level aggregates
+        // This occurs when FINRA returns aggregated data without venue breakdown
+        const venueId = venue || 'ATS_AGGREGATE';
+        if (!venue) {
+          console.log(`[fetchATSWeekly] DEBUG: No venue found, using placeholder 'ATS_AGGREGATE' for aggregated data`);
         }
 
         venueRecords.push({
           week_end: weekEnd,
           cusip: primaryCusip, // ✓ Use actual CUSIP, not ticker
-          venue,
+          venue: venueId,
           shares: Math.round(shares),
           trades: trades !== null ? Math.round(trades) : null,
         });
