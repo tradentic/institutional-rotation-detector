@@ -1,4 +1,4 @@
-# Coding Agent Prompt — Upgrade Resilient HTTP Ecosystem to v0.8 (Full Spec)
+# Coding Agent Prompt — Upgrade Resilient HTTP Ecosystem to v0.8 (Full Evolution Spec)
 
 ## 0. Role & Mindset
 
@@ -6,16 +6,21 @@ You are a **senior TypeScript library engineer** and **spec-driven coding agent*
 
 Your job is to:
 
-1. **Ingest and strictly follow** the v0.8 full spec document:
-   - `docs/specs/resilient_http_core_spec_v_0_8.md`
+1. **Ingest and strictly follow** the v0.8 full evolution spec document:
+   - `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`
 2. **Systematically upgrade** the existing `resilient-http-*` implementation in
    this repo from v0.7 to v0.8.
-3. Produce clean, well-typed, well-tested code that matches the v0.8 full spec
-   (including testing utilities and the opinionated agent runtime), removing all
-   legacy/compatibility layers.
+3. Produce clean, well-typed, well-tested code that matches the v0.8 full
+   evolution spec (including testing utilities and the opinionated agent
+   runtime), removing all legacy/compatibility layers.
 
-You must treat the v0.8 full spec as the **single source of truth**. If existing
-code conflicts with the spec, the spec wins.
+You must treat the v0.8 full evolution spec as the **single source of truth**.
+If existing code conflicts with the spec, the spec wins.
+
+> **Important:** The v0.8 spec is an **evolution of v0.7**, not a greenfield
+> rewrite. Reuse the existing `HttpClient` execution pipeline (retry loop,
+> resilience, metrics) and follow the spec's **Migration from v0.7 → v0.8**
+> appendix to adapt types and APIs.
 
 ---
 
@@ -37,7 +42,7 @@ names may differ; map them by intent):
   - `@airnub/agent-conversation-core`
   - `@airnub/http-llm-openai`
   - `@airnub/agent-browser-guardrails`
-- New packages from the v0.8 full spec:
+- New packages from the v0.8 full evolution spec:
   - `@airnub/resilient-http-testing`
   - `@airnub/agent-runtime`
 
@@ -60,7 +65,7 @@ When names differ, use a combination of package.json names and existing exports
 
 ## 2. High-Level Objectives
 
-1. **Align all APIs** with the full v0.8 spec:
+1. **Align all APIs** with the v0.8 full evolution spec:
    - Core: `HttpClient`, `HttpClientConfig`, `HttpRequestOptions`,
      `ResilienceProfile`, `BudgetHints`, `ErrorCategory`, `ErrorClassifier`,
      `HttpError`, interceptors, caching, metrics, tracing.
@@ -69,7 +74,7 @@ When names differ, use a combination of package.json names and existing exports
    - New packages: testing helpers, opinionated agent runtime.
 2. **Remove all legacy/deprecated code paths** from pre-0.7 specs:
    - Legacy hooks (`beforeRequest`/`afterResponse`), `policyWrapper`, core-level
-     pagination hints, etc.
+     pagination hints (`path`/`pageSize`/`pageOffset`), `RequestBudget`, etc.
 3. **Implement standard interceptors** from the spec:
    - Auth, JSON body serialization, idempotency.
 4. **Implement testing utilities** (`resilient-http-testing`) and
@@ -82,31 +87,39 @@ When names differ, use a combination of package.json names and existing exports
 ## 3. Operating Principles
 
 1. **Spec as source of truth**
-   - Align types, behaviour, and naming with `resilient_http_core_spec_v_0_8.md`.
+   - Align types, behaviour, and naming with
+     `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`.
    - Only introduce deviations when absolutely necessary, and document them
      with comments explaining why.
 
-2. **No backwards compatibility**
-   - Remove all deprecated/legacy surfaces from pre-0.7.
-   - Do not re-introduce compatibility shims or alias types.
+2. **Evolution, not a rewrite**
+   - Reuse the existing v0.7-style `HttpClient` execution model (retry loop,
+     resilience handling, metrics/tracing) wherever possible.
+   - Follow the spec's "Migration from v0.7 → v0.8" appendix for the core
+     changes: introduce `HttpResponse<T>`, swap `RequestBudget` → `BudgetHints`,
+     remove legacy URL fields & hooks, update `ErrorClassifier`, etc.
 
-3. **Minimal but clear public surface**
+3. **No backwards compatibility shims**
+   - Remove all deprecated/legacy surfaces from pre-0.7.
+   - Do not re-introduce compatibility layers or alias types.
+
+4. **Minimal but clear public surface**
    - Only expose what the spec declares as public.
    - Keep helpers that are purely internal as non-exported.
 
-4. **Small, coherent changes**
+5. **Small, coherent changes**
    - Group edits by package and concern.
    - Ensure the repo builds/tests successfully after each major refactor.
 
-5. **Testing & determinism**
+6. **Testing & determinism**
    - Use `@airnub/resilient-http-testing` helpers to keep tests deterministic.
    - Avoid flaky timing-dependent tests.
 
 ---
 
-## 4. Phase 1 — Load & Internalise the v0.8 Full Spec
+## 4. Phase 1 — Load & Internalise the v0.8 Full Evolution Spec
 
-1. Open `docs/specs/resilient_http_core_spec_v_0_8.md`.
+1. Open `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`.
 2. Carefully read and internalise:
    - Core HTTP API & types.
    - Resilience + error classification model.
@@ -119,6 +132,8 @@ When names differ, use a combination of package.json names and existing exports
    - Browser guardrails (including default engine factory).
    - Testing helpers (record/replay, test client).
    - Agent-runtime factory and wiring.
+   - **Migration from v0.7 → v0.8** appendix (important for how to refactor
+     `HttpClient` without rewriting it).
 3. Build a brief internal checklist of required types/exports per package.
 
 You will keep cross-checking this spec every time you touch the code.
@@ -134,7 +149,7 @@ For each package, create an internal TODO list of **gaps and mismatches**.
 1. Find the core implementation (e.g. `libs/resilient-http-core/src/**`).
 2. Compare current types and exports to the spec:
    - `HttpClient`, `HttpClientConfig`, `HttpRequestOptions`.
-   - `ResilienceProfile`, `BudgetHints` (or equivalent).
+   - `ResilienceProfile`, `BudgetHints` (or equivalent old budget type).
    - `ErrorCategory`, `ClassifiedError`, `FallbackHint`, `ErrorClassifier`.
    - `HttpError`, `TimeoutError`, `RequestOutcome`, `RateLimitFeedback`.
    - Interceptor interfaces, `HttpCache`, `MetricsSink`, `TracingAdapter`.
@@ -147,7 +162,8 @@ For each package, create an internal TODO list of **gaps and mismatches**.
    - `policyWrapper`.
    - Legacy hooks (`beforeRequest`, `afterResponse`) that are not the standard
      interceptor interfaces.
-   - Core-level pagination hints or flags.
+   - Core-level pagination hints or flags (`path`, `pageSize`, `pageOffset`).
+   - Legacy `RequestBudget` type.
 
 ### 5.2 Policies (`@airnub/resilient-http-policies`)
 
@@ -164,8 +180,8 @@ For each package, create an internal TODO list of **gaps and mismatches**.
 1. Inspect pagination helpers.
 2. Compare with v0.8 types and functions:
    - `paginate`, `paginateStream`.
-   - `PaginationResult`, `Page`.
-   - offset/limit and cursor strategies.
+   - `PaginationResult`, `Page`, `PaginationLimits`.
+   - Offset/limit and cursor strategies.
 3. Confirm there is **no** dependency on any legacy core pagination hints.
 
 ### 5.4 Conversation Core (`@airnub/agent-conversation-core`)
@@ -206,7 +222,7 @@ Produce a per-package TODO list before making structural changes.
 
 ---
 
-## 6. Phase 3 — Core v0.8 Alignment
+## 6. Phase 3 — Core v0.8 Alignment (Refactor, Don't Rewrite)
 
 ### 6.1 Types & Surfaces
 
@@ -219,12 +235,16 @@ Produce a per-package TODO list before making structural changes.
    - `HttpResponse<T>`, `RequestOutcome`, `RateLimitFeedback`.
    - Interceptor interfaces.
    - `HttpCache`, `HttpCacheEntry`, `MetricsSink`, `TracingAdapter`.
-2. Remove any types or fields not defined in the v0.8 full spec.
+2. Remove any types or fields not defined in the v0.8 full evolution spec.
 
 ### 6.2 HttpClient Implementation
 
-Refactor `HttpClient` methods to match spec semantics:
+Refactor the existing v0.7-style `HttpClient` implementation to match v0.8
+semantics without changing the core execution algorithm:
 
+- Keep the existing retry loop and overall structure.
+- Introduce `HttpResponse<T>` and build it at the end of the logical request
+  using the already-computed status, headers, body, and metrics.
 - Validate `url` XOR `urlParts`.
 - Resolve `UrlParts` into a full URL (respecting `baseUrl`).
 - Merge default and per-request headers and extensions.
@@ -406,8 +426,8 @@ Update/add tests for:
 1. Run TypeScript build with `strict: true` across all affected packages.
 2. Run the full test suite and ensure all tests pass.
 3. Update or add:
-   - `docs/specs/resilient_http_core_spec_v_0_8.md` if needed (ensuring
-     code matches spec, not vice versa).
+   - `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md` if needed
+     (ensuring code matches spec, not vice versa).
    - A short `docs/CHANGELOG_resilient_http_v0_8.md` summarising API changes
      from v0.7 → v0.8.
 4. Optionally add a `docs/AGENT_RUNTIME_quickstart.md` showing how to use
@@ -420,12 +440,13 @@ Update/add tests for:
 Your work as this coding agent should result in:
 
 1. **Updated code** in all relevant packages, fully aligned with
-   `resilient_http_core_spec_v_0_8.md`.
+   `resilient_http_core_spec_v_0_8_full_evolution.md`.
 2. **New or updated tests** that satisfy the v0.8 Implementation Checklist.
 3. **New testing and runtime packages** (`resilient-http-testing`,
    `agent-runtime`) implemented per the spec.
 4. **No legacy v0.7 or earlier code paths** remaining.
 
-Always cross-check changes against the v0.8 full spec and favour the
-simpler/cleaner design when in doubt.
+Always cross-check changes against the v0.8 full evolution spec and favour the
+simpler/cleaner design when in doubt, reusing the existing v0.7 HttpClient
+pipeline rather than rewriting it from scratch.
 
