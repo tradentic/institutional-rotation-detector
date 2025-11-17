@@ -1,1418 +1,1005 @@
+// ============================================================================
+// HttpClient – Resilient HTTP v0.8.0
+// ============================================================================
+
 import { fetchTransport } from './transport/fetchTransport';
 import type {
-  AfterResponseContext,
-  AgentContext,
-  BaseHttpClientConfig,
   BeforeSendContext,
+  AfterResponseContext,
+  OnErrorContext,
   ClassifiedError,
-  CorrelationInfo,
   ErrorCategory,
   ErrorClassifier,
-  Extensions,
+  ErrorClassifierContext,
   FallbackHint,
+  HttpClientConfig,
   HttpHeaders,
+  HttpMethod,
   HttpRequestInterceptor,
   HttpRequestOptions,
+  HttpResponse,
   HttpTransport,
-  Logger,
   MetricsRequestInfo,
-  OnErrorContext,
-  OperationDefaults,
+  QueryParams,
   RateLimitFeedback,
-  RateLimiterContext,
+  RawHttpResponse,
   RequestOutcome,
-  ResponseClassification,
   ResilienceProfile,
+  TracingSpan,
+  TransportRequest,
+  UrlParts,
 } from './types';
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_RETRIES = 3;
-const MAX_RETRY_DELAY_MS = 60_000;
-const BASE_BACKOFF_MS = 250;
-const RETRYABLE_ERROR_CATEGORIES = new Set<ErrorCategory>([
+// ============================================================================
+// Constants
+// ============================================================================
+
+const DEFAULT_MAX_ATTEMPTS = 3;
+const DEFAULT_OVERALL_TIMEOUT_MS = 30_000;
+const DEFAULT_BASE_BACKOFF_MS = 200;
+const DEFAULT_MAX_BACKOFF_MS = 2_000;
+const DEFAULT_JITTER_FACTOR = 0.2;
+const DEFAULT_MAX_SUGGESTED_RETRY_DELAY_MS = 60_000;
+
+const RETRYABLE_CATEGORIES: Set<ErrorCategory> = new Set([
   'rate_limit',
-  'server',
+  'transient',
   'network',
   'timeout',
-  'transient',
 ]);
 
-const statusToCategory = (status: number): ErrorCategory => {
-  if (status === 401 || status === 403) return 'auth';
-  if (status === 404) return 'not_found';
-  if (status === 400 || status === 422) return 'validation';
-  if (status === 402) return 'quota';
-  if (status === 429) return 'rate_limit';
-  if (status === 408) return 'timeout';
-  if (status >= 500) return 'transient';
-  if (status === 0) return 'network';
-  return 'unknown';
-};
-
-const parseRetryAfter = (value?: string | null): number | undefined => {
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (!Number.isNaN(seconds)) {
-    return seconds * 1000;
-  }
-  const date = Date.parse(value);
-  if (!Number.isNaN(date)) {
-    const diff = date - Date.now();
-    return diff > 0 ? diff : undefined;
-  }
-  return undefined;
-};
+// ============================================================================
+// Default Error Classifier
+// ============================================================================
 
 class DefaultErrorClassifier implements ErrorClassifier {
-  classifyNetworkError(error: unknown): ClassifiedError {
-    if (error instanceof TimeoutError) {
-      return { category: 'timeout', statusCode: 408, retryable: true, reason: 'timeout' };
+  classify(ctx: ErrorClassifierContext): ClassifiedError {
+    // If we have a response, classify based on status
+    if (ctx.response) {
+      return this.classifyResponse(ctx.response, ctx.request.method);
     }
 
-    if (error instanceof Error && error.name === 'AbortError') {
-      return { category: 'canceled', retryable: false, reason: 'aborted' };
+    // Otherwise, classify based on error
+    return this.classifyError(ctx.error);
+  }
+
+  private classifyResponse(response: RawHttpResponse, method: HttpMethod): ClassifiedError {
+    const status = response.status;
+    const retryAfterMs = this.parseRetryAfter(response.headers['retry-after']);
+
+    if (status === 401 || status === 403) {
+      return { category: 'auth', statusCode: status, reason: 'Authentication/authorization failure' };
     }
 
-    if (error instanceof HttpError) {
+    if (status === 404) {
+      return { category: 'validation', statusCode: status, reason: 'Not found' };
+    }
+
+    if (status === 400 || status === 422) {
+      return { category: 'validation', statusCode: status, reason: 'Invalid request' };
+    }
+
+    if (status === 402) {
+      return { category: 'quota', statusCode: status, reason: 'Payment required' };
+    }
+
+    if (status === 429) {
       return {
-        category: error.category,
-        statusCode: error.status,
-        retryable: RETRYABLE_ERROR_CATEGORIES.has(error.category),
-        suggestedBackoffMs: error.fallback?.retryAfterMs,
-        reason: 'http_error',
+        category: 'rate_limit',
+        statusCode: status,
+        reason: 'Rate limit exceeded',
+        fallback: { retryable: true, retryAfterMs },
       };
     }
 
-    return { category: 'transient', retryable: true, reason: 'network_error' };
+    if (status === 408) {
+      return {
+        category: 'timeout',
+        statusCode: status,
+        reason: 'Request timeout',
+        fallback: { retryable: true },
+      };
+    }
+
+    if (status >= 500 && status !== 501 && status !== 505) {
+      return {
+        category: 'transient',
+        statusCode: status,
+        reason: 'Server error',
+        fallback: { retryable: true, retryAfterMs },
+      };
+    }
+
+    return { category: 'unknown', statusCode: status, reason: 'Unknown error' };
   }
 
-  classifyResponse(response: Response, bodyText?: string): ClassifiedError {
-    const retryAfter = parseRetryAfter(response.headers.get('retry-after'));
-    const category = statusToCategory(response.status);
-    return {
-      category,
-      statusCode: response.status,
-      retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
-      suggestedBackoffMs: retryAfter,
-      reason: bodyText ? 'http_response_with_body' : 'http_response',
-    };
+  private classifyError(error: unknown): ClassifiedError {
+    if (!error) {
+      return { category: 'unknown', reason: 'Unknown error' };
+    }
+
+    // Check for abort/cancellation
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { category: 'canceled', reason: 'Request was aborted' };
+    }
+
+    // Check for timeout
+    if (error instanceof Error && error.message.toLowerCase().includes('timeout')) {
+      return { category: 'timeout', statusCode: 408, reason: 'Request timed out', fallback: { retryable: true } };
+    }
+
+    // Network errors are retryable
+    return { category: 'network', reason: 'Network error', fallback: { retryable: true } };
   }
 
-  classify(ctx: { request: HttpRequestOptions; response?: Response; error?: unknown }): ClassifiedError {
-    if (ctx.response) {
-      return this.classifyResponse(ctx.response);
-    }
-    return this.classifyNetworkError(ctx.error);
-  }
-}
-
-interface ExecuteOptions {
-  parseJson: boolean;
-  allowRetries: boolean;
-  maxAttemptsOverride?: number;
-}
-
-interface AttemptSuccess {
-  status: number;
-  response: Response;
-  url: string;
-  bodyText?: string;
-}
-
-type AttemptHttpRequestOptions = HttpRequestOptions & { headers: Record<string, string> };
-
-export class HttpClient {
-  private readonly baseUrl?: string;
-  private readonly clientName: string;
-  private readonly defaultTimeoutMs: number;
-  private readonly defaultMaxRetries: number;
-  private readonly transport: HttpTransport;
-  private readonly logger?: Logger;
-  private readonly interceptors: HttpRequestInterceptor[];
-  private readonly defaultErrorClassifier: ErrorClassifier = new DefaultErrorClassifier();
-
-  constructor(private readonly config: BaseHttpClientConfig) {
-    this.baseUrl = this.normalizeBaseUrl(config.baseUrl);
-    this.clientName = config.clientName;
-    this.defaultTimeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.defaultMaxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
-    this.transport = config.transport ?? fetchTransport;
-    this.logger = config.logger;
-    this.interceptors = this.buildInterceptors(config);
-  }
-
-  private buildInterceptors(config: BaseHttpClientConfig): HttpRequestInterceptor[] {
-    const interceptors = [...(config.interceptors ?? [])];
-    if (config.beforeRequest || config.afterResponse) {
-      interceptors.push({
-        beforeSend: config.beforeRequest
-          ? ({ request }: BeforeSendContext) => config.beforeRequest?.(request)
-          : undefined,
-        afterResponse: config.afterResponse
-          ? ({ request, response }: { request: HttpRequestOptions; response: Response }) =>
-              config.afterResponse?.(request, response)
-          : undefined,
-      });
-    }
-    return interceptors;
-  }
-
-  async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
-    const preparedOpts = this.prepareRequestOptions(opts);
-    const span = this.startSpan(preparedOpts);
-    const cache = this.config.cache;
-    const cacheKey = preparedOpts.cacheKey;
-    const cacheTtlMs = preparedOpts.cacheTtlMs ?? 0;
-
-    if (cache && cacheKey && cacheTtlMs > 0) {
-      try {
-        const cached = await cache.get<T>(cacheKey);
-        if (cached !== undefined) {
-          const now = Date.now();
-          await this.recordMetrics({
-            clientName: this.clientName,
-            operation: preparedOpts.operation,
-            method: preparedOpts.method,
-            url: this.safeBuildUrl(preparedOpts),
-            durationMs: 0,
-            status: 200,
-            cacheHit: true,
-            attempts: 0,
-            correlation: this.getCorrelationInfo(preparedOpts),
-            agentContext: preparedOpts.agentContext,
-            extensions: preparedOpts.extensions,
-          });
-          this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
-          span?.end();
-          return cached;
-        }
-      } catch (error) {
-        this.logger?.warn('http.cache.get.error', {
-          ...this.baseLogMeta(preparedOpts),
-          error: error instanceof Error ? error.message : error,
-        });
-      }
-    }
-
-    try {
-      const result = await this.executeWithRetries<T>(preparedOpts, {
-        parseJson: true,
-        allowRetries: this.getIdempotent(preparedOpts),
-      });
-
-      if (cache && cacheKey && cacheTtlMs > 0) {
-        Promise.resolve(cache.set(cacheKey, result, cacheTtlMs)).catch((error) =>
-          this.logger?.warn('http.cache.set.error', {
-            ...this.baseLogMeta(preparedOpts),
-            error: error instanceof Error ? error.message : error,
-          }),
-        );
-      }
-
-      span?.end();
-      return result;
-    } catch (error) {
-      span?.recordException?.(error);
-      span?.end();
-      throw error;
-    }
-  }
-
-  async requestRaw(opts: HttpRequestOptions): Promise<Response> {
-    const preparedOpts = this.prepareRequestOptions(opts);
-    const span = this.startSpan(preparedOpts);
-    try {
-      const response = await this.executeWithRetries<Response>(preparedOpts, {
-        parseJson: false,
-        allowRetries: this.getIdempotent(preparedOpts),
-      });
-      span?.end();
-      return response;
-    } catch (error) {
-      span?.recordException?.(error);
-      span?.end();
-      throw error;
-    }
-  }
-
-  /**
-   * Performs an HTTP request and resolves with the raw text body.
-   *
-   * This is a thin wrapper around {@link requestRaw}, so it inherits the same
-   * retry, tracing, metrics, classification, and hook behaviour. Use it when an
-   * endpoint returns plain text (CSV, NDJSON, etc.).
-   */
-  async requestText(opts: HttpRequestOptions): Promise<string> {
-    const response = await this.requestRaw(opts);
-    return response.text();
-  }
-
-  /**
-   * Performs an HTTP request and resolves with an ArrayBuffer of the response
-   * body.
-   *
-   * Like {@link requestText}, this method simply delegates to
-   * {@link requestRaw} to ensure all resilience features apply consistently
-   * before decoding the payload into binary form.
-   */
-  async requestArrayBuffer(opts: HttpRequestOptions): Promise<ArrayBuffer> {
-    const response = await this.requestRaw(opts);
-    return response.arrayBuffer();
-  }
-
-  private startSpan(opts: HttpRequestOptions) {
-    const attributes: Record<string, string | number | boolean | null> = {
-      client: this.clientName,
-      operation: opts.operation,
-      method: opts.method,
-      path: opts.path ?? null,
-      requestId: opts.requestId ?? opts.correlation?.requestId ?? null,
-    };
-
-    const correlation = opts.correlation;
-    if (correlation?.correlationId ?? opts.correlationId) {
-      attributes['correlation_id'] = correlation?.correlationId ?? opts.correlationId ?? null;
-    }
-    if (correlation?.parentCorrelationId ?? opts.parentCorrelationId) {
-      attributes['parent_correlation_id'] = correlation?.parentCorrelationId ?? opts.parentCorrelationId ?? null;
-    }
-
-    const agentContext = opts.agentContext;
-    if (agentContext?.agent) {
-      attributes['agent.name'] = agentContext.agent;
-    }
-    if (agentContext?.runId) {
-      attributes['agent.run_id'] = agentContext.runId;
-    }
-    if (agentContext?.labels) {
-      for (const [key, value] of Object.entries(agentContext.labels)) {
-        attributes[`agent.label.${key}`] = value;
-      }
-    }
-
-    return this.config.tracing?.startSpan(`${this.clientName}.${opts.operation}`, {
-      attributes,
-      agentContext,
-      extensions: opts.extensions,
-    });
-  }
-
-  private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<T> {
-    const startedAt = Date.now();
-    const resilience = opts.resilience ?? {};
-    const configuredAttempts =
-      executeOptions.maxAttemptsOverride ??
-      resilience.maxAttemptsOverride ??
-      resilience.maxAttempts ??
-      opts.budget?.maxAttempts ??
-      this.getMaxRetries(opts) + 1;
-    const allowRetries = executeOptions.allowRetries && (resilience.retryEnabled ?? true) && configuredAttempts > 1;
-    const maxAttempts = allowRetries ? Math.max(configuredAttempts, 1) : 1;
-    const rateLimitKey = `${this.clientName}:${opts.operation}`;
-    const deadline = this.computeDeadline(opts, startedAt);
-    let lastError: unknown;
-    let lastClassified: ClassifiedError | undefined;
-    let lastStatus: number | undefined;
-    let lastRateLimit: RateLimitFeedback | undefined;
-
-    let lastAttemptOpts: AttemptHttpRequestOptions | HttpRequestOptions = opts;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      let attemptOpts: AttemptHttpRequestOptions | HttpRequestOptions = opts;
-      let attemptContext: RateLimiterContext | undefined;
-      let resolvedUrl: string | undefined;
-      const attemptStart = Date.now();
-      try {
-        const controller = new AbortController();
-        attemptOpts = await this.prepareAttemptOptions(opts, controller.signal);
-        lastAttemptOpts = attemptOpts;
-        attemptContext = this.createRateLimiterContext(attemptOpts, attempt);
-        const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
-        this.logger?.debug('http.request.attempt', logMeta);
-
-        resolvedUrl = this.buildUrl(attemptOpts);
-
-        const executeAttempt = async () =>
-          this.runAttempt({
-            opts: attemptOpts as AttemptHttpRequestOptions,
-            attemptContext: attemptContext as RateLimiterContext,
-            rateLimitKey,
-            deadline,
-            parseJson: executeOptions.parseJson,
-            controller,
-            url: resolvedUrl!,
-          });
-
-        const runner = this.config.policyWrapper
-          ? () =>
-              this.config.policyWrapper!(executeAttempt, {
-                client: this.clientName,
-                operation: attemptOpts.operation,
-                requestId: attemptOpts.requestId,
-                correlationId: attemptOpts.correlationId,
-                parentCorrelationId: attemptOpts.parentCorrelationId,
-                agentContext: attemptOpts.agentContext,
-                extensions: attemptOpts.extensions,
-              })
-          : executeAttempt;
-
-        const attemptResult = await runner();
-        const durationMs = Date.now() - attemptStart;
-        await this.callOptionalHook('rateLimiter.onSuccess', () =>
-          this.config.rateLimiter?.onSuccess?.(rateLimitKey, attemptContext as RateLimiterContext),
-        );
-        await this.callOptionalHook('circuitBreaker.onSuccess', () =>
-          this.config.circuitBreaker?.onSuccess(rateLimitKey),
-        );
-
-        let response = attemptResult.response;
-        response = await this.applyAfterResponseInterceptors(attemptOpts, response, attempt);
-
-        lastRateLimit = this.extractRateLimit(response.headers) ?? lastRateLimit;
-        const finishedAt = Date.now();
-        const aggregateOutcome: RequestOutcome = {
-          ok: true,
-          status: attemptResult.status,
-          attempts: attempt,
-          startedAt,
-          finishedAt,
-          rateLimitFeedback: lastRateLimit,
-        };
-
-        const parsedValue = await this.resolveResponseValue<T>(
-          response,
-          executeOptions.parseJson,
-          attemptResult.bodyText,
-        );
-        await this.recordMetrics({
-          clientName: this.clientName,
-          operation: attemptOpts.operation,
-          method: attemptOpts.method,
-          url: attemptResult.url,
-          durationMs: finishedAt - startedAt,
-          status: attemptResult.status,
-          attempts: attempt,
-          rateLimitFeedback: lastRateLimit,
-          correlation: this.getCorrelationInfo(attemptOpts),
-          agentContext: attemptOpts.agentContext,
-          extensions: attemptOpts.extensions,
-          errorCategory: aggregateOutcome.errorCategory,
-        });
-        this.logger?.info('http.request.success', {
-          ...logMeta,
-          status: attemptResult.status,
-          durationMs,
-        });
-        return parsedValue;
-      } catch (error) {
-        lastError = error;
-        const durationMs = Date.now() - attemptStart;
-        const status = error instanceof HttpError ? error.status : error instanceof TimeoutError ? 408 : 0;
-        lastStatus = status;
-        const classifiedError = this.classifyError(
-          error,
-          attemptOpts,
-          error instanceof HttpError ? error.response : undefined,
-        );
-        lastClassified = classifiedError;
-        const category =
-          classifiedError?.category ??
-          (error instanceof HttpError ? error.category : error instanceof TimeoutError ? 'timeout' : 'network');
-        const rateLimit = this.extractRateLimit(error instanceof HttpError ? error.headers : undefined);
-        if (rateLimit) {
-          lastRateLimit = rateLimit;
-        }
-        if (attemptContext) {
-          await this.callOptionalHook('rateLimiter.onError', () =>
-            this.config.rateLimiter?.onError?.(rateLimitKey, error, attemptContext as RateLimiterContext),
-          );
-        }
-        await this.callOptionalHook('circuitBreaker.onFailure', () =>
-          this.config.circuitBreaker?.onFailure(rateLimitKey, error),
-        );
-        await this.runErrorInterceptors(attemptOpts, error, attempt);
-
-        const retryable =
-          allowRetries && attempt < maxAttempts && this.shouldRetry(error, classifiedError, this.getIdempotent(attemptOpts));
-        const logMeta = { ...this.baseLogMeta(attemptOpts), attempt, maxAttempts };
-        const failureMeta = {
-          ...logMeta,
-          status,
-          error: error instanceof Error ? error.message : error,
-          errorCategory: category,
-        };
-        if (retryable) {
-          this.logger?.warn('http.request.failed', failureMeta);
-        } else {
-          this.logger?.error('http.request.failed', failureMeta);
-        }
-
-        if (!retryable) {
-          const finishedAt = Date.now();
-          const aggregateOutcome: RequestOutcome = {
-            ok: false,
-            status,
-            errorCategory: category,
-            attempts: attempt,
-            startedAt,
-            finishedAt,
-            rateLimitFeedback: lastRateLimit,
-          };
-          await this.recordMetrics({
-            clientName: this.clientName,
-            operation: attemptOpts.operation ?? opts.operation,
-            method: attemptOpts.method,
-            url: resolvedUrl ?? this.safeBuildUrl(attemptOpts),
-            durationMs: finishedAt - startedAt,
-            status,
-            attempts: attempt,
-            errorCategory: category,
-            agentContext: attemptOpts.agentContext,
-            extensions: attemptOpts.extensions,
-            rateLimitFeedback: lastRateLimit,
-            correlation: this.getCorrelationInfo(attemptOpts),
-          });
-          throw error;
-        }
-
-        let delay = this.getRetryDelay(error, attempt, classifiedError, attemptOpts);
-        if (deadline !== undefined) {
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) {
-            throw new TimeoutError('Budget exceeded before retry');
-          }
-          delay = Math.min(delay, Math.max(0, remaining));
-        }
-        await this.sleep(delay);
-      }
-    }
-
-    const finishedAt = Date.now();
-    const status = lastStatus ?? 0;
-    const aggregateOutcome: RequestOutcome = {
-      ok: false,
-      status,
-      errorCategory: lastClassified?.category ?? (lastStatus === 408 ? 'timeout' : undefined),
-      attempts: maxAttempts,
-      startedAt,
-      finishedAt,
-      rateLimitFeedback: lastRateLimit,
-    };
-    const metricsOpts = lastAttemptOpts ?? opts;
-    const url = this.safeBuildUrl(metricsOpts);
-    await this.recordMetrics({
-      clientName: this.clientName,
-      operation: metricsOpts.operation ?? opts.operation,
-      method: metricsOpts.method,
-      url,
-      durationMs: finishedAt - startedAt,
-      status,
-      attempts: maxAttempts,
-      errorCategory: aggregateOutcome.errorCategory,
-      agentContext: metricsOpts.agentContext,
-      extensions: metricsOpts.extensions,
-      rateLimitFeedback: lastRateLimit,
-      correlation: this.getCorrelationInfo(metricsOpts),
-    });
-
-    if (lastStatus === 408 || (deadline !== undefined && Date.now() >= deadline)) {
-      throw new TimeoutError('Request timed out');
-    }
-
-    throw lastError ?? new Error('Request failed');
-  }
-
-  private async runAttempt(params: {
-    opts: AttemptHttpRequestOptions;
-    attemptContext: RateLimiterContext;
-    rateLimitKey: string;
-    deadline?: number;
-    parseJson: boolean;
-    controller: AbortController;
-    url: string;
-  }): Promise<AttemptSuccess> {
-    const { opts, attemptContext, rateLimitKey, deadline, parseJson, controller, url } = params;
-
-    await this.config.rateLimiter?.throttle(rateLimitKey, attemptContext);
-    await this.config.circuitBreaker?.beforeRequest(rateLimitKey);
-
-    const timeoutMs = this.computeAttemptTimeout(opts, deadline);
-    let didTimeout = false;
-    const timeoutHandle = setTimeout(() => {
-      didTimeout = true;
-      controller.abort();
-    }, timeoutMs);
-
-    const headers = opts.headers;
-    const init: RequestInit = {
-      method: opts.method,
-      headers,
-      signal: controller.signal,
-    };
-
-    if (opts.body !== undefined && opts.body !== null) {
-      init.body = this.serializeBody(opts.body, headers);
-    }
-
-    try {
-      const response = await this.transport(url, init);
-      const bodyText = parseJson ? await response.clone().text() : undefined;
-      const classification = await this.classifyResponse(response, bodyText);
-      const status = classification.overrideStatus ?? response.status;
-      const category = classification.category ?? this.mapStatusToCategory(status);
-      const fallback = this.mergeFallback(classification.fallback, response);
-      const treatAsError = classification.treatAsError ?? !response.ok;
-
-      if (treatAsError) {
-        const errorBody = parseJson ? this.parseBodyFromText(bodyText ?? '') : await this.tryReadText(response);
-        throw new HttpError(`HTTP ${status}`, {
-          status,
-          body: errorBody,
-          headers: response.headers,
-          category,
-          fallback,
-          response,
-          correlation: opts.correlation ?? {
-            requestId: opts.requestId!,
-            correlationId: opts.correlationId,
-            parentCorrelationId: opts.parentCorrelationId,
-          },
-          agentContext: opts.agentContext,
-          extensions: opts.extensions,
-        });
-      }
-
-      if (!parseJson) {
-      return { status, response, url };
-    }
-
-      return { status, response, bodyText, url };
-    } catch (error) {
-      if (didTimeout && !(error instanceof TimeoutError)) {
-        throw new TimeoutError(`Request timed out after ${timeoutMs}ms`);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeoutHandle);
-    }
-  }
-
-  private buildUrl(opts: HttpRequestOptions): string {
-    if (opts.url) {
-      const url = new URL(opts.url);
-      this.applyQueryParameters(url, opts);
-      return url.toString();
-    }
-
-    const urlParts = opts.urlParts;
-    if (urlParts?.path || urlParts?.baseUrl) {
-      const path = urlParts.path ?? '';
-      const base = this.normalizeBaseUrl(urlParts.baseUrl ?? this.resolveBaseUrlForRequest(opts));
-      let url: URL;
-
-      if (path && this.isAbsoluteUrl(path)) {
-        url = new URL(path);
-      } else {
-        if (!base) {
-          throw new Error('No baseUrl provided and request path is not an absolute URL');
-        }
-        const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-        const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
-        url = new URL(normalizedPath, normalizedBase);
-      }
-
-      this.applyQueryParameters(url, opts, urlParts.query);
-      return url.toString();
-    }
-
-    const path = opts.path ?? '';
-    const base = this.resolveBaseUrlForRequest(opts);
-    if (path && this.isAbsoluteUrl(path)) {
-      const url = new URL(path);
-      this.applyQueryParameters(url, opts);
-      return url.toString();
-    }
-
-    if (!base) {
-      throw new Error('No baseUrl provided and request path is not an absolute URL');
-    }
-    const normalizedBase = base.endsWith('/') ? base : `${base}/`;
-    const normalizedPath = path.startsWith('/') ? path.slice(1) : path;
-    const url = new URL(normalizedPath, normalizedBase);
-    this.applyQueryParameters(url, opts);
-    return url.toString();
-  }
-
-  private applyQueryParameters(url: URL, opts: HttpRequestOptions, fromUrlParts?: HttpRequestOptions['query']) {
-    const apply = (query?: HttpRequestOptions['query']) => {
-      if (!query) return;
-      for (const [key, value] of Object.entries(query)) {
-        if (value === undefined) continue;
-        if (Array.isArray(value)) {
-          for (const entry of value) {
-            url.searchParams.append(key, String(entry));
-          }
-        } else {
-          url.searchParams.set(key, String(value));
-        }
-      }
-    };
-
-    apply(fromUrlParts);
-    apply(opts.query);
-
-    if (opts.pageSize !== undefined) {
-      url.searchParams.set('limit', String(opts.pageSize));
-    }
-    if (opts.pageOffset !== undefined) {
-      url.searchParams.set('offset', String(opts.pageOffset));
-    }
-  }
-
-  private resolveBaseUrlForRequest(opts: HttpRequestOptions): string | undefined {
-    const resolved = this.normalizeBaseUrl(this.config.resolveBaseUrl?.(opts));
-    return resolved ?? this.baseUrl;
-  }
-
-  private isAbsoluteUrl(path: string): boolean {
-    try {
-      new URL(path);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private normalizeBaseUrl(value?: string): string | undefined {
-    if (!value) {
-      return undefined;
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    return trimmed.replace(/\/+$/, '') || trimmed;
-  }
-
-  private prepareRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
-    const correlation = this.normalizeCorrelation(opts);
-    const resilience = this.mergeResilience(opts.resilience);
-    const agentContext = { ...this.config.defaultAgentContext, ...opts.agentContext };
-    const headers: HttpHeaders | undefined = this.mergeHeaders(this.config.defaultHeaders, opts.headers);
-    const path = this.resolvePath(opts);
-
-    return {
-      ...opts,
-      path,
-      headers,
-      resilience,
-      agentContext,
-      requestId: correlation.requestId,
-      correlationId: correlation.correlationId,
-      parentCorrelationId: correlation.parentCorrelationId,
-      correlation,
-    };
-  }
-
-  private mergeHeaders(
-    defaults?: HttpHeaders | Record<string, string | undefined>,
-    provided?: HttpHeaders | Record<string, string | undefined>,
-  ): HttpHeaders | undefined {
-    if (!defaults && !provided) return provided as HttpHeaders | undefined;
-    const result: Record<string, string> = {};
-    for (const source of [defaults, provided]) {
-      if (!source) continue;
-      for (const [key, value] of Object.entries(source)) {
-        if (value !== undefined) {
-          result[key] = value;
-        }
-      }
-    }
-    return result;
-  }
-
-  private mergeResilience(resilience?: ResilienceProfile): ResilienceProfile | undefined {
-    if (!this.config.defaultResilience && !resilience) return resilience;
-    return { ...this.config.defaultResilience, ...resilience };
-  }
-
-  private normalizeCorrelation(opts: HttpRequestOptions) {
-    const generated = this.generateRequestId();
-    const correlation = opts.correlation;
-    const requestId = opts.requestId ?? correlation?.requestId ?? generated;
-    return {
-      requestId,
-      correlationId: opts.correlationId ?? correlation?.correlationId,
-      parentCorrelationId: opts.parentCorrelationId ?? correlation?.parentCorrelationId,
-    };
-  }
-
-  private generateRequestId(): string {
-    return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? (crypto.randomUUID as () => string)()
-      : Math.random().toString(36).slice(2);
-  }
-
-  private resolvePath(opts: HttpRequestOptions): string | undefined {
-    if (opts.path) return opts.path;
-    if (opts.urlParts?.path) return opts.urlParts.path;
-    if (opts.url) {
-      try {
-        return new URL(opts.url).pathname;
-      } catch {
-        return undefined;
-      }
-    }
-    return undefined;
-  }
-
-  private cloneRequestOptions(opts: HttpRequestOptions): HttpRequestOptions {
-    return {
-      ...opts,
-      headers: opts.headers ? { ...opts.headers } : undefined,
-      query: opts.query ? { ...opts.query } : undefined,
-      urlParts: opts.urlParts ? { ...opts.urlParts, query: opts.urlParts.query ? { ...opts.urlParts.query } : undefined } : undefined,
-    };
-  }
-
-  private async prepareAttemptOptions(
-    opts: HttpRequestOptions,
-    signal: AbortSignal,
-  ): Promise<AttemptHttpRequestOptions> {
-    const cloned = this.cloneRequestOptions(opts);
-    let attempt: AttemptHttpRequestOptions = {
-      ...cloned,
-      headers: this.buildHeaders(cloned.headers),
-    };
-
-    attempt = await this.applyBeforeSendInterceptors(attempt, signal);
-    return attempt;
-  }
-
-  private getOperationDefaults(opts: HttpRequestOptions): OperationDefaults | undefined {
-    return this.config.operationDefaults?.[opts.operation];
-  }
-
-  private getTimeoutMs(opts: HttpRequestOptions): number {
-    const opDefaults = this.getOperationDefaults(opts);
-    return opts.resilience?.perAttemptTimeoutMs ?? opts.timeoutMs ?? opDefaults?.timeoutMs ?? this.defaultTimeoutMs;
-  }
-
-  private getMaxRetries(opts: HttpRequestOptions): number {
-    const opDefaults = this.getOperationDefaults(opts);
-    return opts.maxRetries ?? opDefaults?.maxRetries ?? this.defaultMaxRetries;
-  }
-
-  private getIdempotent(opts: HttpRequestOptions): boolean {
-    if (opts.idempotent !== undefined) {
-      return opts.idempotent;
-    }
-    const opDefaults = this.getOperationDefaults(opts);
-    if (opDefaults?.idempotent !== undefined) {
-      return opDefaults.idempotent;
-    }
-    return opts.method === 'GET' || opts.method === 'HEAD' || opts.method === 'OPTIONS';
-  }
-
-  private buildHeaders(source?: Record<string, string | undefined>): Record<string, string> {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (source) {
-      for (const [key, value] of Object.entries(source)) {
-        if (value !== undefined) {
-          headers[key] = value;
-        }
-      }
-    }
-    return headers;
-  }
-
-  private async applyBeforeSendInterceptors(
-    opts: AttemptHttpRequestOptions,
-    signal: AbortSignal,
-  ): Promise<AttemptHttpRequestOptions> {
-    let current = opts;
-    for (const interceptor of this.interceptors) {
-      if (!interceptor.beforeSend) continue;
-      const ctx: BeforeSendContext = { request: current, signal };
-      try {
-        const result = await interceptor.beforeSend(ctx as never);
-        current = ctx.request as AttemptHttpRequestOptions;
-        if (result && typeof result === 'object') {
-          current = {
-            ...current,
-            ...(result as HttpRequestOptions),
-            headers: this.buildHeaders((result as HttpRequestOptions).headers ?? current.headers),
-            query: (result as HttpRequestOptions).query ?? current.query,
-          };
-        }
-      } catch (error) {
-        try {
-          const fallback = await (interceptor.beforeSend as (opts: HttpRequestOptions) => unknown)(current);
-          if (fallback && typeof fallback === 'object') {
-            current = {
-              ...current,
-              ...(fallback as HttpRequestOptions),
-              headers: this.buildHeaders((fallback as HttpRequestOptions).headers ?? current.headers),
-              query: (fallback as HttpRequestOptions).query ?? current.query,
-            };
-          }
-        } catch (hookError) {
-          this.logger?.warn('http.interceptor.beforeSend.failed', {
-            client: this.clientName,
-            operation: opts.operation,
-            error: hookError instanceof Error ? hookError.message : hookError,
-          });
-          throw hookError;
-        }
-      }
-    }
-    return current;
-  }
-
-  private async applyAfterResponseInterceptors(
-    opts: HttpRequestOptions,
-    response: Response,
-    attempt: number,
-  ): Promise<Response> {
-    let current = response;
-    for (const interceptor of [...this.interceptors].reverse()) {
-      if (!interceptor.afterResponse) continue;
-      const ctx = { request: opts, response: current, attempt };
-      try {
-        const result = await (interceptor.afterResponse as (ctx: AfterResponseContext) => Promise<void | Response> | void | Response)(ctx);
-        current = (ctx as { response: Response }).response;
-        if (result instanceof Response) {
-          current = result;
-        }
-      } catch (error) {
-        try {
-          const legacyResult = await (interceptor.afterResponse as (opts: HttpRequestOptions, res: Response) => Response | void)(
-            opts,
-            current,
-          );
-          if (legacyResult instanceof Response) {
-            current = legacyResult;
-          }
-        } catch (hookError) {
-          this.logger?.warn('http.interceptor.afterResponse.failed', {
-            client: this.clientName,
-            operation: opts.operation,
-            error: hookError instanceof Error ? hookError.message : hookError,
-          });
-          throw hookError;
-        }
-      }
-    }
-    return current;
-  }
-
-  private async runErrorInterceptors(opts: HttpRequestOptions, error: unknown, attempt: number): Promise<void> {
-    for (const interceptor of [...this.interceptors].reverse()) {
-      if (!interceptor.onError) continue;
-      const ctx = { request: opts, error, attempt };
-      try {
-        await (interceptor.onError as (ctx: OnErrorContext) => Promise<void> | void)(ctx);
-      } catch (firstError) {
-        try {
-          await (interceptor.onError as (opts: HttpRequestOptions, err: unknown) => void)(opts, error);
-        } catch (hookError) {
-          this.logger?.warn('http.interceptor.onError.failed', {
-            client: this.clientName,
-            operation: opts.operation,
-            error: hookError instanceof Error ? hookError.message : hookError,
-          });
-          throw firstError;
-        }
-      }
-    }
-  }
-
-  private async resolveResponseValue<T>(
-    response: Response,
-    parseJson: boolean,
-    cachedBodyText?: string,
-  ): Promise<T> {
-    if (!parseJson) {
-      return response as unknown as T;
-    }
-    const text = cachedBodyText ?? (await response.clone().text());
-    return this.parseBodyFromText<T>(text) as T;
-  }
-
-  private serializeBody(body: unknown, headers: Record<string, string>): BodyInit {
-    if (
-      typeof body === 'string' ||
-      body instanceof URLSearchParams ||
-      body instanceof Blob ||
-      body instanceof FormData
-    ) {
-      return body;
-    }
-    if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) {
-      return body;
-    }
-    if (ArrayBuffer.isView(body)) {
-      return body.buffer as ArrayBuffer;
-    }
-    if (typeof Buffer !== 'undefined' && typeof Buffer.isBuffer === 'function' && Buffer.isBuffer(body)) {
-      return body as unknown as BodyInit;
-    }
-    if (!this.hasHeader(headers, 'content-type')) {
-      headers['Content-Type'] = 'application/json';
-    }
-    return JSON.stringify(body);
-  }
-
-  private parseBodyFromText<T>(text: string): T | undefined {
-    if (!text) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      return text as unknown as T;
-    }
-  }
-
-  private async tryReadText(response: Response): Promise<string | undefined> {
-    try {
-      return await response.clone().text();
-    } catch {
-      return undefined;
-    }
-  }
-
-  private hasHeader(headers: Record<string, string>, name: string): boolean {
-    return Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase());
-  }
-
-  private createRateLimiterContext(opts: HttpRequestOptions, attempt: number): RateLimiterContext {
-    return {
-      method: opts.method,
-      path: opts.path ?? '',
-      operation: opts.operation,
-      attempt,
-      requestId: opts.requestId,
-      correlationId: opts.correlationId,
-      parentCorrelationId: opts.parentCorrelationId,
-      agentContext: opts.agentContext,
-      extensions: opts.extensions,
-    };
-  }
-
-  private async recordMetrics(info: MetricsRequestInfo): Promise<void> {
-    try {
-      await this.config.metrics?.recordRequest?.(info);
-    } catch (error) {
-      this.logger?.warn('http.metrics.error', {
-        client: this.clientName,
-        operation: info.operation,
-        error: error instanceof Error ? error.message : error,
-      });
-    }
-  }
-
-  private classifyError(
-    error: unknown,
-    request: HttpRequestOptions,
-    response?: Response,
-  ): ClassifiedError | undefined {
-    const classifier = this.config.errorClassifier ?? this.defaultErrorClassifier;
-    try {
-      if (response && 'classifyResponse' in classifier && typeof classifier.classifyResponse === 'function') {
-        return classifier.classifyResponse(response, undefined, { request, response, error });
-      }
-      if ('classifyNetworkError' in classifier && typeof classifier.classifyNetworkError === 'function') {
-        return classifier.classifyNetworkError(error, { request, response, error });
-      }
-      if (typeof classifier.classify === 'function') {
-        return classifier.classify({ request, response, error });
-      }
-      return undefined;
-    } catch (classifierError) {
-      this.logger?.warn('http.classifier.error', {
-        client: this.clientName,
-        operation: request.operation,
-        error: classifierError instanceof Error ? classifierError.message : classifierError,
-      });
-      return undefined;
-    }
-  }
-
-  private baseLogMeta(
-    opts: Pick<
-      HttpRequestOptions,
-      'operation' | 'method' | 'path' | 'requestId' | 'correlationId' | 'parentCorrelationId' | 'agentContext' | 'extensions'
-    >,
-  ) {
-    return {
-      client: this.clientName,
-      operation: opts.operation,
-      method: opts.method,
-      path: opts.path,
-      requestId: opts.requestId,
-      correlationId: opts.correlationId,
-      parentCorrelationId: opts.parentCorrelationId,
-      agentContext: opts.agentContext,
-      extensions: opts.extensions,
-    };
-  }
-
-  private getCorrelationInfo(opts: HttpRequestOptions): CorrelationInfo {
-    return (
-      opts.correlation ?? {
-        requestId: opts.requestId!,
-        correlationId: opts.correlationId,
-        parentCorrelationId: opts.parentCorrelationId,
-      }
-    );
-  }
-
-  private safeBuildUrl(opts: HttpRequestOptions): string {
-    try {
-      return this.buildUrl(opts);
-    } catch {
-      return opts.url ?? opts.path ?? '';
-    }
-  }
-
-  private async callOptionalHook(name: string, fn?: () => void | Promise<void>): Promise<void> {
-    if (!fn) return;
-    try {
-      await fn();
-    } catch (error) {
-      this.logger?.warn(`${name}.failed`, {
-        client: this.clientName,
-        error: error instanceof Error ? error.message : error,
-      });
-    }
-  }
-
-  private shouldRetry(error: unknown, classified: ClassifiedError | undefined, idempotent: boolean): boolean {
-    if (classified) {
-      return classified.retryable ?? false;
-    }
-    if (!idempotent) {
-      return false;
-    }
-    if (error instanceof TimeoutError) {
-      return true;
-    }
-    if (error instanceof HttpError) {
-      return RETRYABLE_ERROR_CATEGORIES.has(error.category);
-    }
-    return true;
-  }
-
-  private getRetryDelay(
-    error: unknown,
-    attempt: number,
-    classified: ClassifiedError | undefined,
-    opts: HttpRequestOptions,
-  ): number {
-    if (classified?.suggestedBackoffMs !== undefined) {
-      return Math.min(classified.suggestedBackoffMs, MAX_RETRY_DELAY_MS);
-    }
-    if (error instanceof HttpError) {
-      const retryAfter = error.fallback?.retryAfterMs ?? this.parseRetryAfterHeader(error.headers?.get('retry-after'));
-      if (retryAfter) {
-        return Math.min(retryAfter, MAX_RETRY_DELAY_MS);
-      }
-    }
-    const baseBackoffMs = opts.resilience?.baseBackoffMs ?? BASE_BACKOFF_MS;
-    const maxBackoffMs = opts.resilience?.maxBackoffMs ?? MAX_RETRY_DELAY_MS;
-    const [minJitter, maxJitter] = opts.resilience?.jitterFactorRange ?? [0.8, 1.2];
-    const baseDelay = baseBackoffMs * 2 ** (attempt - 1);
-    const jitterFactor = minJitter + Math.random() * (maxJitter - minJitter);
-    return Math.min(baseDelay * jitterFactor, maxBackoffMs);
-  }
-
-  private parseRetryAfterHeader(value?: string | null): number | undefined {
+  private parseRetryAfter(value?: string): number | undefined {
     if (!value) return undefined;
+
+    // Try parsing as seconds
     const seconds = Number(value);
     if (!Number.isNaN(seconds)) {
       return seconds * 1000;
     }
+
+    // Try parsing as HTTP date
     const date = Date.parse(value);
     if (!Number.isNaN(date)) {
       const diff = date - Date.now();
       return diff > 0 ? diff : undefined;
     }
+
     return undefined;
   }
+}
 
-  private parseResetHeader(value?: string | null): Date | undefined {
-    if (!value) return undefined;
-    const numeric = Number(value);
-    if (!Number.isNaN(numeric)) {
-      if (numeric > Date.now()) {
-        return new Date(numeric);
+// ============================================================================
+// HttpClient Implementation
+// ============================================================================
+
+export class HttpClient {
+  private readonly config: Required<
+    Pick<HttpClientConfig, 'transport' | 'interceptors' | 'errorClassifier'>
+  > &
+    HttpClientConfig;
+
+  constructor(config: HttpClientConfig = {}) {
+    this.config = {
+      ...config,
+      transport: config.transport ?? fetchTransport,
+      interceptors: config.interceptors ?? [],
+      errorClassifier: config.errorClassifier ?? new DefaultErrorClassifier(),
+    };
+  }
+
+  // --------------------------------------------------------------------------
+  // Public API Methods
+  // --------------------------------------------------------------------------
+
+  async requestRaw<T = unknown>(opts: HttpRequestOptions): Promise<HttpResponse<T>> {
+    return this.executeRequest<T>(opts, false);
+  }
+
+  async requestJson<T = unknown>(opts: HttpRequestOptions): Promise<HttpResponse<T>> {
+    return this.executeRequest<T>(opts, true);
+  }
+
+  async requestJsonBody<T = unknown>(opts: HttpRequestOptions): Promise<T> {
+    const response = await this.requestJson<T>(opts);
+    return response.body;
+  }
+
+  async getJson<T = unknown>(
+    urlOrParts: string | UrlParts,
+    opts?: Omit<HttpRequestOptions, 'method' | 'url' | 'urlParts'>
+  ): Promise<T> {
+    const requestOpts: HttpRequestOptions = {
+      method: 'GET',
+      ...(typeof urlOrParts === 'string' ? { url: urlOrParts } : { urlParts: urlOrParts }),
+      ...opts,
+    };
+    return this.requestJsonBody<T>(requestOpts);
+  }
+
+  async postJson<T = unknown>(
+    urlOrParts: string | UrlParts,
+    body: unknown,
+    opts?: Omit<HttpRequestOptions, 'method' | 'url' | 'urlParts' | 'body'>
+  ): Promise<T> {
+    const requestOpts: HttpRequestOptions = {
+      method: 'POST',
+      ...(typeof urlOrParts === 'string' ? { url: urlOrParts } : { urlParts: urlOrParts }),
+      body,
+      ...opts,
+    };
+    return this.requestJsonBody<T>(requestOpts);
+  }
+
+  async putJson<T = unknown>(
+    urlOrParts: string | UrlParts,
+    body: unknown,
+    opts?: Omit<HttpRequestOptions, 'method' | 'url' | 'urlParts' | 'body'>
+  ): Promise<T> {
+    const requestOpts: HttpRequestOptions = {
+      method: 'PUT',
+      ...(typeof urlOrParts === 'string' ? { url: urlOrParts } : { urlParts: urlOrParts }),
+      body,
+      ...opts,
+    };
+    return this.requestJsonBody<T>(requestOpts);
+  }
+
+  async deleteJson<T = unknown>(
+    urlOrParts: string | UrlParts,
+    opts?: Omit<HttpRequestOptions, 'method' | 'url' | 'urlParts'>
+  ): Promise<T> {
+    const requestOpts: HttpRequestOptions = {
+      method: 'DELETE',
+      ...(typeof urlOrParts === 'string' ? { url: urlOrParts } : { urlParts: urlOrParts }),
+      ...opts,
+    };
+    return this.requestJsonBody<T>(requestOpts);
+  }
+
+  // --------------------------------------------------------------------------
+  // Core Request Execution
+  // --------------------------------------------------------------------------
+
+  private async executeRequest<T>(
+    opts: HttpRequestOptions,
+    parseJson: boolean
+  ): Promise<HttpResponse<T>> {
+    const startedAt = new Date();
+    let tracingSpan: TracingSpan | undefined;
+
+    try {
+      // Prepare request options
+      const preparedOpts = this.prepareRequest(opts);
+      const resolvedUrl = this.buildUrl(preparedOpts);
+
+      // Check cache
+      if (this.config.cache && preparedOpts.cacheMode !== 'bypass' && preparedOpts.cacheKey) {
+        const cached = await this.tryGetFromCache<T>(preparedOpts.cacheKey);
+        if (cached && preparedOpts.cacheMode !== 'refresh') {
+          const outcome: RequestOutcome = {
+            ok: true,
+            status: 200,
+            category: 'none',
+            attempts: 0,
+            startedAt,
+            finishedAt: new Date(),
+            durationMs: 0,
+            statusFamily: 2,
+          };
+
+          // Record metrics for cache hit
+          if (this.config.metricsSink) {
+            await this.recordMetrics(preparedOpts, resolvedUrl, outcome);
+          }
+
+          return {
+            status: 200,
+            headers: {},
+            body: cached,
+            outcome,
+          };
+        }
       }
-      return new Date(Date.now() + numeric * 1000);
+
+      // Start tracing
+      if (this.config.tracingAdapter) {
+        const metricsInfo: MetricsRequestInfo = {
+          operation: preparedOpts.operation,
+          method: preparedOpts.method,
+          url: resolvedUrl,
+          correlation: preparedOpts.correlation,
+          agentContext: preparedOpts.agentContext,
+          extensions: preparedOpts.extensions,
+          outcome: {} as RequestOutcome, // Will be filled later
+        };
+        tracingSpan = this.config.tracingAdapter.startSpan(metricsInfo);
+      }
+
+      // Execute with retries
+      const result = await this.executeWithRetries<T>(preparedOpts, resolvedUrl, parseJson, startedAt);
+
+      // Update cache on success
+      if (
+        this.config.cache &&
+        preparedOpts.cacheKey &&
+        preparedOpts.cacheMode !== 'bypass' &&
+        result.outcome.ok
+      ) {
+        await this.trySetCache(preparedOpts.cacheKey, result.body);
+      }
+
+      // Record metrics
+      if (this.config.metricsSink) {
+        await this.recordMetrics(preparedOpts, resolvedUrl, result.outcome);
+      }
+
+      // End tracing
+      if (tracingSpan && this.config.tracingAdapter) {
+        await this.config.tracingAdapter.endSpan(tracingSpan, result.outcome);
+      }
+
+      return result;
+    } catch (error) {
+      // Record exception in tracing
+      if (tracingSpan) {
+        if (error instanceof Error) {
+          tracingSpan.recordException(error);
+        }
+        const finishedAt = new Date();
+        const outcome: RequestOutcome = {
+          ok: false,
+          category: error instanceof HttpError ? error.category : 'unknown',
+          attempts: error instanceof HttpError ? error.attemptCount : 1,
+          startedAt,
+          finishedAt,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+        if (this.config.tracingAdapter) {
+          await this.config.tracingAdapter.endSpan(tracingSpan, outcome);
+        }
+      }
+
+      throw error;
     }
-    const parsed = Date.parse(value);
-    if (!Number.isNaN(parsed)) {
-      return new Date(parsed);
-    }
-    return undefined;
   }
 
-  private extractRateLimit(headers?: Headers): RateLimitFeedback | undefined {
-    if (!headers) return undefined;
+  private async executeWithRetries<T>(
+    opts: HttpRequestOptions,
+    url: string,
+    parseJson: boolean,
+    startedAt: Date
+  ): Promise<HttpResponse<T>> {
+    const resilience = this.mergeResilience(opts.resilience);
+    const maxAttempts = resilience.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+    const overallTimeoutMs = resilience.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS;
+    const deadline = startedAt.getTime() + overallTimeoutMs;
 
-    const headerNames = [
-      'x-ratelimit-limit-requests',
-      'x-ratelimit-remaining-requests',
-      'x-ratelimit-reset-requests',
-      'x-ratelimit-limit-tokens',
-      'x-ratelimit-remaining-tokens',
-      'x-ratelimit-reset-tokens',
-      'retry-after',
-    ];
+    let lastError: Error | null = null;
+    let lastCategory: ErrorCategory = 'unknown';
+    let lastStatus: number | undefined;
+    let lastRateLimit: RateLimitFeedback | undefined;
 
-    const raw: Record<string, string> = {};
-    const feedback: RateLimitFeedback = {};
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const attemptStartMs = Date.now();
 
-    const getNumber = (value?: string | null) => {
-      if (value === null || value === undefined) return undefined;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : undefined;
+      try {
+        // Check overall timeout
+        if (Date.now() >= deadline) {
+          throw new TimeoutError('Overall timeout exceeded before attempt could start', {
+            url,
+            method: opts.method,
+            requestId: opts.correlation?.requestId,
+            correlationId: opts.correlation?.correlationId,
+            operation: opts.operation,
+            attemptCount: attempt,
+          });
+        }
+
+        // Execute single attempt
+        const result = await this.executeSingleAttempt<T>(opts, url, parseJson, attempt, deadline);
+
+        // Success - build outcome and return
+        const finishedAt = new Date();
+        const outcome: RequestOutcome = {
+          ok: true,
+          status: result.status,
+          category: 'none',
+          attempts: attempt,
+          startedAt,
+          finishedAt,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          statusFamily: Math.floor(result.status / 100),
+          rateLimit: result.rateLimit ?? lastRateLimit,
+        };
+
+        return {
+          status: result.status,
+          headers: result.headers,
+          body: result.body,
+          outcome,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Extract error details
+        if (error instanceof HttpError) {
+          lastCategory = error.category;
+          lastStatus = error.statusCode;
+        } else if (error instanceof Error && error.name === 'AbortError') {
+          lastCategory = 'canceled';
+        } else {
+          lastCategory = 'network';
+        }
+
+        // Classify error
+        const classified = this.config.errorClassifier.classify({
+          method: opts.method,
+          url,
+          attempt,
+          request: opts,
+          error,
+        });
+
+        lastCategory = classified.category;
+        if (classified.statusCode) {
+          lastStatus = classified.statusCode;
+        }
+
+        // Call error interceptors
+        await this.callErrorInterceptors(opts, attempt, lastError);
+
+        // Determine if we should retry
+        const shouldRetry = this.shouldRetryError(
+          classified,
+          attempt,
+          maxAttempts,
+          opts.method,
+          resilience
+        );
+
+        if (!shouldRetry) {
+          break;
+        }
+
+        // Calculate backoff delay
+        const delay = this.calculateBackoff(attempt, classified, resilience);
+        const remainingTime = deadline - Date.now();
+
+        if (remainingTime <= 0) {
+          break;
+        }
+
+        const actualDelay = Math.min(delay, remainingTime);
+        await this.sleep(actualDelay);
+      }
+    }
+
+    // All retries exhausted - build error
+    const finishedAt = new Date();
+    const outcome: RequestOutcome = {
+      ok: false,
+      status: lastStatus,
+      category: lastCategory,
+      attempts: maxAttempts,
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt.getTime() - startedAt.getTime(),
+      statusFamily: lastStatus ? Math.floor(lastStatus / 100) : undefined,
+      errorMessage: lastError?.message,
+      rateLimit: lastRateLimit,
     };
 
-    const maybeAssign = (key: keyof RateLimitFeedback, value?: number) => {
+    // Record metrics for failed request
+    if (this.config.metricsSink) {
+      await this.recordMetrics(opts, url, outcome);
+    }
+
+    // Throw enhanced error
+    if (lastError instanceof HttpError) {
+      throw lastError;
+    }
+
+    throw new HttpError(lastError?.message ?? 'Request failed', {
+      category: lastCategory,
+      statusCode: lastStatus,
+      url,
+      method: opts.method,
+      requestId: opts.correlation?.requestId,
+      correlationId: opts.correlation?.correlationId,
+      operation: opts.operation,
+      attemptCount: maxAttempts,
+      outcome,
+      cause: lastError ?? undefined,
+    });
+  }
+
+  private async executeSingleAttempt<T>(
+    opts: HttpRequestOptions,
+    url: string,
+    parseJson: boolean,
+    attempt: number,
+    deadline: number
+  ): Promise<{ status: number; headers: HttpHeaders; body: T; rateLimit?: RateLimitFeedback }> {
+    // Create abort controller for this attempt
+    const controller = new AbortController();
+    const resilience = this.mergeResilience(opts.resilience);
+    const perAttemptTimeoutMs = resilience.perAttemptTimeoutMs;
+
+    // Set per-attempt timeout if configured
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    if (perAttemptTimeoutMs) {
+      const remainingTime = deadline - Date.now();
+      const actualTimeout = Math.min(perAttemptTimeoutMs, remainingTime);
+
+      timeoutHandle = setTimeout(() => {
+        controller.abort();
+      }, actualTimeout);
+    }
+
+    try {
+      // Call beforeSend interceptors
+      await this.callBeforeSendInterceptors(opts, attempt, controller.signal);
+
+      // Build transport request
+      const transportReq: TransportRequest = {
+        method: opts.method,
+        url,
+        headers: this.buildHeaders(opts),
+        body: this.serializeBody(opts.body, opts.headers),
+      };
+
+      // Execute transport
+      const rawResponse = await this.config.transport(transportReq, controller.signal);
+
+      // Parse response body
+      const body = parseJson ? this.parseJsonBody<T>(rawResponse.body) : (rawResponse.body as unknown as T);
+
+      // Extract rate limit feedback
+      const rateLimit = this.extractRateLimit(rawResponse.headers);
+
+      // Build HttpResponse for interceptors
+      const httpResponse: HttpResponse<T> = {
+        status: rawResponse.status,
+        headers: rawResponse.headers,
+        body,
+        outcome: {} as RequestOutcome, // Interceptors don't need full outcome
+      };
+
+      // Call afterResponse interceptors
+      await this.callAfterResponseInterceptors(opts, attempt, httpResponse);
+
+      // Check if response indicates error
+      if (rawResponse.status >= 400) {
+        throw new HttpError(`HTTP ${rawResponse.status}`, {
+          category: this.config.errorClassifier.classify({
+            method: opts.method,
+            url,
+            attempt,
+            request: opts,
+            response: rawResponse,
+          }).category,
+          statusCode: rawResponse.status,
+          url,
+          method: opts.method,
+          requestId: opts.correlation?.requestId,
+          correlationId: opts.correlation?.correlationId,
+          operation: opts.operation,
+          attemptCount: attempt,
+        });
+      }
+
+      return {
+        status: rawResponse.status,
+        headers: rawResponse.headers,
+        body,
+        rateLimit,
+      };
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Helper Methods
+  // --------------------------------------------------------------------------
+
+  private prepareRequest(opts: HttpRequestOptions): HttpRequestOptions {
+    // Validate url XOR urlParts
+    if (opts.url && opts.urlParts) {
+      throw new Error('Cannot specify both url and urlParts');
+    }
+    if (!opts.url && !opts.urlParts) {
+      throw new Error('Must specify either url or urlParts');
+    }
+
+    // Generate request ID and correlation ID if needed
+    const requestId = opts.correlation?.requestId ?? this.generateId();
+    const correlationId = opts.correlation?.correlationId ?? requestId;
+
+    return {
+      ...opts,
+      correlation: {
+        requestId,
+        correlationId,
+        parentCorrelationId: opts.correlation?.parentCorrelationId,
+      },
+      headers: { ...this.config.defaultHeaders, ...opts.headers },
+      extensions: { ...this.config.defaultExtensions, ...opts.extensions },
+    };
+  }
+
+  private buildUrl(opts: HttpRequestOptions): string {
+    if (opts.url) {
+      const url = new URL(opts.url);
+      this.applyQueryParams(url, opts.query);
+      return url.toString();
+    }
+
+    if (opts.urlParts) {
+      const baseUrl = opts.urlParts.baseUrl ?? this.config.baseUrl;
+      if (!baseUrl) {
+        throw new Error('No baseUrl available for urlParts');
+      }
+
+      const path = opts.urlParts.path ?? '';
+      const url = new URL(path, baseUrl);
+      this.applyQueryParams(url, opts.urlParts.query);
+      this.applyQueryParams(url, opts.query);
+      return url.toString();
+    }
+
+    throw new Error('Invalid request options');
+  }
+
+  private applyQueryParams(url: URL, query?: QueryParams): void {
+    if (!query) return;
+
+    for (const [key, value] of Object.entries(query)) {
       if (value !== undefined) {
-        feedback[key] = value as never;
+        url.searchParams.append(key, String(value));
       }
+    }
+  }
+
+  private buildHeaders(opts: HttpRequestOptions): HttpHeaders {
+    const headers: HttpHeaders = { ...this.config.defaultHeaders, ...opts.headers };
+
+    // Add correlation headers
+    if (opts.correlation?.requestId) {
+      headers['X-Request-ID'] = opts.correlation.requestId;
+    }
+    if (opts.correlation?.correlationId) {
+      headers['X-Correlation-ID'] = opts.correlation.correlationId;
+    }
+
+    return headers;
+  }
+
+  private serializeBody(body: unknown, headers?: HttpHeaders): ArrayBuffer | undefined {
+    if (body === undefined || body === null) {
+      return undefined;
+    }
+
+    // If already ArrayBuffer, return as-is
+    if (body instanceof ArrayBuffer) {
+      return body;
+    }
+
+    // If ArrayBufferView, extract buffer
+    if (ArrayBuffer.isView(body)) {
+      return body.buffer;
+    }
+
+    // Otherwise, JSON stringify and convert to ArrayBuffer
+    const json = JSON.stringify(body);
+    const encoder = new TextEncoder();
+    return encoder.encode(json).buffer;
+  }
+
+  private parseJsonBody<T>(buffer: ArrayBuffer): T {
+    const decoder = new TextDecoder();
+    const text = decoder.decode(buffer);
+
+    if (!text || text.trim() === '') {
+      return undefined as T;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // If JSON parse fails, return text as-is
+      return text as unknown as T;
+    }
+  }
+
+  private mergeResilience(resilience?: ResilienceProfile): ResilienceProfile {
+    return {
+      ...this.config.defaultResilience,
+      ...resilience,
     };
+  }
 
-    for (const name of headerNames) {
-      const val = headers.get(name);
-      if (val !== null && val !== undefined) {
-        raw[name] = val;
-      }
+  private shouldRetryError(
+    classified: ClassifiedError,
+    attempt: number,
+    maxAttempts: number,
+    method: HttpMethod,
+    resilience: ResilienceProfile
+  ): boolean {
+    // No more attempts left
+    if (attempt >= maxAttempts) {
+      return false;
     }
 
-    maybeAssign('limitRequests', getNumber(headers.get('x-ratelimit-limit-requests')));
-    maybeAssign('remainingRequests', getNumber(headers.get('x-ratelimit-remaining-requests')));
-    const resetRequestsAt = this.parseResetHeader(headers.get('x-ratelimit-reset-requests'));
-    if (resetRequestsAt) {
-      feedback.resetRequestsAt = resetRequestsAt;
+    // Check if retries are enabled
+    if (resilience.retryEnabled === false) {
+      return false;
     }
 
-    maybeAssign('limitTokens', getNumber(headers.get('x-ratelimit-limit-tokens')));
-    maybeAssign('remainingTokens', getNumber(headers.get('x-ratelimit-remaining-tokens')));
-    const resetTokensAt = this.parseResetHeader(headers.get('x-ratelimit-reset-tokens'));
-    if (resetTokensAt) {
-      feedback.resetTokensAt = resetTokensAt;
+    // Check fallback hint
+    if (classified.fallback?.retryable === false) {
+      return false;
     }
 
-    const retryAfter = this.parseRetryAfterHeader(headers.get('retry-after'));
-    if (retryAfter) {
-      const date = new Date(Date.now() + retryAfter);
-      feedback.resetRequestsAt = feedback.resetRequestsAt ?? date;
-      feedback.resetTokensAt = feedback.resetTokensAt ?? date;
+    if (classified.fallback?.retryable === true) {
+      return true;
     }
 
-    if (Object.keys(raw).length > 0) {
-      feedback.rawHeaders = raw;
+    // Check category
+    if (RETRYABLE_CATEGORIES.has(classified.category)) {
+      return true;
     }
 
-    if (
-      feedback.limitRequests !== undefined ||
-      feedback.remainingRequests !== undefined ||
-      feedback.resetRequestsAt !== undefined ||
-      feedback.limitTokens !== undefined ||
-      feedback.remainingTokens !== undefined ||
-      feedback.resetTokensAt !== undefined ||
-      feedback.rawHeaders
-    ) {
-      return feedback;
+    // For non-idempotent methods, don't retry unless explicitly marked retryable
+    const retryIdempotent = resilience.retryIdempotentMethodsByDefault ?? true;
+    if (!retryIdempotent && !this.isIdempotentMethod(method)) {
+      return false;
     }
-    return undefined;
+
+    return false;
+  }
+
+  private isIdempotentMethod(method: HttpMethod): boolean {
+    return method === 'GET' || method === 'HEAD' || method === 'OPTIONS' || method === 'PUT' || method === 'DELETE';
+  }
+
+  private calculateBackoff(
+    attempt: number,
+    classified: ClassifiedError,
+    resilience: ResilienceProfile
+  ): number {
+    // Check for explicit retry-after
+    if (classified.fallback?.retryAfterMs) {
+      const maxSuggested = resilience.maxSuggestedRetryDelayMs ?? DEFAULT_MAX_SUGGESTED_RETRY_DELAY_MS;
+      return Math.min(classified.fallback.retryAfterMs, maxSuggested);
+    }
+
+    // Calculate exponential backoff
+    const baseBackoffMs = resilience.baseBackoffMs ?? DEFAULT_BASE_BACKOFF_MS;
+    const maxBackoffMs = resilience.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+    const jitterFactor = resilience.jitterFactor ?? DEFAULT_JITTER_FACTOR;
+
+    const exponentialDelay = baseBackoffMs * Math.pow(2, attempt - 1);
+    const jitter = 1 + (Math.random() * 2 - 1) * jitterFactor;
+    const delayWithJitter = exponentialDelay * jitter;
+
+    return Math.min(delayWithJitter, maxBackoffMs);
+  }
+
+  private extractRateLimit(headers: HttpHeaders): RateLimitFeedback | undefined {
+    const feedback: RateLimitFeedback = {};
+    let hasAnyField = false;
+
+    // Parse request limits
+    if (headers['x-ratelimit-limit-requests']) {
+      feedback.limitRequests = parseInt(headers['x-ratelimit-limit-requests'], 10);
+      hasAnyField = true;
+    }
+    if (headers['x-ratelimit-remaining-requests']) {
+      feedback.remainingRequests = parseInt(headers['x-ratelimit-remaining-requests'], 10);
+      hasAnyField = true;
+    }
+    if (headers['x-ratelimit-reset-requests']) {
+      feedback.resetAt = new Date(parseInt(headers['x-ratelimit-reset-requests'], 10) * 1000);
+      hasAnyField = true;
+    }
+
+    // Parse token limits
+    if (headers['x-ratelimit-limit-tokens']) {
+      feedback.limitTokens = parseInt(headers['x-ratelimit-limit-tokens'], 10);
+      hasAnyField = true;
+    }
+    if (headers['x-ratelimit-remaining-tokens']) {
+      feedback.remainingTokens = parseInt(headers['x-ratelimit-remaining-tokens'], 10);
+      hasAnyField = true;
+    }
+    if (headers['x-ratelimit-reset-tokens']) {
+      feedback.tokenResetAt = new Date(parseInt(headers['x-ratelimit-reset-tokens'], 10) * 1000);
+      hasAnyField = true;
+    }
+
+    return hasAnyField ? feedback : undefined;
+  }
+
+  private generateId(): string {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private computeAttemptTimeout(opts: HttpRequestOptions, deadline?: number): number {
-    const timeoutMs = this.getTimeoutMs(opts);
-    if (!deadline) {
-      return timeoutMs;
-    }
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      throw new TimeoutError('Budget exceeded before request could start');
-    }
-    return Math.min(timeoutMs, remaining);
-  }
+  // --------------------------------------------------------------------------
+  // Cache Helpers
+  // --------------------------------------------------------------------------
 
-  private computeDeadline(opts: HttpRequestOptions, startedAt: number): number | undefined {
-    const endToEndDeadline =
-      opts.resilience?.maxEndToEndLatencyMs !== undefined
-        ? startedAt + opts.resilience.maxEndToEndLatencyMs
-        : undefined;
-    const overallDeadline =
-      opts.resilience?.overallTimeoutMs !== undefined ? startedAt + opts.resilience.overallTimeoutMs : undefined;
-    const budgetDeadline =
-      opts.budget?.maxTotalDurationMs !== undefined ? startedAt + opts.budget.maxTotalDurationMs : undefined;
+  private async tryGetFromCache<T>(key: string): Promise<T | undefined> {
+    if (!this.config.cache) return undefined;
 
-    const candidates = [endToEndDeadline, overallDeadline, budgetDeadline].filter(
-      (value): value is number => value !== undefined,
-    );
-    if (!candidates.length) return undefined;
-    return Math.min(...candidates);
-  }
+    try {
+      const entry = await this.config.cache.get<T>(key);
+      if (!entry) return undefined;
 
-  private async classifyResponse(response: Response, bodyText?: string): Promise<ResponseClassification> {
-    const classification = await this.config.responseClassifier?.(response, bodyText);
-    return (
-      classification ?? {
-        treatAsError: undefined,
-        overrideStatus: undefined,
-        category: undefined,
+      // Check if expired
+      if (entry.expiresAt < Date.now()) {
+        // Delete expired entry
+        if (this.config.cache.delete) {
+          await this.config.cache.delete(key);
+        }
+        return undefined;
       }
-    );
-  }
 
-  private mergeFallback(hint: FallbackHint | undefined, response: Response): FallbackHint | undefined {
-    const retryAfterMs = hint?.retryAfterMs ?? this.parseRetryAfterHeader(response.headers.get('retry-after'));
-    if (retryAfterMs) {
-      return { ...hint, retryAfterMs };
+      return entry.value;
+    } catch {
+      return undefined;
     }
-    return hint;
   }
 
-  private mapStatusToCategory(status: number): ErrorCategory {
-    return statusToCategory(status);
+  private async trySetCache<T>(key: string, value: T): Promise<void> {
+    if (!this.config.cache) return;
+
+    try {
+      // Default TTL: 5 minutes
+      const ttlMs = 5 * 60 * 1000;
+      const expiresAt = Date.now() + ttlMs;
+
+      await this.config.cache.set(key, { value, expiresAt });
+    } catch {
+      // Ignore cache errors
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Interceptors
+  // --------------------------------------------------------------------------
+
+  private async callBeforeSendInterceptors(
+    opts: HttpRequestOptions,
+    attempt: number,
+    signal: AbortSignal
+  ): Promise<void> {
+    const ctx: BeforeSendContext = { request: opts, attempt, signal };
+
+    for (const interceptor of this.config.interceptors) {
+      if (interceptor.beforeSend) {
+        await interceptor.beforeSend(ctx);
+      }
+    }
+  }
+
+  private async callAfterResponseInterceptors<T>(
+    opts: HttpRequestOptions,
+    attempt: number,
+    response: HttpResponse<T>
+  ): Promise<void> {
+    const ctx: AfterResponseContext<T> = { request: opts, attempt, response };
+
+    // Call in reverse order
+    for (let i = this.config.interceptors.length - 1; i >= 0; i--) {
+      const interceptor = this.config.interceptors[i];
+      if (interceptor.afterResponse) {
+        await interceptor.afterResponse(ctx);
+      }
+    }
+  }
+
+  private async callErrorInterceptors(
+    opts: HttpRequestOptions,
+    attempt: number,
+    error: Error
+  ): Promise<void> {
+    const ctx: OnErrorContext = { request: opts, attempt, error };
+
+    // Call in reverse order
+    for (let i = this.config.interceptors.length - 1; i >= 0; i--) {
+      const interceptor = this.config.interceptors[i];
+      if (interceptor.onError) {
+        try {
+          await interceptor.onError(ctx);
+        } catch {
+          // Ignore interceptor errors
+        }
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Metrics & Tracing
+  // --------------------------------------------------------------------------
+
+  private async recordMetrics(
+    opts: HttpRequestOptions,
+    url: string,
+    outcome: RequestOutcome
+  ): Promise<void> {
+    if (!this.config.metricsSink) return;
+
+    try {
+      const info: MetricsRequestInfo = {
+        operation: opts.operation,
+        method: opts.method,
+        url,
+        correlation: opts.correlation,
+        agentContext: opts.agentContext,
+        extensions: opts.extensions,
+        outcome,
+      };
+
+      await this.config.metricsSink.recordRequest(info);
+    } catch {
+      // Ignore metrics errors
+    }
   }
 }
 
-export class HttpError extends Error {
-  status: number;
-  body: unknown;
-  headers?: Headers;
-  category: ErrorCategory;
-  fallback?: FallbackHint;
-  response?: Response;
-  correlation?: CorrelationInfo;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
+// ============================================================================
+// Error Classes (re-export from types with constructor implementation)
+// ============================================================================
 
-  constructor(
-    message: string,
-    options: {
-      status: number;
-      body?: unknown;
-      headers?: Headers;
-      category: ErrorCategory;
-      fallback?: FallbackHint;
-      response?: Response;
-      correlation?: CorrelationInfo;
-      agentContext?: AgentContext;
-      extensions?: Extensions;
-    },
-  ) {
-    super(message);
-    this.name = 'HttpError';
-    this.status = options.status;
-    this.body = options.body;
-    this.headers = options.headers;
-    this.category = options.category;
-    this.fallback = options.fallback;
-    this.response = options.response;
-    this.correlation = options.correlation;
-    this.agentContext = options.agentContext;
-    this.extensions = options.extensions;
-  }
+export { HttpError, TimeoutError } from './types';
+
+// ============================================================================
+// Default Client Factory
+// ============================================================================
+
+export interface DefaultClientOptions {
+  baseUrl?: string;
+  enableConsoleLogging?: boolean; // default: false
 }
 
-export class TimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TimeoutError';
-  }
-}
-
-/**
- * Console logger implementation for use with createDefaultHttpClient.
- * Logs to console.debug, console.info, console.warn, and console.error.
- */
-class ConsoleLogger implements Logger {
-  debug(message: string, meta?: Record<string, unknown>): void {
-    console.debug(message, meta);
-  }
-  info(message: string, meta?: Record<string, unknown>): void {
-    console.info(message, meta);
-  }
-  warn(message: string, meta?: Record<string, unknown>): void {
-    console.warn(message, meta);
-  }
-  error(message: string, meta?: Record<string, unknown>): void {
-    console.error(message, meta);
-  }
-}
-
-/**
- * Creates an HttpClient with sensible, zero-dependency defaults suitable for most use cases.
- *
- * Defaults applied:
- * - Transport: fetch-based (via fetchTransport)
- * - Base URL: none (must be provided per-request or via config.baseUrl)
- * - Resilience: 3 max attempts, 30s timeout, exponential backoff with jitter
- * - Logger: console logger
- * - Error classifier: default classifier (maps status codes to error categories)
- * - No external dependencies (no Redis, no OTEL, no rate limiters)
- *
- * @example
- * ```typescript
- * const client = createDefaultHttpClient({
- *   clientName: 'my-api',
- *   baseUrl: 'https://api.example.com',
- * });
- *
- * const data = await client.requestJson({
- *   method: 'GET',
- *   operation: 'getUser',
- *   urlParts: { path: '/users/123' },
- * });
- * ```
- *
- * @param config - Partial HttpClientConfig; all fields optional except clientName
- * @returns HttpClient instance with default configuration
- */
-export function createDefaultHttpClient(
-  config: Partial<BaseHttpClientConfig> & { clientName: string }
-): HttpClient {
-  const defaultConfig: BaseHttpClientConfig = {
-    clientName: config.clientName,
-    baseUrl: config.baseUrl,
-    transport: config.transport ?? fetchTransport,
-    defaultHeaders: config.defaultHeaders,
+export function createDefaultHttpClient(options?: DefaultClientOptions): HttpClient {
+  const config: HttpClientConfig = {
+    baseUrl: options?.baseUrl,
+    transport: fetchTransport,
     defaultResilience: {
-      maxAttempts: 3,
+      maxAttempts: DEFAULT_MAX_ATTEMPTS,
       retryEnabled: true,
-      perAttemptTimeoutMs: 30_000,
-      overallTimeoutMs: 90_000,
-      baseBackoffMs: 250,
-      maxBackoffMs: 60_000,
-      jitterFactorRange: [0.8, 1.2],
-      ...config.defaultResilience,
+      overallTimeoutMs: DEFAULT_OVERALL_TIMEOUT_MS,
+      baseBackoffMs: DEFAULT_BASE_BACKOFF_MS,
+      maxBackoffMs: DEFAULT_MAX_BACKOFF_MS,
+      jitterFactor: DEFAULT_JITTER_FACTOR,
+      retryIdempotentMethodsByDefault: true,
+      maxSuggestedRetryDelayMs: DEFAULT_MAX_SUGGESTED_RETRY_DELAY_MS,
     },
-    defaultAgentContext: config.defaultAgentContext,
-    interceptors: config.interceptors ?? [],
-    logger: config.logger ?? new ConsoleLogger(),
-    metrics: config.metrics,
-    tracing: config.tracing,
-    resolveBaseUrl: config.resolveBaseUrl,
-    cache: config.cache,
-    rateLimiter: config.rateLimiter,
-    circuitBreaker: config.circuitBreaker,
-    beforeRequest: config.beforeRequest,
-    afterResponse: config.afterResponse,
-    responseClassifier: config.responseClassifier,
-    errorClassifier: config.errorClassifier ?? new DefaultErrorClassifier(),
-    policyWrapper: config.policyWrapper,
+    errorClassifier: new DefaultErrorClassifier(),
+    interceptors: [],
   };
 
-  return new HttpClient(defaultConfig);
+  if (options?.enableConsoleLogging) {
+    config.interceptors = [
+      {
+        beforeSend: (ctx) => {
+          console.log('[HTTP] Request:', ctx.request.method, ctx.request.url ?? ctx.request.urlParts);
+        },
+        afterResponse: (ctx) => {
+          console.log('[HTTP] Response:', ctx.response.status, ctx.request.method);
+        },
+        onError: (ctx) => {
+          console.error('[HTTP] Error:', ctx.error);
+        },
+      },
+    ];
+
+    config.metricsSink = {
+      recordRequest: (info) => {
+        console.log('[HTTP] Metrics:', {
+          operation: info.operation,
+          method: info.method,
+          outcome: info.outcome,
+        });
+      },
+    };
+  }
+
+  return new HttpClient(config);
 }

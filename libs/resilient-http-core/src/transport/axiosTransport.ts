@@ -1,4 +1,4 @@
-import type { HttpTransport } from '../types';
+import type { HttpTransport, RawHttpResponse, TransportRequest } from '../types';
 
 export interface AxiosInstanceLike {
   request<T = unknown>(config: {
@@ -7,39 +7,33 @@ export interface AxiosInstanceLike {
     headers?: Record<string, string>;
     data?: unknown;
     signal?: AbortSignal;
+    responseType?: 'arraybuffer';
   }): Promise<{
     status: number;
-    headers: HeadersInit | Record<string, string>;
+    headers: Record<string, string>;
     data: T;
   }>;
 }
 
+/**
+ * Creates an HTTP transport adapter for Axios-like HTTP clients.
+ * @deprecated Consider using fetchTransport instead for zero-dependency setup.
+ */
 export const createAxiosTransport = (axiosInstance: AxiosInstanceLike): HttpTransport => {
-  return async (url, init) => {
-    const response = await axiosInstance.request<unknown>({
-      url,
-      method: init.method as string,
-      headers: init.headers as Record<string, string>,
-      data: init.body,
-      signal: init.signal ?? undefined,
+  return async (req: TransportRequest, signal: AbortSignal): Promise<RawHttpResponse> => {
+    const response = await axiosInstance.request<ArrayBuffer>({
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      data: req.body,
+      signal,
+      responseType: 'arraybuffer',
     });
 
-    const data = isBodyInit(response.data) ? response.data : JSON.stringify(response.data);
-
-    return new Response(data as BodyInit, {
+    return {
       status: response.status,
-      headers: response.headers as HeadersInit,
-    });
+      headers: response.headers,
+      body: response.data,
+    };
   };
-};
-
-const isBodyInit = (value: unknown): value is BodyInit => {
-  return (
-    typeof value === 'string' ||
-    value instanceof Blob ||
-    value instanceof ArrayBuffer ||
-    ArrayBuffer.isView(value) ||
-    value instanceof URLSearchParams ||
-    value instanceof FormData
-  );
 };

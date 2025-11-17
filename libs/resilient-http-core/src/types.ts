@@ -1,459 +1,381 @@
-export interface HttpCache {
-  get<T = unknown>(key: string): Promise<T | undefined>;
-  set<T = unknown>(key: string, value: T, ttlMs: number): Promise<void>;
-  delete(key: string): Promise<void>;
-}
+// ============================================================================
+// Core Types – Resilient HTTP v0.8.0
+// ============================================================================
 
-export type HttpMethod = 'GET' | 'HEAD' | 'OPTIONS' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+// ----------------------------------------------------------------------------
+// Basic HTTP Types
+// ----------------------------------------------------------------------------
+
+export type HttpMethod =
+  | 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS';
 
 export type HttpHeaders = Record<string, string>;
 
+export type QueryParams = Record<string, string | number | boolean | undefined>;
+
 export interface UrlParts {
-  baseUrl?: string;
-  path?: string;
-  query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
+  baseUrl?: string;   // e.g. "https://api.example.com"
+  path?: string;      // e.g. "/v1/items"
+  query?: QueryParams;
 }
 
+// ----------------------------------------------------------------------------
+// Correlation, AgentContext, Extensions
+// ----------------------------------------------------------------------------
+
 export interface CorrelationInfo {
-  requestId: string;
+  requestId?: string;
   correlationId?: string;
   parentCorrelationId?: string;
 }
 
+export type RequestClass = 'interactive' | 'background' | 'batch';
+
 export interface AgentContext {
-  agent?: string;
-  runId?: string;
-  labels?: Record<string, string>;
-  metadata?: Record<string, unknown>;
+  agentName?: string;
+  agentVersion?: string;
+  tenantId?: string;
+  requestClass?: RequestClass;
+  sessionId?: string;
+  userId?: string;
 }
 
 export type Extensions = Record<string, unknown>;
 
+// ----------------------------------------------------------------------------
+// Budget Hints (shared by core, policies, conversation)
+// ----------------------------------------------------------------------------
+
+export interface BudgetHints {
+  /** Maximum tokens to consume (input + output) for this logical request. */
+  maxTokens?: number;
+
+  /** Approximate per-token cost and budget limit, for policies/metrics. */
+  tokenCostCents?: number;
+  maxCostCents?: number;
+
+  /** Maximum requests allowed in a group (e.g., for bulk operations). */
+  maxRequests?: number;
+
+  /** Arbitrary numeric hints for policy/agent decisions. */
+  attributes?: Record<string, number>;
+}
+
+// ----------------------------------------------------------------------------
+// Resilience Profile
+// ----------------------------------------------------------------------------
+
 export interface ResilienceProfile {
-  maxAttempts?: number;
-  retryEnabled?: boolean;
-  perAttemptTimeoutMs?: number;
-  overallTimeoutMs?: number;
-  baseBackoffMs?: number;
-  maxBackoffMs?: number;
-  jitterFactorRange?: [number, number];
-  maxEndToEndLatencyMs?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use policy-based prioritization via @airnub/resilient-http-policies instead.
-   */
-  priority?: 'low' | 'normal' | 'high' | 'critical';
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use maxAttempts directly.
-   */
-  maxAttemptsOverride?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use retryEnabled: false or maxAttempts: 1 instead.
-   */
-  failFast?: boolean;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Failover logic should be implemented via custom interceptors.
-   */
-  allowFailover?: boolean;
+  maxAttempts?: number;          // Default: 3
+  retryEnabled?: boolean;        // Default: true
+
+  perAttemptTimeoutMs?: number;  // Default: undefined (no per-attempt limit)
+  overallTimeoutMs?: number;     // Default: 30_000
+
+  baseBackoffMs?: number;        // Default: 200
+  maxBackoffMs?: number;         // Default: 2_000
+  jitterFactor?: number;         // Default: 0.2 (20% jitter)
+
+  retryIdempotentMethodsByDefault?: boolean;  // Default: true
+  maxSuggestedRetryDelayMs?: number;          // Default: 60_000
 }
 
-export interface RequestBudget {
-  maxAttempts?: number;
-  maxTotalDurationMs?: number;
-}
+// ----------------------------------------------------------------------------
+// Error Model & Classification
+// ----------------------------------------------------------------------------
 
-export type HttpRequestBudget = RequestBudget;
-
-export interface RateLimiterContext {
-  method: string;
-  path: string;
-  operation: string;
-  attempt: number;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-  [key: string]: unknown;
-}
-
-export interface HttpRateLimiter {
-  throttle(key: string, context: RateLimiterContext): Promise<void>;
-  onSuccess?(key: string, context: RateLimiterContext): void | Promise<void>;
-  onError?(key: string, error: unknown, context: RateLimiterContext): void | Promise<void>;
-}
-
-export interface CircuitBreaker {
-  beforeRequest(key: string): Promise<void>;
-  onSuccess(key: string): Promise<void>;
-  onFailure(key: string, error: unknown): Promise<void>;
-}
-
-export type LoggerMeta = Record<string, unknown> & {
-  correlation?: CorrelationInfo;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-};
-
-export interface Logger {
-  debug(message: string, meta?: LoggerMeta): void;
-  info(message: string, meta?: LoggerMeta): void;
-  warn(message: string, meta?: LoggerMeta): void;
-  error(message: string, meta?: LoggerMeta): void;
-}
-
-/**
- * Error category classification for HTTP errors.
- *
- * Standard v0.7 categories:
- * - 'none': No error
- * - 'auth': Authentication/authorization failure (401, 403)
- * - 'validation': Client input validation error (400, 422)
- * - 'not_found': Resource not found (404)
- * - 'quota': Quota/payment required (402)
- * - 'rate_limit': Rate limit exceeded (429)
- * - 'timeout': Request timeout (408)
- * - 'transient': Temporary server error, retryable (5xx)
- * - 'network': Network-level error (connection failed, DNS, etc.)
- * - 'canceled': Request was canceled by client
- * - 'unknown': Unclassified error
- *
- * @deprecated Legacy categories (pre-v0.7, use modern equivalents):
- * - 'safety': Use 'validation' or custom error handling
- * - 'quota_exceeded': Use 'quota' or 'rate_limit'
- * - 'server': Use 'transient' for 5xx errors
- */
 export type ErrorCategory =
-  | 'none'
   | 'auth'
   | 'validation'
-  | 'not_found'
   | 'quota'
   | 'rate_limit'
   | 'timeout'
   | 'transient'
   | 'network'
   | 'canceled'
-  | 'unknown'
-  | 'safety'
-  | 'quota_exceeded'
-  | 'server';
+  | 'none'
+  | 'unknown';
 
-export interface ErrorContext {
-  request: HttpRequestOptions;
-  response?: Response;
-  error?: unknown;
+export interface FallbackHint {
+  retryAfterMs?: number;
+  retryable?: boolean;
+  hint?: string;
 }
 
 export interface ClassifiedError {
   category: ErrorCategory;
   statusCode?: number;
-  retryable?: boolean;
-  suggestedBackoffMs?: number;
   reason?: string;
-  policyKey?: string;
+  fallback?: FallbackHint;
+}
+
+export interface ErrorClassifierContext {
+  method: HttpMethod;
+  url: string;
+  attempt: number;
+  request: HttpRequestOptions;
+  response?: RawHttpResponse;
+  error?: unknown;
 }
 
 export interface ErrorClassifier {
-  classifyNetworkError(error: unknown, ctx?: ErrorContext): ClassifiedError;
-  classifyResponse(response: Response, bodyText?: string, ctx?: ErrorContext): ClassifiedError;
-  /** Legacy classifier hook retained for backwards compatibility */
-  classify?(ctx: ErrorContext): ClassifiedError;
+  classify(ctx: ErrorClassifierContext): ClassifiedError;
 }
 
-export interface LegacyErrorClassifier {
-  classify(ctx: ErrorContext): ClassifiedError;
+// ----------------------------------------------------------------------------
+// HTTP Errors
+// ----------------------------------------------------------------------------
+
+export class HttpError extends Error {
+  readonly category: ErrorCategory;
+  readonly statusCode?: number;
+  readonly url: string;
+  readonly method: HttpMethod;
+  readonly requestId?: string;
+  readonly correlationId?: string;
+  readonly operation?: string;
+  readonly attemptCount: number;
+  readonly outcome?: RequestOutcome;
+
+  constructor(message: string, options: {
+    category: ErrorCategory;
+    statusCode?: number;
+    url: string;
+    method: HttpMethod;
+    requestId?: string;
+    correlationId?: string;
+    operation?: string;
+    attemptCount: number;
+    outcome?: RequestOutcome;
+    cause?: unknown;
+  }) {
+    super(message, { cause: options.cause });
+    this.name = 'HttpError';
+    this.category = options.category;
+    this.statusCode = options.statusCode;
+    this.url = options.url;
+    this.method = options.method;
+    this.requestId = options.requestId;
+    this.correlationId = options.correlationId;
+    this.operation = options.operation;
+    this.attemptCount = options.attemptCount;
+    this.outcome = options.outcome;
+  }
 }
 
-export interface FallbackHint {
-  retryAfterMs?: number;
-  degradeToOperation?: string;
-  reason?: string;
-  [key: string]: unknown;
+export class TimeoutError extends HttpError {
+  constructor(message: string, options: {
+    url: string;
+    method: HttpMethod;
+    requestId?: string;
+    correlationId?: string;
+    operation?: string;
+    attemptCount: number;
+    outcome?: RequestOutcome;
+  }) {
+    super(message, {
+      ...options,
+      category: 'timeout',
+      statusCode: 408,
+    });
+    this.name = 'TimeoutError';
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Transport Abstraction
+// ----------------------------------------------------------------------------
+
+export interface RawHttpResponse {
+  status: number;
+  headers: HttpHeaders;
+  body: ArrayBuffer;
+}
+
+export interface TransportRequest {
+  method: HttpMethod;
+  url: string;
+  headers: HttpHeaders;
+  body?: ArrayBuffer;
+}
+
+export interface HttpTransport {
+  (req: TransportRequest, signal: AbortSignal): Promise<RawHttpResponse>;
+}
+
+// ----------------------------------------------------------------------------
+// Request & Response
+// ----------------------------------------------------------------------------
+
+export interface HttpRequestOptions {
+  method: HttpMethod;
+
+  url?: string;
+  urlParts?: UrlParts;  // exactly one of url or urlParts must be provided
+
+  headers?: HttpHeaders;
+  query?: QueryParams;
+
+  body?: unknown;       // encoded by body serialization interceptor
+
+  operation?: string;
+
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+
+  resilience?: ResilienceProfile;
+  budget?: BudgetHints;
+
+  cacheMode?: 'default' | 'bypass' | 'refresh';
+  cacheKey?: string;
+
+  /** Optional idempotency key; recommended for POST/PUT/PATCH. */
+  idempotencyKey?: string;
 }
 
 export interface RateLimitFeedback {
-  limitRequests?: number;
   remainingRequests?: number;
-  resetRequestsAt?: Date;
-  limitTokens?: number;
+  limitRequests?: number;
+  resetAt?: Date;
+
   remainingTokens?: number;
-  resetTokensAt?: Date;
-  isRateLimited?: boolean;
-  rawHeaders?: Record<string, string>;
+  limitTokens?: number;
+  tokenResetAt?: Date;
+
+  raw?: Record<string, string>;
 }
 
 export interface RequestOutcome {
   ok: boolean;
   status?: number;
-  errorCategory?: ErrorCategory;
+  category: ErrorCategory;
   attempts: number;
-  startedAt: number;
-  finishedAt: number;
-  rateLimitFeedback?: RateLimitFeedback;
-}
-
-export interface MetricsRequestInfo {
-  clientName: string;
-  operation: string;
-  method: HttpMethod;
-  url: string;
-
-  status?: number;
-  errorCategory?: ErrorCategory;
+  startedAt: Date;
+  finishedAt: Date;
   durationMs: number;
-  attempts: number;
-
-  cacheHit?: boolean;
-  rateLimitFeedback?: RateLimitFeedback;
-
-  correlation: CorrelationInfo;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
+  statusFamily?: number;
+  errorMessage?: string;
+  rateLimit?: RateLimitFeedback;
 }
 
-export interface MetricsSink {
-  recordRequest?(info: MetricsRequestInfo): void | Promise<void>;
+export interface HttpResponse<TBody = unknown> {
+  status: number;
+  headers: HttpHeaders;
+  body: TBody;
+  outcome: RequestOutcome;
 }
 
-export interface HttpTransport {
-  (url: string, init: RequestInit): Promise<Response>;
-}
-
-export interface ResponseClassification {
-  treatAsError?: boolean;
-  overrideStatus?: number;
-  category?: ErrorCategory;
-  fallback?: FallbackHint;
-}
-
-export type ResponseClassifier = (
-  response: Response,
-  bodyText?: string,
-) => Promise<ResponseClassification | void> | ResponseClassification | void;
-
-export interface TracingSpan {
-  setAttribute(key: string, value: string | number | boolean | null): void;
-  recordException(error: unknown): void;
-  end(): void;
-}
-
-export interface TracingStartOptions {
-  attributes?: Record<string, string | number | boolean | null>;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-}
-
-export interface TracingAdapter {
-  startSpan(name: string, options?: TracingStartOptions): TracingSpan;
-}
-
-export interface PolicyContext {
-  client: string;
-  operation: string;
-  correlation?: CorrelationInfo;
-  requestId?: string;
-  correlationId?: string;
-  parentCorrelationId?: string;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-}
-
-export type PolicyWrapper = <T>(fn: () => Promise<T>, context: PolicyContext) => Promise<T>;
-
-export interface OperationDefaults {
-  timeoutMs?: number;
-  maxRetries?: number;
-  idempotent?: boolean;
-}
-
-export interface HttpClientConfig {
-  clientName: string;
-  baseUrl?: string;
-
-  transport?: HttpTransport;
-  defaultHeaders?: HttpHeaders;
-
-  defaultResilience?: ResilienceProfile;
-  defaultAgentContext?: AgentContext;
-
-  interceptors?: HttpRequestInterceptor[];
-  logger?: Logger;
-  metrics?: MetricsSink;
-  tracing?: TracingAdapter;
-
-  resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;
-  cache?: HttpCache;
-  rateLimiter?: HttpRateLimiter;
-  circuitBreaker?: CircuitBreaker;
-
-  /**
-   * @deprecated Legacy hook from pre-v0.7. Use interceptors array with HttpRequestInterceptor.beforeSend instead.
-   */
-  beforeRequest?: (opts: HttpRequestOptions) => void | Promise<void>;
-  /**
-   * @deprecated Legacy hook from pre-v0.7. Use interceptors array with HttpRequestInterceptor.afterResponse instead.
-   */
-  afterResponse?: (opts: HttpRequestOptions, res: Response) => void | Promise<void>;
-
-  /**
-   * @deprecated Legacy hook from pre-v0.7. Use interceptors or errorClassifier instead.
-   */
-  responseClassifier?: ResponseClassifier;
-  errorClassifier?: ErrorClassifier | LegacyErrorClassifier;
-  /**
-   * @deprecated Legacy hook from pre-v0.7. Use @airnub/resilient-http-policies with createPolicyInterceptor instead.
-   */
-  policyWrapper?: PolicyWrapper;
-
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use defaultResilience.perAttemptTimeoutMs instead.
-   */
-  timeoutMs?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use defaultResilience.maxAttempts instead.
-   */
-  maxRetries?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Set resilience per-operation via request options instead.
-   */
-  operationDefaults?: Record<string, OperationDefaults>;
-}
-
-export type BaseHttpClientConfig = HttpClientConfig;
-
-export interface HttpRequestOptions {
-  operation: string;
-  method: HttpMethod;
-
-  url?: string;
-  urlParts?: UrlParts;
-  path?: string;
-  query?: Record<string, string | number | boolean | (string | number | boolean)[] | undefined>;
-  pageSize?: number;
-  pageOffset?: number;
-
-  body?: BodyInit | unknown;
-  headers?: HttpHeaders | Record<string, string | undefined>;
-  idempotencyKey?: string;
-
-  resilience?: ResilienceProfile;
-  budget?: RequestBudget;
-
-  correlation?: CorrelationInfo;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use resilience.retryEnabled and request-level classification instead.
-   */
-  idempotent?: boolean;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use resilience.perAttemptTimeoutMs or resilience.overallTimeoutMs instead.
-   */
-  timeoutMs?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use resilience.maxAttempts instead.
-   */
-  maxRetries?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Caching should be implemented via interceptors.
-   */
-  cacheKey?: string;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Caching should be implemented via interceptors.
-   */
-  cacheTtlMs?: number;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use correlation.requestId instead.
-   */
-  requestId?: string;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use correlation.correlationId instead.
-   */
-  correlationId?: string;
-  /**
-   * @deprecated Legacy field from pre-v0.7. Use correlation.parentCorrelationId instead.
-   */
-  parentCorrelationId?: string;
-  /**
-   * @deprecated Internal field, do not use directly.
-   */
-  attempt?: number;
-}
+// ----------------------------------------------------------------------------
+// Interceptors
+// ----------------------------------------------------------------------------
 
 export interface BeforeSendContext {
   request: HttpRequestOptions;
+  attempt: number;
   signal: AbortSignal;
 }
 
-export interface AfterResponseContext {
+export interface AfterResponseContext<TBody = unknown> {
   request: HttpRequestOptions;
-  response: Response;
   attempt: number;
+  response: HttpResponse<TBody>;
 }
 
 export interface OnErrorContext {
   request: HttpRequestOptions;
-  error: unknown;
   attempt: number;
+  error: HttpError | Error;
+}
+
+export interface HttpRequestInterceptor {
+  beforeSend?(ctx: BeforeSendContext): Promise<void> | void;
+
+  afterResponse?<TBody = unknown>(
+    ctx: AfterResponseContext<TBody>
+  ): Promise<void> | void;
+
+  onError?(ctx: OnErrorContext): Promise<void> | void;
+}
+
+// ----------------------------------------------------------------------------
+// Caching
+// ----------------------------------------------------------------------------
+
+export interface HttpCacheEntry<T = unknown> {
+  value: T;
+  expiresAt: number; // epoch millis
+}
+
+export interface HttpCache {
+  get<T = unknown>(key: string): Promise<HttpCacheEntry<T> | undefined>;
+  set<T = unknown>(key: string, entry: HttpCacheEntry<T>): Promise<void>;
+  delete?(key: string): Promise<void>;
+}
+
+// ----------------------------------------------------------------------------
+// Metrics & Tracing
+// ----------------------------------------------------------------------------
+
+export interface MetricsRequestInfo {
+  operation?: string;
+  method: HttpMethod;
+  url: string;
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+  outcome: RequestOutcome;
+}
+
+export interface MetricsSink {
+  recordRequest(info: MetricsRequestInfo): void | Promise<void>;
+}
+
+export interface TracingSpan {
+  setAttribute(key: string, value: string | number | boolean): void;
+  recordException(error: Error): void;
+}
+
+export interface TracingAdapter {
+  startSpan(info: MetricsRequestInfo): TracingSpan | undefined;
+  endSpan(span: TracingSpan, outcome: RequestOutcome): void | Promise<void>;
+}
+
+// ----------------------------------------------------------------------------
+// HttpClient Config
+// ----------------------------------------------------------------------------
+
+export interface HttpClientConfig {
+  baseUrl?: string;
+  transport?: HttpTransport;
+  defaultHeaders?: HttpHeaders;
+  defaultExtensions?: Extensions;
+  defaultResilience?: ResilienceProfile;
+  cache?: HttpCache;
+  metricsSink?: MetricsSink;
+  tracingAdapter?: TracingAdapter;
+  interceptors?: HttpRequestInterceptor[];
+  errorClassifier?: ErrorClassifier;
+}
+
+// ----------------------------------------------------------------------------
+// Legacy Types (deprecated, for backwards compatibility during migration)
+// ----------------------------------------------------------------------------
+
+/**
+ * @deprecated Use BudgetHints instead
+ */
+export interface RequestBudget {
+  maxAttempts?: number;
+  maxTotalDurationMs?: number;
 }
 
 /**
- * HTTP request interceptor for cross-cutting concerns (logging, metrics, policies, guardrails, etc.).
- *
- * Interceptors are the primary extension mechanism in v0.7+. They run in a well-defined order:
- *
- * **Execution Order:**
- * 1. `beforeSend`: Runs in **registration order** (first registered runs first)
- *    - Called before each HTTP attempt (including retries)
- *    - Can mutate the request (headers, URL, body, resilience settings)
- *    - Can throw to prevent the request (e.g., policy denial, guardrail violation)
- *    - Receives BeforeSendContext with request and AbortSignal
- *
- * 2. `afterResponse`: Runs in **reverse registration order** (last registered runs first)
- *    - Called after each successful HTTP response (including retries)
- *    - Receives AfterResponseContext with request, response, and attempt number
- *    - Cannot prevent further processing, but can record metrics/logs
- *
- * 3. `onError`: Runs in **reverse registration order** (last registered runs first)
- *    - Called after each failed HTTP attempt (network errors, non-2xx status if classified as error)
- *    - Receives OnErrorContext with request, error, and attempt number
- *    - Cannot suppress the error, but can record metrics/logs
- *
- * **Best Practices:**
- * - Use interceptors for: policies, guardrails, telemetry, caching, auth injection, request ID generation
- * - Avoid heavy computation in interceptors (they run on every attempt)
- * - Interceptors run *inside* the retry loop, so they execute once per attempt
- * - To run logic once per logical request (not per attempt), use metrics/tracing hooks instead
- *
- * **Example:**
- * ```typescript
- * const loggingInterceptor: HttpRequestInterceptor = {
- *   beforeSend: ({ request }) => {
- *     console.log('Sending request:', request.operation);
- *   },
- *   afterResponse: ({ response, attempt }) => {
- *     console.log('Got response:', response.status, 'on attempt', attempt);
- *   },
- *   onError: ({ error, attempt }) => {
- *     console.error('Request failed on attempt', attempt, error);
- *   },
- * };
- * ```
- *
- * @see HttpClientConfig.interceptors - Where to register interceptors
+ * @deprecated Legacy logger interface. Use interceptors for logging instead.
  */
-export interface HttpRequestInterceptor {
-  beforeSend?:
-    | ((ctx: BeforeSendContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions) => Promise<HttpRequestOptions | void> | HttpRequestOptions | void);
-  afterResponse?:
-    | ((ctx: AfterResponseContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions, res: Response) => Promise<Response | void> | Response | void);
-  onError?:
-    | ((ctx: OnErrorContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions, error: unknown) => Promise<void> | void);
+export interface Logger {
+  debug(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
 }
