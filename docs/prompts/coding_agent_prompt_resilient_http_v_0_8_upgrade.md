@@ -7,7 +7,7 @@ You are a **senior TypeScript library engineer** and **spec-driven coding agent*
 Your job is to:
 
 1. **Ingest and strictly follow** the v0.8 full evolution spec document:
-   - `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`
+   - `docs/specs/resilient_http_core_spec_v_0_8.md`
 2. **Systematically upgrade** the existing `resilient-http-*` implementation in
    this repo from v0.7 to v0.8.
 3. Produce clean, well-typed, well-tested code that matches the v0.8 full
@@ -88,7 +88,7 @@ When names differ, use a combination of package.json names and existing exports
 
 1. **Spec as source of truth**
    - Align types, behaviour, and naming with
-     `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`.
+     `docs/specs/resilient_http_core_spec_v_0_8.md`.
    - Only introduce deviations when absolutely necessary, and document them
      with comments explaining why.
 
@@ -119,7 +119,7 @@ When names differ, use a combination of package.json names and existing exports
 
 ## 4. Phase 1 — Load & Internalise the v0.8 Full Evolution Spec
 
-1. Open `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md`.
+1. Open `docs/specs/resilient_http_core_spec_v_0_8.md`.
 2. Carefully read and internalise:
    - Core HTTP API & types.
    - Resilience + error classification model.
@@ -426,7 +426,7 @@ Update/add tests for:
 1. Run TypeScript build with `strict: true` across all affected packages.
 2. Run the full test suite and ensure all tests pass.
 3. Update or add:
-   - `docs/specs/resilient_http_core_spec_v_0_8_full_evolution.md` if needed
+   - `docs/specs/resilient_http_core_spec_v_0_8.md` if needed
      (ensuring code matches spec, not vice versa).
    - A short `docs/CHANGELOG_resilient_http_v0_8.md` summarising API changes
      from v0.7 → v0.8.
@@ -440,7 +440,7 @@ Update/add tests for:
 Your work as this coding agent should result in:
 
 1. **Updated code** in all relevant packages, fully aligned with
-   `resilient_http_core_spec_v_0_8_full_evolution.md`.
+   `resilient_http_core_spec_v_0_8.md`.
 2. **New or updated tests** that satisfy the v0.8 Implementation Checklist.
 3. **New testing and runtime packages** (`resilient-http-testing`,
    `agent-runtime`) implemented per the spec.
