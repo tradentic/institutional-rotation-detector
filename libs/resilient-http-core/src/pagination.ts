@@ -1,3 +1,65 @@
+/**
+ * @deprecated
+ *
+ * **This pagination module is deprecated as of v0.7.**
+ *
+ * Migration Guide:
+ * ================
+ *
+ * All pagination functionality has been moved to the dedicated satellite package:
+ * `@airnub/resilient-http-pagination`
+ *
+ * The new package provides a more powerful, strategy-based pagination API with:
+ * - Built-in offset/limit and cursor strategies
+ * - Streaming support via `paginateStream`
+ * - Aggregate outcome tracking across pages
+ * - Observable hooks (onStart, onPage, onComplete)
+ * - Better limit enforcement (maxPages, maxItems, maxDurationMs)
+ * - Cleaner separation of concerns
+ *
+ * Migration Example:
+ * ------------------
+ *
+ * **Before (v0.6, using core pagination):**
+ * ```typescript
+ * import { paginate } from '@airnub/resilient-http-core';
+ *
+ * const result = await paginate(client, {
+ *   initial: { method: 'GET', operation: 'listUsers', path: '/users' },
+ *   getNextRequest: (lastPage, state) => {
+ *     if (!lastPage?.nextCursor) return null;
+ *     return { method: 'GET', operation: 'listUsers', path: '/users', query: { cursor: lastPage.nextCursor } };
+ *   },
+ *   extractItems: (page) => page.data,
+ *   maxPages: 10,
+ * });
+ * ```
+ *
+ * **After (v0.7, using satellite package):**
+ * ```typescript
+ * import { paginateCursor, createArrayFieldExtractor } from '@airnub/resilient-http-pagination';
+ *
+ * const result = await paginateCursor({
+ *   client,
+ *   initialRequest: { method: 'GET', operation: 'listUsers', urlParts: { path: '/users' } },
+ *   cursorConfig: {
+ *     cursorParam: 'cursor',
+ *     getNextCursor: (raw, pageIndex) => raw.nextCursor ?? null,
+ *   },
+ *   extractor: createArrayFieldExtractor({ itemsPath: 'data' }),
+ *   limits: { maxPages: 10 },
+ * });
+ * ```
+ *
+ * Install the new package:
+ * ```bash
+ * pnpm add @airnub/resilient-http-pagination
+ * ```
+ *
+ * See the full API documentation at:
+ * https://github.com/tradentic/institutional-rotation-detector/tree/main/libs/resilient-http-pagination
+ */
+
 import { HttpClient } from './HttpClient';
 import type { HttpRequestOptions } from './types';
 

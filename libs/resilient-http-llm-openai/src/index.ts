@@ -365,3 +365,469 @@ export function createOpenAIHttpClient(config: OpenAIHttpClientConfig): OpenAIHt
   return { http, responses };
 }
 
+/**
+ * Conversation state entry with timestamp for TTL management.
+ */
+interface ConversationStateEntry {
+  state: OpenAIConversationState;
+  lastAccessedAt: number;
+}
+
+/**
+ * Configuration for OpenAIProviderAdapter.
+ */
+export interface OpenAIProviderAdapterConfig {
+  /**
+   * The OpenAI HTTP client to use for making requests.
+   */
+  client: OpenAIHttpClient;
+  /**
+   * Default model to use if not specified in request.
+   */
+  defaultModel?: string;
+  /**
+   * Optional conversation state management.
+   * If not provided, a managed store with TTL and size limits will be created automatically.
+   *
+   * **Warning:** If you provide your own Map, it will NOT be automatically cleaned up.
+   * Use the built-in managed store (by omitting this option) to prevent memory leaks.
+   */
+  conversationStateStore?: Map<string, OpenAIConversationState>;
+  /**
+   * Time-to-live for conversation states in milliseconds.
+   * States older than this will be automatically cleaned up.
+   * Default: 3600000 (1 hour)
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateTtlMs?: number;
+  /**
+   * Maximum number of conversation states to keep in memory.
+   * When exceeded, least recently used states will be evicted.
+   * Default: 1000
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateMaxSize?: number;
+  /**
+   * Interval for automatic cleanup of expired states in milliseconds.
+   * Default: 300000 (5 minutes)
+   * Set to 0 to disable automatic cleanup (cleanup will still happen on access).
+   * Only applies when using the built-in managed store.
+   */
+  conversationStateCleanupIntervalMs?: number;
+}
+
+/**
+ * Provider adapter for OpenAI that integrates with @airnub/agent-conversation-core.
+ *
+ * This adapter bridges the OpenAI Responses API with the generic ProviderAdapter interface,
+ * enabling use of OpenAI models within the conversation engine framework.
+ *
+ * Features:
+ * - Automatic message format conversion (ProviderMessage <-> OpenAIInputMessage)
+ * - Conversation state management with response chaining
+ * - Streaming and non-streaming support
+ * - Tool call handling
+ * - Token usage tracking
+ *
+ * @example
+ * ```typescript
+ * import { createOpenAIHttpClient } from '@airnub/http-llm-openai';
+ * import { OpenAIProviderAdapter } from '@airnub/http-llm-openai';
+ * import { DefaultConversationEngine, InMemoryConversationStore } from '@airnub/agent-conversation-core';
+ *
+ * const client = createOpenAIHttpClient({ apiKey: process.env.OPENAI_API_KEY });
+ * const adapter = new OpenAIProviderAdapter({ client, defaultModel: 'gpt-4' });
+ * const engine = new DefaultConversationEngine({
+ *   store: new InMemoryConversationStore(),
+ *   historyBuilder: new RecentNTurnsHistoryBuilder({ maxTurns: 10 }),
+ * });
+ *
+ * const conversation = await engine.store.createConversation({ title: 'My conversation' });
+ * const result = await engine.runTurn({
+ *   conversationId: conversation.id,
+ *   userMessages: [{ role: 'user', content: [{ type: 'text', text: 'Hello!' }] }],
+ *   provider: adapter,
+ *   providerParams: { metadata: { provider: 'openai', model: 'gpt-4' } },
+ * });
+ * ```
+ */
+export class OpenAIProviderAdapter implements ProviderAdapter {
+  private client: OpenAIHttpClient;
+  private defaultModel: string;
+  private conversationStateStore?: Map<string, OpenAIConversationState>;
+  private managedStateStore?: Map<string, ConversationStateEntry>;
+  private stateTtlMs: number;
+  private stateMaxSize: number;
+  private cleanupTimer?: NodeJS.Timeout | number;
+
+  constructor(config: OpenAIProviderAdapterConfig) {
+    this.client = config.client;
+    this.defaultModel = config.defaultModel ?? 'gpt-4o';
+    this.stateTtlMs = config.conversationStateTtlMs ?? 3600000; // 1 hour default
+    this.stateMaxSize = config.conversationStateMaxSize ?? 1000;
+
+    if (config.conversationStateStore) {
+      // User-provided store - no automatic cleanup
+      this.conversationStateStore = config.conversationStateStore;
+    } else {
+      // Managed store with TTL and size limits
+      this.managedStateStore = new Map();
+      const cleanupIntervalMs = config.conversationStateCleanupIntervalMs ?? 300000; // 5 minutes default
+      if (cleanupIntervalMs > 0) {
+        this.cleanupTimer = setInterval(() => {
+          this.cleanupExpiredStates();
+        }, cleanupIntervalMs);
+        // Prevent the timer from keeping the process alive
+        if (typeof this.cleanupTimer === 'object' && 'unref' in this.cleanupTimer) {
+          this.cleanupTimer.unref();
+        }
+      }
+    }
+  }
+
+  /**
+   * Clean up expired conversation states based on TTL.
+   * This is called automatically by the cleanup timer and on access.
+   */
+  private cleanupExpiredStates(): void {
+    if (!this.managedStateStore) return;
+
+    const now = Date.now();
+    const expiredKeys: string[] = [];
+
+    for (const [conversationId, entry] of this.managedStateStore) {
+      if (now - entry.lastAccessedAt > this.stateTtlMs) {
+        expiredKeys.push(conversationId);
+      }
+    }
+
+    for (const key of expiredKeys) {
+      this.managedStateStore.delete(key);
+    }
+  }
+
+  /**
+   * Evict least recently used states when max size is exceeded.
+   */
+  private evictLruIfNeeded(): void {
+    if (!this.managedStateStore) return;
+    if (this.managedStateStore.size <= this.stateMaxSize) return;
+
+    // Find the LRU entry
+    let lruKey: string | undefined;
+    let lruTime = Infinity;
+
+    for (const [conversationId, entry] of this.managedStateStore) {
+      if (entry.lastAccessedAt < lruTime) {
+        lruTime = entry.lastAccessedAt;
+        lruKey = conversationId;
+      }
+    }
+
+    if (lruKey) {
+      this.managedStateStore.delete(lruKey);
+    }
+  }
+
+  /**
+   * Get conversation state for chaining responses.
+   * Automatically cleans up expired states on access.
+   */
+  getConversationState(conversationId: string): OpenAIConversationState | undefined {
+    if (this.conversationStateStore) {
+      return this.conversationStateStore.get(conversationId);
+    }
+
+    if (this.managedStateStore) {
+      this.cleanupExpiredStates();
+      const entry = this.managedStateStore.get(conversationId);
+      if (entry) {
+        // Update last access time (LRU tracking)
+        entry.lastAccessedAt = Date.now();
+        return entry.state;
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Set conversation state for chaining responses.
+   * Automatically enforces size limits via LRU eviction.
+   */
+  setConversationState(conversationId: string, state: OpenAIConversationState): void {
+    if (this.conversationStateStore) {
+      this.conversationStateStore.set(conversationId, state);
+      return;
+    }
+
+    if (this.managedStateStore) {
+      this.managedStateStore.set(conversationId, {
+        state,
+        lastAccessedAt: Date.now(),
+      });
+      this.evictLruIfNeeded();
+    }
+  }
+
+  /**
+   * Manually clear all conversation states.
+   * Useful for testing or explicit cleanup.
+   */
+  clearConversationStates(): void {
+    if (this.conversationStateStore) {
+      this.conversationStateStore.clear();
+    } else if (this.managedStateStore) {
+      this.managedStateStore.clear();
+    }
+  }
+
+  /**
+   * Destroy the adapter and clean up resources.
+   * Call this when you're done with the adapter to prevent memory leaks.
+   */
+  destroy(): void {
+    if (this.cleanupTimer !== undefined) {
+      clearInterval(this.cleanupTimer as any);
+      this.cleanupTimer = undefined;
+    }
+    this.clearConversationStates();
+  }
+
+  async complete(params: ProviderCallParams): Promise<ProviderCallResult> {
+    const model = params.metadata.model || this.defaultModel;
+    const input = mapProviderMessagesToOpenAI(params.messages);
+
+    const conversationId = params.agentContext?.runId ?? params.metadata.extensions?.['conversation.id'] as string;
+    const previousResponseId = conversationId
+      ? this.getConversationState(conversationId)?.lastResponseId
+      : undefined;
+
+    const request: CreateResponseRequest = {
+      model,
+      input,
+      modalities: ['text'],
+      tools: params.tools ? mapProviderToolsToOpenAI(params.tools) : undefined,
+      toolChoice: params.toolChoice,
+      maxOutputTokens: params.maxTokens,
+      previousResponseId,
+    };
+
+    const options: CreateResponseOptions = {
+      agentContext: params.agentContext,
+      extensions: params.metadata.extensions,
+    };
+
+    const response = await this.client.responses.create(request, options);
+
+    // Update conversation state with new response ID
+    if (conversationId) {
+      this.setConversationState(conversationId, {
+        lastResponseId: response.id,
+        metadata: { model: response.model },
+      });
+    }
+
+    return mapOpenAIResponseToProviderResult(response);
+  }
+
+  async completeStream(params: ProviderCallParams): Promise<ProviderStream> {
+    if (!this.client.responses.createStream) {
+      throw new Error('Streaming not supported by this OpenAI client');
+    }
+
+    const model = params.metadata.model || this.defaultModel;
+    const input = mapProviderMessagesToOpenAI(params.messages);
+
+    const conversationId = params.agentContext?.runId ?? params.metadata.extensions?.['conversation.id'] as string;
+    const previousResponseId = conversationId
+      ? this.getConversationState(conversationId)?.lastResponseId
+      : undefined;
+
+    const request: CreateResponseRequest = {
+      model,
+      input,
+      modalities: ['text'],
+      tools: params.tools ? mapProviderToolsToOpenAI(params.tools) : undefined,
+      toolChoice: params.toolChoice,
+      maxOutputTokens: params.maxTokens,
+      previousResponseId,
+    };
+
+    const options: CreateResponseOptions = {
+      agentContext: params.agentContext,
+      extensions: params.metadata.extensions,
+    };
+
+    const openaiStream = await this.client.responses.createStream(request, options);
+
+    // Transform OpenAI stream events to ProviderStream events
+    const providerStream: ProviderStream = {
+      async *[Symbol.asyncIterator]() {
+        for await (const event of openaiStream) {
+          if (event.type === 'text-delta') {
+            yield {
+              type: 'delta',
+              delta: {
+                role: 'assistant',
+                content: [{ type: 'text', text: event.textDelta }],
+              },
+            };
+          } else if (event.type === 'tool-call') {
+            yield {
+              type: 'tool-call',
+              toolCall: event.toolCall,
+            };
+          } else if (event.type === 'done') {
+            // Update conversation state
+            if (conversationId) {
+              this.setConversationState(conversationId, {
+                lastResponseId: event.result.id,
+                metadata: { model: event.result.model },
+              });
+            }
+            return mapOpenAIResponseToProviderResult(event.result);
+          }
+        }
+
+        const finalResult = await openaiStream.final;
+        if (conversationId) {
+          this.setConversationState(conversationId, {
+            lastResponseId: finalResult.id,
+            metadata: { model: finalResult.model },
+          });
+        }
+        return mapOpenAIResponseToProviderResult(finalResult);
+      },
+      final: openaiStream.final.then((result) => {
+        if (conversationId) {
+          this.setConversationState(conversationId, {
+            lastResponseId: result.id,
+            metadata: { model: result.model },
+          });
+        }
+        return mapOpenAIResponseToProviderResult(result);
+      }),
+    };
+
+    return providerStream;
+  }
+}
+
+/**
+ * Maps ProviderMessage array to OpenAI input format.
+ */
+function mapProviderMessagesToOpenAI(messages: ProviderMessage[]): OpenAIInputMessage[] {
+  return messages.map((msg) => {
+    const role = msg.role as OpenAIRole;
+
+    // Simple text-only message
+    const textParts = msg.content.filter(
+      (part): part is ProviderTextPart => part.type === 'text'
+    );
+
+    if (textParts.length === 1 && msg.content.length === 1) {
+      // Single text content - use string format
+      return {
+        role,
+        content: textParts[0].text,
+      };
+    }
+
+    // Multi-part or complex content
+    const openaiContent = msg.content.map((part) => {
+      if (part.type === 'text') {
+        return { type: 'text', text: (part as ProviderTextPart).text };
+      }
+      // Pass through other content types as-is
+      return part as any;
+    });
+
+    return {
+      role,
+      content: openaiContent,
+    };
+  });
+}
+
+/**
+ * Maps ProviderToolDefinition array to OpenAI tool format.
+ */
+function mapProviderToolsToOpenAI(tools: ProviderToolDefinition[]): OpenAIToolDefinition[] {
+  return tools.map((tool) => ({
+    type: 'function',
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.schema,
+  }));
+}
+
+/**
+ * Maps OpenAIResponseObject to ProviderCallResult.
+ */
+function mapOpenAIResponseToProviderResult(response: OpenAIResponseObject): ProviderCallResult {
+  const message: ProviderMessage = response.providerMessage ?? {
+    role: 'assistant',
+    content: response.outputText
+      ? [{ type: 'text', text: response.outputText }]
+      : [],
+  };
+
+  return {
+    id: response.id,
+    createdAt: response.createdAt,
+    message,
+    toolCalls: response.toolCalls,
+    usage: response.usage,
+    raw: response.raw,
+  };
+}
+
+/**
+ * Import types from agent-conversation-core for the ProviderAdapter interface.
+ * These are defined inline here to match the types from that package.
+ */
+interface ProviderAdapter {
+  complete(params: ProviderCallParams): Promise<ProviderCallResult>;
+  completeStream?(params: ProviderCallParams): Promise<ProviderStream>;
+}
+
+interface ProviderCallParams {
+  messages: ProviderMessage[];
+  tools?: ProviderToolDefinition[];
+  toolChoice?: unknown;
+  maxTokens?: number;
+  metadata: ProviderCallMetadata;
+  agentContext?: AgentContext;
+}
+
+interface ProviderCallMetadata {
+  provider: string;
+  model: string;
+  extensions?: Extensions;
+}
+
+interface ProviderCallResult {
+  id: string;
+  createdAt: Date;
+  message: ProviderMessage;
+  toolCalls?: ProviderToolCall[];
+  usage?: TokenUsage;
+  raw?: unknown;
+}
+
+interface ProviderToolDefinition {
+  name: string;
+  description?: string;
+  schema?: unknown;
+}
+
+type ProviderStreamEvent =
+  | { type: 'delta'; delta: ProviderMessage }
+  | { type: 'tool-call'; toolCall: ProviderToolCall }
+  | { type: 'done'; result: ProviderCallResult };
+
+interface ProviderStream extends AsyncIterable<ProviderStreamEvent> {
+  final: Promise<ProviderCallResult>;
+}
+
