@@ -28,6 +28,7 @@
     "pnpm": ">=10.0.0"
   },
   "devDependencies": {
+    "@types/node": "^24.10.1",
     "tsx": "^4.19.2"
   },
   "packageManager": "pnpm@10.20.0"

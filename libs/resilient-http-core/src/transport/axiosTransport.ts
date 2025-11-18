@@ -1,4 +1,4 @@
-import type { HttpTransport } from '../types';
+import type { HttpTransport, TransportRequest, RawHttpResponse, HttpHeaders } from '../types';
 
 export interface AxiosInstanceLike {
   request<T = unknown>(config: {
@@ -7,39 +7,42 @@ export interface AxiosInstanceLike {
     headers?: Record<string, string>;
     data?: unknown;
     signal?: AbortSignal;
+    responseType?: 'arraybuffer';
   }): Promise<{
     status: number;
-    headers: HeadersInit | Record<string, string>;
+    headers: Record<string, string>;
     data: T;
   }>;
 }
 
+/**
+ * v0.8 axios-based HTTP transport.
+ * Wraps an axios instance and converts its responses to RawHttpResponse.
+ */
 export const createAxiosTransport = (axiosInstance: AxiosInstanceLike): HttpTransport => {
-  return async (url, init) => {
-    const response = await axiosInstance.request<unknown>({
-      url,
-      method: init.method as string,
-      headers: init.headers as Record<string, string>,
-      data: init.body,
-      signal: init.signal ?? undefined,
+  return async (req: TransportRequest, signal: AbortSignal): Promise<RawHttpResponse> => {
+    const response = await axiosInstance.request<ArrayBuffer>({
+      url: req.url,
+      method: req.method,
+      headers: req.headers,
+      data: req.body,
+      signal,
+      responseType: 'arraybuffer',
     });
 
-    const data = isBodyInit(response.data) ? response.data : JSON.stringify(response.data);
+    // Normalize headers to plain object
+    const headers: HttpHeaders = {};
+    const responseHeaders = response.headers;
+    if (responseHeaders) {
+      for (const [key, value] of Object.entries(responseHeaders)) {
+        headers[key] = String(value);
+      }
+    }
 
-    return new Response(data as BodyInit, {
+    return {
       status: response.status,
-      headers: response.headers as HeadersInit,
-    });
+      headers,
+      body: response.data,
+    };
   };
-};
-
-const isBodyInit = (value: unknown): value is BodyInit => {
-  return (
-    typeof value === 'string' ||
-    value instanceof Blob ||
-    value instanceof ArrayBuffer ||
-    ArrayBuffer.isView(value) ||
-    value instanceof URLSearchParams ||
-    value instanceof FormData
-  );
 };

@@ -63,27 +63,80 @@ const parseRetryAfter = (value?: string | null): number | undefined => {
   return undefined;
 };
 
+/**
+ * v0.8 default error classifier with unified classify method.
+ * Also supports legacy classifyNetworkError/classifyResponse for backwards compatibility.
+ */
 class DefaultErrorClassifier implements ErrorClassifier {
-  classifyNetworkError(error: unknown): ClassifiedError {
+  classify(ctx: import('./types').ErrorClassifierContext): ClassifiedError {
+    // Classify based on response or error
+    if (ctx.error) {
+      return this.classifyError(ctx.error);
+    }
+    // Note: In v0.8, response would be RawHttpResponse, but for now we handle both
+    return this.classifyStatus(ctx.response?.status);
+  }
+
+  private classifyError(error: unknown): ClassifiedError {
     if (error instanceof TimeoutError) {
-      return { category: 'timeout', statusCode: 408, retryable: true, reason: 'timeout' };
+      return {
+        category: 'timeout',
+        statusCode: 408,
+        reason: 'timeout',
+        fallback: { retryable: true },
+      };
     }
 
     if (error instanceof Error && error.name === 'AbortError') {
-      return { category: 'canceled', retryable: false, reason: 'aborted' };
+      return {
+        category: 'canceled',
+        reason: 'aborted',
+        fallback: { retryable: false },
+      };
     }
 
     if (error instanceof HttpError) {
       return {
         category: error.category,
         statusCode: error.status,
-        retryable: RETRYABLE_ERROR_CATEGORIES.has(error.category),
-        suggestedBackoffMs: error.fallback?.retryAfterMs,
         reason: 'http_error',
+        fallback: {
+          retryable: RETRYABLE_ERROR_CATEGORIES.has(error.category),
+          retryAfterMs: error.fallback?.retryAfterMs,
+        },
       };
     }
 
-    return { category: 'transient', retryable: true, reason: 'network_error' };
+    return {
+      category: 'transient',
+      reason: 'network_error',
+      fallback: { retryable: true },
+    };
+  }
+
+  private classifyStatus(status?: number): ClassifiedError {
+    if (!status) {
+      return {
+        category: 'network',
+        reason: 'no_status',
+        fallback: { retryable: true },
+      };
+    }
+
+    const category = statusToCategory(status);
+    return {
+      category,
+      statusCode: status,
+      reason: 'http_response',
+      fallback: {
+        retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
+      },
+    };
+  }
+
+  // Legacy v0.7 compatibility methods
+  classifyNetworkError(error: unknown): ClassifiedError {
+    return this.classifyError(error);
   }
 
   classifyResponse(response: Response, bodyText?: string): ClassifiedError {
@@ -92,17 +145,15 @@ class DefaultErrorClassifier implements ErrorClassifier {
     return {
       category,
       statusCode: response.status,
+      reason: bodyText ? 'http_response_with_body' : 'http_response',
+      fallback: {
+        retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
+        retryAfterMs: retryAfter,
+      },
+      // Legacy fields for backwards compat
       retryable: RETRYABLE_ERROR_CATEGORIES.has(category),
       suggestedBackoffMs: retryAfter,
-      reason: bodyText ? 'http_response_with_body' : 'http_response',
     };
-  }
-
-  classify(ctx: { request: HttpRequestOptions; response?: Response; error?: unknown }): ClassifiedError {
-    if (ctx.response) {
-      return this.classifyResponse(ctx.response);
-    }
-    return this.classifyNetworkError(ctx.error);
   }
 }
 
