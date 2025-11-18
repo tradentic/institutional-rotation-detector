@@ -218,8 +218,13 @@ export interface MetricsSink {
   recordRequest?(info: MetricsRequestInfo): void | Promise<void>;
 }
 
+export interface TransportRequest {
+  url: string;
+  init: RequestInit;
+}
+
 export interface HttpTransport {
-  (url: string, init: RequestInit): Promise<Response>;
+  (req: TransportRequest): Promise<Response>;
 }
 
 export interface ResponseClassification {
@@ -267,6 +272,20 @@ export interface OperationDefaults {
   timeoutMs?: number;
   maxRetries?: number;
   idempotent?: boolean;
+}
+
+export interface HttpResponse<T = unknown> {
+  status: number;
+  headers: HttpHeaders;
+  body: T;
+
+  rawResponse?: Response;
+
+  correlation: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+
+  outcome: RequestOutcome;
 }
 
 export interface HttpClientConfig {
@@ -448,12 +467,12 @@ export interface OnErrorContext {
  */
 export interface HttpRequestInterceptor {
   beforeSend?:
-    | ((ctx: BeforeSendContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions) => Promise<HttpRequestOptions | void> | HttpRequestOptions | void);
+  | ((ctx: BeforeSendContext) => Promise<void> | void)
+  | ((opts: HttpRequestOptions) => Promise<HttpRequestOptions | void> | HttpRequestOptions | void);
   afterResponse?:
-    | ((ctx: AfterResponseContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions, res: Response) => Promise<Response | void> | Response | void);
+  | ((ctx: AfterResponseContext) => Promise<void> | void)
+  | ((opts: HttpRequestOptions, res: Response) => Promise<Response | void> | Response | void);
   onError?:
-    | ((ctx: OnErrorContext) => Promise<void> | void)
-    | ((opts: HttpRequestOptions, error: unknown) => Promise<void> | void);
+  | ((ctx: OnErrorContext) => Promise<void> | void)
+  | ((opts: HttpRequestOptions, error: unknown) => Promise<void> | void);
 }

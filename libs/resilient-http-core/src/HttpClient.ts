@@ -23,7 +23,14 @@ import type {
   RequestOutcome,
   ResponseClassification,
   ResilienceProfile,
+  HttpResponse,
 } from './types';
+
+interface ExecutionResult<T> {
+  result: T;
+  outcome: RequestOutcome;
+  response: Response;
+}
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 3;
@@ -150,14 +157,14 @@ export class HttpClient {
           : undefined,
         afterResponse: config.afterResponse
           ? ({ request, response }: { request: HttpRequestOptions; response: Response }) =>
-              config.afterResponse?.(request, response)
+            config.afterResponse?.(request, response)
           : undefined,
       });
     }
     return interceptors;
   }
 
-  async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
+  async requestJsonResponse<T>(opts: HttpRequestOptions): Promise<HttpResponse<T>> {
     const preparedOpts = this.prepareRequestOptions(opts);
     const span = this.startSpan(preparedOpts);
     const cache = this.config.cache;
@@ -169,6 +176,13 @@ export class HttpClient {
         const cached = await cache.get<T>(cacheKey);
         if (cached !== undefined) {
           const now = Date.now();
+          const outcome: RequestOutcome = {
+            ok: true,
+            status: 200,
+            attempts: 0,
+            startedAt: now,
+            finishedAt: now,
+          };
           await this.recordMetrics({
             clientName: this.clientName,
             operation: preparedOpts.operation,
@@ -184,7 +198,15 @@ export class HttpClient {
           });
           this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
           span?.end();
-          return cached;
+          return {
+            status: 200,
+            headers: {},
+            body: cached,
+            correlation: this.getCorrelationInfo(preparedOpts),
+            agentContext: preparedOpts.agentContext,
+            extensions: preparedOpts.extensions,
+            outcome,
+          };
         }
       } catch (error) {
         this.logger?.warn('http.cache.get.error', {
@@ -195,13 +217,13 @@ export class HttpClient {
     }
 
     try {
-      const result = await this.executeWithRetries<T>(preparedOpts, {
+      const execution = await this.executeWithRetries<T>(preparedOpts, {
         parseJson: true,
         allowRetries: this.getIdempotent(preparedOpts),
       });
 
       if (cache && cacheKey && cacheTtlMs > 0) {
-        Promise.resolve(cache.set(cacheKey, result, cacheTtlMs)).catch((error) =>
+        Promise.resolve(cache.set(cacheKey, execution.result, cacheTtlMs)).catch((error) =>
           this.logger?.warn('http.cache.set.error', {
             ...this.baseLogMeta(preparedOpts),
             error: error instanceof Error ? error.message : error,
@@ -210,7 +232,75 @@ export class HttpClient {
       }
 
       span?.end();
-      return result;
+      return {
+        status: execution.response.status,
+        headers: this.headersToRecord(execution.response.headers),
+        body: execution.result,
+        rawResponse: execution.response,
+        correlation: this.getCorrelationInfo(preparedOpts),
+        agentContext: preparedOpts.agentContext,
+        extensions: preparedOpts.extensions,
+        outcome: execution.outcome,
+      };
+    } catch (error) {
+      span?.recordException?.(error);
+      span?.end();
+      throw error;
+    }
+  }
+
+  async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
+    const response = await this.requestJsonResponse<T>(opts);
+    return response.body;
+  }
+
+  async requestTextResponse(opts: HttpRequestOptions): Promise<HttpResponse<string>> {
+    const preparedOpts = this.prepareRequestOptions(opts);
+    const span = this.startSpan(preparedOpts);
+    try {
+      const execution = await this.executeWithRetries<Response>(preparedOpts, {
+        parseJson: false,
+        allowRetries: this.getIdempotent(preparedOpts),
+      });
+      const text = await execution.result.text();
+      span?.end();
+      return {
+        status: execution.response.status,
+        headers: this.headersToRecord(execution.response.headers),
+        body: text,
+        rawResponse: execution.response,
+        correlation: this.getCorrelationInfo(preparedOpts),
+        agentContext: preparedOpts.agentContext,
+        extensions: preparedOpts.extensions,
+        outcome: execution.outcome,
+      };
+    } catch (error) {
+      span?.recordException?.(error);
+      span?.end();
+      throw error;
+    }
+  }
+
+  async requestArrayBufferResponse(opts: HttpRequestOptions): Promise<HttpResponse<ArrayBuffer>> {
+    const preparedOpts = this.prepareRequestOptions(opts);
+    const span = this.startSpan(preparedOpts);
+    try {
+      const execution = await this.executeWithRetries<Response>(preparedOpts, {
+        parseJson: false,
+        allowRetries: this.getIdempotent(preparedOpts),
+      });
+      const buffer = await execution.result.arrayBuffer();
+      span?.end();
+      return {
+        status: execution.response.status,
+        headers: this.headersToRecord(execution.response.headers),
+        body: buffer,
+        rawResponse: execution.response,
+        correlation: this.getCorrelationInfo(preparedOpts),
+        agentContext: preparedOpts.agentContext,
+        extensions: preparedOpts.extensions,
+        outcome: execution.outcome,
+      };
     } catch (error) {
       span?.recordException?.(error);
       span?.end();
@@ -222,12 +312,12 @@ export class HttpClient {
     const preparedOpts = this.prepareRequestOptions(opts);
     const span = this.startSpan(preparedOpts);
     try {
-      const response = await this.executeWithRetries<Response>(preparedOpts, {
+      const execution = await this.executeWithRetries<Response>(preparedOpts, {
         parseJson: false,
         allowRetries: this.getIdempotent(preparedOpts),
       });
       span?.end();
-      return response;
+      return execution.result;
     } catch (error) {
       span?.recordException?.(error);
       span?.end();
@@ -297,7 +387,7 @@ export class HttpClient {
     });
   }
 
-  private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<T> {
+  private async executeWithRetries<T>(opts: HttpRequestOptions, executeOptions: ExecuteOptions): Promise<ExecutionResult<T>> {
     const startedAt = Date.now();
     const resilience = opts.resilience ?? {};
     const configuredAttempts =
@@ -344,15 +434,15 @@ export class HttpClient {
 
         const runner = this.config.policyWrapper
           ? () =>
-              this.config.policyWrapper!(executeAttempt, {
-                client: this.clientName,
-                operation: attemptOpts.operation,
-                requestId: attemptOpts.requestId,
-                correlationId: attemptOpts.correlationId,
-                parentCorrelationId: attemptOpts.parentCorrelationId,
-                agentContext: attemptOpts.agentContext,
-                extensions: attemptOpts.extensions,
-              })
+            this.config.policyWrapper!(executeAttempt, {
+              client: this.clientName,
+              operation: attemptOpts.operation,
+              requestId: attemptOpts.requestId,
+              correlationId: attemptOpts.correlationId,
+              parentCorrelationId: attemptOpts.parentCorrelationId,
+              agentContext: attemptOpts.agentContext,
+              extensions: attemptOpts.extensions,
+            })
           : executeAttempt;
 
         const attemptResult = await runner();
@@ -402,7 +492,11 @@ export class HttpClient {
           status: attemptResult.status,
           durationMs,
         });
-        return parsedValue;
+        return {
+          result: parsedValue,
+          outcome: aggregateOutcome,
+          response,
+        };
       } catch (error) {
         lastError = error;
         const durationMs = Date.now() - attemptStart;
@@ -554,7 +648,7 @@ export class HttpClient {
     }
 
     try {
-      const response = await this.transport(url, init);
+      const response = await this.transport({ url, init });
       const bodyText = parseJson ? await response.clone().text() : undefined;
       const classification = await this.classifyResponse(response, bodyText);
       const status = classification.overrideStatus ?? response.status;
@@ -582,8 +676,8 @@ export class HttpClient {
       }
 
       if (!parseJson) {
-      return { status, response, url };
-    }
+        return { status, response, url };
+      }
 
       return { status, response, bodyText, url };
     } catch (error) {
@@ -795,6 +889,14 @@ export class HttpClient {
   private getTimeoutMs(opts: HttpRequestOptions): number {
     const opDefaults = this.getOperationDefaults(opts);
     return opts.resilience?.perAttemptTimeoutMs ?? opts.timeoutMs ?? opDefaults?.timeoutMs ?? this.defaultTimeoutMs;
+  }
+
+  private headersToRecord(headers: Headers): Record<string, string> {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
   }
 
   private getMaxRetries(opts: HttpRequestOptions): number {
