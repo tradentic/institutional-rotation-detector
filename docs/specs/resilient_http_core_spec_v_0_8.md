@@ -1,1409 +1,845 @@
-# Resilient HTTP Ecosystem – Core Spec v0.8.0 (Full, Evolution of v0.7)
+# Resilient HTTP Core — Specification v0.8.0 (Full, Evolutionary)
 
-> **Status:** v0.8.0 – Evolution of v0.7  
-> Cleans up deprecated fields, introduces shared `BudgetHints`, and adds satellites/testing/runtime.  
-> Assumes no *runtime* compatibility is required with pre‑0.7 drafts, but the core `HttpClient` execution model is unchanged from v0.7.
->
-> **Scope:** Core HTTP client + satellites + testing & runtime composition utilities
->
-> - `@airnub/resilient-http-core`
-> - `@airnub/resilient-http-policies`
-> - `@airnub/resilient-http-pagination`
-> - `@airnub/agent-conversation-core`
-> - `@airnub/http-llm-openai`
-> - `@airnub/agent-browser-guardrails`
-> - `@airnub/resilient-http-testing` (testing helpers)
-> - `@airnub/agent-runtime` (opinionated agent runtime)
->
-> **Compatibility:** This spec is an **evolution of v0.7**. All legacy/deprecated
-> hooks and shapes from v0.7 and earlier are removed, but the core `HttpClient`
-> execution model (merge resilience → retry loop → classification → metrics/
-> tracing) is unchanged. Implementers with a v0.7‑aligned client should treat
-> v0.8 as a **refactor** of types/surfaces, not a ground‑up rewrite.
+> **Package:** `@airnub/resilient-http-core`  
+> **Status:** Draft / Source of truth for implementation  
+> **Supersedes:** v0.7 spec (this document is self‑contained)  
+> **Compatibility:** v0.5–v0.7 behaviour preserved; v0.8 is an *evolution*, not a rewrite.
 
 ---
 
-## 1. Design Goals & Non‑Goals
+## 1. Goals, Non‑Goals, and Design Intent
 
 ### 1.1 Goals
 
-1. **Small, boring core**
-   - A minimal, well‑typed `HttpClient` with built‑in resilience, metrics hooks,
-     and a single extension mechanism (interceptors).
+`@airnub/resilient-http-core` provides a **small, boring, provider‑agnostic HTTP substrate** for Node and browser runtimes:
 
-2. **Zero external deps by default**
-   - All packages are usable with:
-     - global `fetch` in browsers/edge, or
-     - a tiny fetch polyfill in Node.
-   - No required Redis, OTEL, or queue dependencies; those plug in via
-     interfaces.
-
-3. **Single interceptor model**
-   - Interceptors are the *only* way to customize requests/responses:
-     - Auth, logging, tracing, caching, policies, guardrails, test transport
-       recording/replay, etc.
-
-4. **Classification‑driven resilience**
-   - Retries and backoff controlled by:
-     - `ResilienceProfile` (per request), and
-     - `ErrorClassifier` → `ErrorCategory` + `FallbackHint`.
-
-5. **Telemetry‑first**
-   - Every logical request emits a `RequestOutcome` and a `MetricsRequestInfo`.
-   - Optional tracing spans can be created around each logical request.
-
-6. **First‑class AI & multi‑tenant semantics**
-   - `AgentContext` + `extensions` carry agent/tenant/AI metadata.
-   - Policies and guardrails can base decisions on client, tenant, provider,
-     model, and request class.
-
-7. **Testable & agent‑friendly**
-   - A dedicated testing package with record/replay transports and a
-     `createTestHttpClient` helper.
-   - Agent‑focused runtime that composes core + OpenAI + conversation +
-     guardrails + policies into a simple factory.
-
-8. **Self‑contained for coding agents**
-   - This spec alone should be enough for a senior engineer or coding agent to
-     implement the entire ecosystem from scratch—or to evolve an existing
-     v0.7‑style implementation with minimal disruption.
+- A single `HttpClient` abstraction on top of fetch‑like transports.
+- First‑class **resilience**: retries, timeouts, rate‑limit awareness, and optional circuit breaking.
+- First‑class **telemetry hooks**: logging, metrics, tracing.
+- A single, unified **interceptor** surface for extension, guardrails, and policies.
+- **Agent‑friendly metadata**: correlation IDs, agent context, and an extensions bag.
+- **Zero external dependencies by default**:
+  - Default transport built on global `fetch`.
+  - In‑memory defaults for rate limiting and circuit breaking are optional helpers, not hard dependencies.
 
 ### 1.2 Non‑Goals
 
-1. **Shipping infra backends**
-   - We define `PolicyStore`, but do not prescribe Redis/SQL schemas.
+Core does *not* provide:
 
-2. **Full provider zoo**
-   - Only OpenAI‑style LLM HTTP is specified; other providers can follow the
-     same patterns.
+- gRPC or non‑HTTP protocols.
+- Domain‑specific APIs (FINRA, SEC, OpenAI, etc.).
+- Heavy resilience frameworks or telemetry frameworks.
+- Rich policy engines or pagination orchestrators (these live in satellites such as `@airnub/resilient-http-policies` and `@airnub/resilient-http-pagination`).
 
-3. **Domain‑specific business rules**
-   - Sector-specific rules (finance, media, healthcare) live outside this
-     ecosystem.
+### 1.3 Design Intent for v0.8
 
----
+v0.8 has three explicit intents:
 
-## 2. Package Overview & Dependency Graph
+1. **No behaviour removals** relative to v0.7.
+   - All v0.7 semantics remain valid.
+   - Anything removed is explicitly marked `legacy` or `deprecated` and must be *implemented* for compatibility, even if it is discouraged for new code.
 
-### 2.1 Packages
+2. **Clarify and strengthen resilience semantics** without changing the execution model.
+   - The existing v0.7 retry and backoff loop is preserved.
+   - Rate limiting and circuit breaking remain first‑class *behaviours*.
+   - Ownership of resilience decisions between `ResilienceProfile`, `ErrorClassifier`, and policy interceptors is clearly documented.
 
-- **Core**
-  - `@airnub/resilient-http-core` – HttpClient, resilience, interceptors,
-    metrics, tracing, caching.
+3. **Address the v0.7 critique** by adding missing hooks and guidance:
+   - Clearer metadata scoping (correlation vs agent context vs extensions).
+   - Formal `HttpTransport` abstraction and test transports (record / replay) as official extension points.
+   - A small set of **out‑of‑the‑box templates** (`createDefaultHttpClient`, etc.) for a zero‑deps experience.
+   - Streaming guidance so long‑running responses fit the resilience model.
 
-- **Satellites**
-  - `@airnub/resilient-http-policies` – policy engine, stores, and interceptor.
-  - `@airnub/resilient-http-pagination` – pagination helpers.
-  - `@airnub/agent-conversation-core` – abstract conversation & agent runtime
-    primitives.
-  - `@airnub/http-llm-openai` – OpenAI(-compatible) client built on core.
-  - `@airnub/agent-browser-guardrails` – outbound HTTP and navigation guardrails.
-
-- **Testing & Runtime Composition**
-  - `@airnub/resilient-http-testing` – recording/replay transports and
-    test-friendly HttpClient factories.
-  - `@airnub/agent-runtime` – opinionated agent runtime factory wiring together
-    core, OpenAI client, policies, guardrails, and conversation core.
-
-### 2.2 Dependency Graph
-
-- `@airnub/resilient-http-core`
-  - No runtime deps on other ecosystem packages.
-
-- `@airnub/resilient-http-policies`
-  - Depends on core types and interceptor interfaces.
-
-- `@airnub/resilient-http-pagination`
-  - Depends on core `HttpClient`.
-
-- `@airnub/agent-conversation-core`
-  - Independent (no HttpClient dependency).
-
-- `@airnub/http-llm-openai`
-  - Depends on core `HttpClient` and conversation types for the ProviderAdapter.
-
-- `@airnub/agent-browser-guardrails`
-  - Depends on core interceptor types and AgentContext.
-
-- `@airnub/resilient-http-testing`
-  - Depends on core `HttpTransport`, `HttpClient`, and metrics types.
-
-- `@airnub/agent-runtime`
-  - Depends on:
-    - core `HttpClient`
-    - policies, guardrails (optional)
-    - conversation core
-    - OpenAI client
+v0.8 is therefore a **refinement and completion pass** on v0.7, not a greenfield design.
 
 ---
 
-## 3. Core Concepts
+## 2. Versioning & Compatibility
 
-### 3.1 Logical request vs attempt
+### 2.1 Historical recap
 
-- **Logical request:** one call to `HttpClient.request*`.
-- **Attempt:** one actual HTTP round trip.
+- **v0.5**
+  - Introduced `HttpClient` on top of `fetch`‑like transports.
+  - Added logging, metrics, tracing hooks.
+  - Optional `HttpCache`, `HttpRateLimiter`, `CircuitBreaker`.
 
-A logical request may contain multiple attempts due to retries. Metrics and
-`RequestOutcome` are defined at the logical-request level.
+- **v0.6**
+  - Added `ResilienceProfile`, `ErrorCategory`, `ErrorClassifier`, `RequestOutcome`, `RateLimitFeedback`.
+  - Introduced `HttpRequestInterceptor` (`beforeSend`, `afterResponse`, `onError`).
 
-### 3.2 Operations
+- **v0.7**
+  - Consolidated prior specs into a single doc.
+  - Clarified URL building, correlation, and resilience budgets.
+  - Tightened interceptor contracts and formalised backoff & rate‑limit handling.
+  - Marked pagination fields as legacy; encouraged satellites.
 
-- Stable string identifiers for logical operations, e.g.
-  - `"sec.getIssuerFilings"`
-  - `"openai.responses.create"`.
+- **v0.8 (this spec)**
+  - **Preserves** all v0.7 behaviours and public surfaces.
+  - Adds clarifications and new helpers but does not change the shape or return type of existing methods.
+  - Formalises `HttpTransport` and test transports as extension points.
+  - Introduces additive helpers such as `requestJsonResponse` that return rich `HttpResponse<T>` without breaking existing APIs.
 
-Operations group metrics, policies, and guardrails.
+### 2.2 Compatibility rules
 
-### 3.3 Correlation & AgentContext
+A v0.8 implementation MUST:
 
-- **CorrelationInfo**: `requestId`, `correlationId`, `parentCorrelationId`.
-- **AgentContext**: describes the *caller*:
-  - `agentName`, `agentVersion`
-  - `tenantId`, `sessionId`, `userId`
-  - `requestClass`: `"interactive" | "background" | "batch"`.
-
-### 3.4 Extensions & AI metadata
-
-- `extensions: Record<string, unknown>` carries arbitrary metadata.
-- Standardised key patterns (recommended, not enforced):
-  - `ai.provider` – `"openai"`, `"anthropic"`, etc.
-  - `ai.model` – model identifier.
-  - `ai.operation` – provider operation name.
-  - `ai.tool` – tool/function name.
-  - `tenant.tier` – `"free" | "pro" | ...`.
-
-### 3.5 Budget hints
-
-A shared structure used by core, policies, and conversation engines.
-
-```ts
-export interface BudgetHints {
-  /** Maximum tokens to consume (input + output) for this logical request. */
-  maxTokens?: number;
-
-  /** Approximate per-token cost and budget limit, for policies/metrics. */
-  tokenCostCents?: number;
-  maxCostCents?: number;
-
-  /** Maximum requests allowed in a group (e.g., for bulk operations). */
-  maxRequests?: number;
-
-  /** Arbitrary numeric hints for policy/agent decisions. */
-  attributes?: Record<string, number>;
-}
-```
-
-Core attaches `BudgetHints` as `budget?: BudgetHints` on `HttpRequestOptions`.
-Conversation-core uses the same shape to express conversation-level budgets.
-
-### 3.6 ResilienceProfile
-
-`ResilienceProfile` describes how to retry, backoff, and time out a logical
-request.
-
-```ts
-export interface ResilienceProfile {
-  maxAttempts?: number;          // Default: 3
-  retryEnabled?: boolean;        // Default: true
-
-  perAttemptTimeoutMs?: number;  // Default: undefined (no per-attempt limit)
-  overallTimeoutMs?: number;     // Default: 30_000
-
-  baseBackoffMs?: number;        // Default: 200
-  maxBackoffMs?: number;         // Default: 2_000
-  jitterFactor?: number;         // Default: 0.2 (20% jitter)
-
-  retryIdempotentMethodsByDefault?: boolean;  // Default: true
-  maxSuggestedRetryDelayMs?: number;          // Default: 60_000
-}
-```
+1. Implement all v0.7 types and behaviours as specified.
+2. Keep all v0.7 request helpers (`requestJson`, `requestText`, `requestArrayBuffer`, `requestRaw`) with the same signatures and semantics.
+3. Retain:
+   - Caching semantics (`HttpCache`, `cacheKey`, `cacheTtlMs`).
+   - Rate‑limit header parsing into `RateLimitFeedback`.
+   - Interceptor semantics and legacy hooks (`beforeRequest`, `afterResponse`) via a bridge interceptor.
+   - Legacy pagination fields (`pageSize`, `pageOffset`).
+   - Legacy `RequestBudget` mapping into resilience.
+   - Legacy `policyWrapper` behaviour (as a legacy wrapper hook) where used.
+4. Only add new capabilities in a **backwards‑compatible** manner:
+   - New fields and helper methods are additive.
+   - Behavioural changes are limited to bugfixes and fully documented refinements.
 
 ---
 
-## 4. Core API – `@airnub/resilient-http-core`
+## 3. Core Concepts & Behavioural Guarantees
 
-The v0.8 `HttpClient` **execution model is identical to v0.7**:
+This section describes the concepts that must remain true from v0.7 to v0.8.
 
-1. Merge client‑level defaults, per‑request overrides, and resilience profile.
-2. Start a logical request with `requestId` and `correlationId`.
-3. Enter a retry loop that:
-   - Creates a per‑attempt `AbortController` with a per‑attempt timeout (if set).
-   - Calls the transport once per attempt.
-   - Classifies failures via `ErrorClassifier`.
-   - Decides retry vs fail based on category, `FallbackHint`, method idempotency,
-     and `ResilienceProfile`.
-   - Applies exponential backoff with jitter and respects `retryAfterMs` when
-     appropriate.
-4. After the last attempt, compute a `RequestOutcome` representing the whole
-   logical request.
-5. Emit a single metrics/tracing event per logical request.
+An implementation of `@airnub/resilient-http-core` v0.8 MUST provide:
 
-v0.8 **does not introduce a new algorithm here**; it **refines types and
-surface area**:
+1. **Canonical retry and backoff loop**
+   - Driven by a merged `ResilienceProfile` and optional `RequestBudget`.
+   - Supports per‑attempt timeout and overall deadline.
 
-- Returns a structured `HttpResponse<T>` that wraps the decoded body together
-  with `RequestOutcome`.
-- Cleans up deprecated request fields.
-- Standardises budgeting and metadata across core and satellites.
+2. **Rate limiting as a first‑class behaviour**
+   - Optional `HttpRateLimiter` hook consults per‑request context and may delay or reject requests.
+   - Hooks are called on success and failure so external rate limiters can update state.
 
-### 4.1 Basic Types
+3. **Circuit breaking as a first‑class behaviour**
+   - Optional `CircuitBreaker` hook can block new attempts when a dependency is flapping.
+   - It is called before each attempt and updated on success and failure.
+
+4. **Error classification**
+   - All outbound requests must be classified into `ErrorCategory` values using an `ErrorClassifier`.
+   - Classification must influence retry vs fail‑fast.
+
+5. **Telemetry**
+   - A `MetricsSink` is invoked once per logical request with a `RequestOutcome` summarising attempts and rate‑limit feedback.
+   - A `TracingAdapter` can wrap each logical request in a span, with correlation and agent metadata attached.
+
+6. **Extension via interceptors only**
+   - There is a single, well‑defined interceptor surface for cross‑cutting behaviour.
+   - Legacy hooks are implemented as interceptors internally.
+
+7. **Zero‑deps default client**
+   - There is a `createDefaultHttpClient` helper that returns a usable, fetch‑based client with reasonable resilience defaults and no external dependencies.
+
+These behaviours are core and MUST NOT be removed in any future minor version.
+
+---
+
+## 4. Core Types
+
+All types are exported from `src/types.ts`.
+
+### 4.1 HTTP primitives
 
 ```ts
 export type HttpMethod =
-  | "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+  | 'GET'
+  | 'HEAD'
+  | 'OPTIONS'
+  | 'POST'
+  | 'PUT'
+  | 'PATCH'
+  | 'DELETE';
 
 export type HttpHeaders = Record<string, string>;
 
-export type QueryParams = Record<string, string | number | boolean | undefined>;
-
 export interface UrlParts {
-  baseUrl?: string;   // e.g. "https://api.example.com"
-  path?: string;      // e.g. "/v1/items"
-  query?: QueryParams;
+  baseUrl?: string;
+  path?: string;
+  query?: Record<
+    string,
+    string | number | boolean | (string | number | boolean)[] | undefined
+  >;
 }
 ```
 
-### 4.2 Correlation, AgentContext, Extensions
+Two mutually exclusive ways to specify the target:
+
+- `url` — full URL string, used as‑is.
+- `urlParts` — base, path, and query that the client composes.
+
+Legacy `path` and `query` on `HttpRequestOptions` are still supported and treated as described later.
+
+### 4.2 Correlation & AgentContext
 
 ```ts
 export interface CorrelationInfo {
-  requestId?: string;
+  requestId: string;
   correlationId?: string;
   parentCorrelationId?: string;
 }
 
-export type RequestClass = "interactive" | "background" | "batch";
-
 export interface AgentContext {
-  agentName?: string;
-  agentVersion?: string;
-  tenantId?: string;
-  requestClass?: RequestClass;
-  sessionId?: string;
-  userId?: string;
+  agent?: string;
+  runId?: string;
+  labels?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export type Extensions = Record<string, unknown>;
 ```
 
-### 4.3 Error Model & Classification
+Rules:
+
+- `requestId` is **always present**. If the caller does not provide one, the client MUST generate a reasonably unique ID (for example using a UUID factory).
+- `correlationId` models a logical trace; `parentCorrelationId` represents the parent span or request.
+- `AgentContext` is about **who** is acting and in what run; it is not about HTTP topology.
+- `extensions` is the per‑request metadata bag for domain labels and AI‑specific tags, for example:
+  - `ai.provider`, `ai.model`, `ai.operation`.
+  - `tenant.id`, `request.class`, `environment`.
+
+### 4.3 ErrorCategory, ClassifiedError, FallbackHint
 
 ```ts
 export type ErrorCategory =
-  | "auth"
-  | "validation"
-  | "quota"
-  | "rate_limit"
-  | "timeout"
-  | "transient"
-  | "network"
-  | "canceled"
-  | "none"
-  | "unknown";
-
-export interface FallbackHint {
-  retryAfterMs?: number;
-  retryable?: boolean;
-  hint?: string;
-}
+  | 'none'
+  | 'auth'
+  | 'validation'
+  | 'not_found'
+  | 'quota'
+  | 'rate_limit'
+  | 'timeout'
+  | 'transient'
+  | 'network'
+  | 'canceled'
+  | 'unknown';
 
 export interface ClassifiedError {
   category: ErrorCategory;
   statusCode?: number;
+  retryable?: boolean;
+  suggestedBackoffMs?: number;
   reason?: string;
+}
+
+export interface FallbackHint {
+  retryAfterMs?: number;
+  degradeToOperation?: string;
+}
+
+export interface ResponseClassification {
+  treatAsError?: boolean;
+  overrideStatus?: number;
+  category?: ErrorCategory;
   fallback?: FallbackHint;
 }
-
-export interface ErrorClassifierContext {
-  method: HttpMethod;
-  url: string;
-  attempt: number;
-  request: HttpRequestOptions;
-  response?: RawHttpResponse;
-  error?: unknown;
-}
-
-export interface ErrorClassifier {
-  classify(ctx: ErrorClassifierContext): ClassifiedError;
-}
-
-export class HttpError extends Error {
-  readonly category: ErrorCategory;
-  readonly statusCode?: number;
-  readonly url: string;
-  readonly method: HttpMethod;
-  readonly requestId?: string;
-  readonly correlationId?: string;
-  readonly operation?: string;
-  readonly attemptCount: number;
-  readonly outcome?: RequestOutcome;
-
-  constructor(message: string, options: {
-    category: ErrorCategory;
-    statusCode?: number;
-    url: string;
-    method: HttpMethod;
-    requestId?: string;
-    correlationId?: string;
-    operation?: string;
-    attemptCount: number;
-    outcome?: RequestOutcome;
-    cause?: unknown;
-  });
-}
-
-export class TimeoutError extends HttpError {}
 ```
 
-### 4.4 Transport Abstraction
+### 4.4 ResilienceProfile and RequestBudget
 
 ```ts
-export interface RawHttpResponse {
-  status: number;
-  headers: HttpHeaders;
-  body: ArrayBuffer;
+export interface ResilienceProfile {
+  maxAttempts?: number;
+  retryEnabled?: boolean;
+
+  perAttemptTimeoutMs?: number;
+  overallTimeoutMs?: number;
+
+  baseBackoffMs?: number;
+  maxBackoffMs?: number;
+  jitterFactorRange?: [number, number];
+
+  // v0.6 legacy
+  maxEndToEndLatencyMs?: number;
 }
 
-export interface TransportRequest {
-  method: HttpMethod;
-  url: string;
-  headers: HttpHeaders;
-  body?: ArrayBuffer;
-}
-
-export interface HttpTransport {
-  (req: TransportRequest, signal: AbortSignal): Promise<RawHttpResponse>;
+export interface RequestBudget {
+  maxAttempts?: number;
+  maxTotalDurationMs?: number;
 }
 ```
 
-Default transport uses global `fetch`.
+Semantics:
 
-### 4.5 Request, Response & Outcome
+- `ResilienceProfile` is the primary declarative description of how resilient a request should be.
+- `RequestBudget` is a legacy, simplified form. If `budget` is present on `HttpRequestOptions`, the client MUST map:
+  - `budget.maxAttempts` to `maxAttempts` when `maxAttempts` is not already set.
+  - `budget.maxTotalDurationMs` to `overallTimeoutMs` when `overallTimeoutMs` is not already set.
+- The client merges resilience settings from three layers:
+  1. `HttpClientConfig.defaultResilience`.
+  2. Optional operation defaults (if the implementation exposes them).
+  3. Per‑request `resilience` and `budget`.
+
+### 4.5 RateLimitFeedback and RequestOutcome
 
 ```ts
-export interface HttpRequestOptions {
-  method: HttpMethod;
-
-  url?: string;
-  urlParts?: UrlParts;  // exactly one of url or urlParts must be provided
-
-  headers?: HttpHeaders;
-  query?: QueryParams;
-
-  body?: unknown;       // encoded by body serialization interceptor
-
-  operation?: string;
-
-  correlation?: CorrelationInfo;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-
-  resilience?: ResilienceProfile;
-  budget?: BudgetHints;
-
-  cacheMode?: "default" | "bypass" | "refresh";
-  cacheKey?: string;
-
-  /** Optional idempotency key; recommended for POST/PUT/PATCH. */
-  idempotencyKey?: string;
-}
-
 export interface RateLimitFeedback {
-  remainingRequests?: number;
   limitRequests?: number;
-  resetAt?: Date;
+  remainingRequests?: number;
+  resetRequestsAt?: Date;
 
-  remainingTokens?: number;
   limitTokens?: number;
-  tokenResetAt?: Date;
+  remainingTokens?: number;
+  resetTokensAt?: Date;
 
-  raw?: Record<string, string>;
+  isRateLimited?: boolean;
+  rawHeaders?: Record<string, string>;
 }
 
 export interface RequestOutcome {
   ok: boolean;
   status?: number;
-  category: ErrorCategory;
+  errorCategory?: ErrorCategory;
   attempts: number;
-  startedAt: Date;
-  finishedAt: Date;
-  durationMs: number;
-  statusFamily?: number;
-  errorMessage?: string;
-  rateLimit?: RateLimitFeedback;
+  startedAt: number;
+  finishedAt: number;
+  rateLimitFeedback?: RateLimitFeedback;
 }
+```
 
-export interface HttpResponse<TBody = unknown> {
+### 4.6 HttpResponse
+
+v0.8 introduces a richer `HttpResponse<T>` type for callers that want both body and metadata without changing existing helper signatures.
+
+```ts
+export interface HttpResponse<T = unknown> {
   status: number;
   headers: HttpHeaders;
-  body: TBody;
+  body: T;
+
+  rawResponse?: Response;
+
+  correlation: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+
   outcome: RequestOutcome;
 }
 ```
 
-### 4.6 Interceptors
+This type is used by new helper methods such as `requestJsonResponse`, but it does not change the return type of existing helpers like `requestJson`.
+
+### 4.7 ErrorClassifier and HttpError
+
+```ts
+export interface ErrorClassifier {
+  classifyNetworkError(err: unknown): ClassifiedError;
+  classifyResponse(response: Response, bodyText?: string): ClassifiedError;
+}
+
+export class HttpError extends Error {
+  status: number;
+  category: ErrorCategory;
+  body?: unknown;
+  headers?: Headers;
+  fallback?: FallbackHint;
+  response?: Response;
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+}
+
+export class TimeoutError extends Error {
+  constructor(message: string);
+}
+```
+
+A default classifier implementation MUST be provided and used when `HttpClientConfig.errorClassifier` is not supplied.
+
+---
+
+## 5. HttpClient API and Configuration
+
+### 5.1 HttpRequestOptions
+
+```ts
+export interface HttpRequestOptions {
+  operation: string;
+  method: HttpMethod;
+
+  // URL
+  url?: string;
+  urlParts?: UrlParts;
+
+  // Legacy URL fields (v0.6)
+  path?: string;
+  query?: Record<string, unknown>;
+  pageSize?: number;
+  pageOffset?: number;
+
+  // Body
+  body?: BodyInit | unknown;
+  headers?: HttpHeaders;
+  idempotencyKey?: string;
+
+  // Resilience and budgets
+  resilience?: ResilienceProfile;
+  budget?: RequestBudget;
+
+  // Correlation, agent, metadata
+  correlation?: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+
+  // Internal / advanced
+  attempt?: number;
+}
+```
+
+### 5.2 HttpClientConfig
+
+```ts
+export interface HttpClientConfig {
+  clientName: string;
+  baseUrl?: string;
+
+  transport?: HttpTransport;
+  defaultHeaders?: HttpHeaders;
+
+  defaultResilience?: ResilienceProfile;
+  defaultAgentContext?: AgentContext;
+
+  interceptors?: HttpRequestInterceptor[];
+  logger?: Logger;
+  metrics?: MetricsSink;
+  tracing?: TracingAdapter;
+
+  resolveBaseUrl?: (opts: HttpRequestOptions) => string | undefined;
+  cache?: HttpCache;
+  rateLimiter?: HttpRateLimiter;
+  circuitBreaker?: CircuitBreaker;
+
+  // Legacy hooks (v0.6)
+  beforeRequest?: (opts: HttpRequestOptions) => void | Promise<void>;
+  afterResponse?: (opts: HttpRequestOptions, res: Response) => void | Promise<void>;
+
+  responseClassifier?: (res: Response, bodyText?: string) => Promise<ResponseClassification | void>;
+  errorClassifier?: ErrorClassifier;
+
+  // Legacy policy wrapper (v0.6)
+  policyWrapper?: (
+    runner: () => Promise<unknown>,
+    ctx: {
+      client: string;
+      operation: string;
+      correlation: CorrelationInfo;
+      agentContext?: AgentContext;
+      extensions?: Extensions;
+    },
+  ) => Promise<unknown>;
+}
+```
+
+Notes:
+
+- `rateLimiter` and `circuitBreaker` remain optional hooks in v0.8 and MUST continue to function where configured.
+- `beforeRequest`, `afterResponse`, and `policyWrapper` are retained for compatibility and MUST be implemented via internal bridge interceptors (see later) but should be considered legacy for new code.
+
+### 5.3 HttpClient interface
+
+```ts
+export class HttpClient {
+  constructor(config: HttpClientConfig);
+
+  getClientName(): string;
+
+  // v0.7 helpers (unchanged)
+  requestJson<T>(opts: HttpRequestOptions): Promise<T>;
+  requestText(opts: HttpRequestOptions): Promise<string>;
+  requestArrayBuffer(opts: HttpRequestOptions): Promise<ArrayBuffer>;
+  requestRaw(opts: HttpRequestOptions): Promise<Response>;
+
+  // v0.8 additive helpers
+  requestJsonResponse<T>(opts: HttpRequestOptions): Promise<HttpResponse<T>>;
+  requestTextResponse(opts: HttpRequestOptions): Promise<HttpResponse<string>>;
+  requestArrayBufferResponse(opts: HttpRequestOptions): Promise<HttpResponse<ArrayBuffer>>;
+}
+```
+
+Rules:
+
+- The v0.7 helper methods MUST retain their existing semantics.
+- The new `*Response` helpers MUST internally delegate to the same execution pipeline and build an `HttpResponse<T>` from the final attempt.
+
+### 5.4 Body serialization rules
+
+Same as v0.7:
+
+- If `body` is already a valid `BodyInit`, it is passed through unchanged.
+- If `body` is a plain object or array, it is serialized as JSON and `Content‑Type: application/json` is set if not already present.
+- If `body` is undefined or null, no body is sent.
+
+### 5.5 URL resolution rules
+
+Resolution order:
+
+1. If `url` is provided, it is used directly.
+2. Else, if `urlParts` is provided, `baseUrl` comes from `urlParts.baseUrl` or `config.baseUrl` or `config.resolveBaseUrl(opts)`.
+3. Else, legacy `path` and `query` are used with `config.baseUrl` or `resolveBaseUrl`.
+
+Legacy `pageSize` and `pageOffset` MUST still be appended as `limit` and `offset` query parameters when set.
+
+---
+
+## 6. Interceptors, Legacy Hooks, and HttpTransport
+
+### 6.1 HttpRequestInterceptor
 
 ```ts
 export interface BeforeSendContext {
   request: HttpRequestOptions;
-  attempt: number;
   signal: AbortSignal;
 }
 
-export interface AfterResponseContext<TBody = unknown> {
+export interface AfterResponseContext {
   request: HttpRequestOptions;
+  response: Response;
   attempt: number;
-  response: HttpResponse<TBody>;
 }
 
 export interface OnErrorContext {
   request: HttpRequestOptions;
+  error: unknown;
   attempt: number;
-  error: HttpError | Error;
 }
 
 export interface HttpRequestInterceptor {
-  beforeSend?(ctx: BeforeSendContext): Promise<void> | void;
-
-  afterResponse?<TBody = unknown>(
-    ctx: AfterResponseContext<TBody>
-  ): Promise<void> | void;
-
-  onError?(ctx: OnErrorContext): Promise<void> | void;
+  beforeSend?: (ctx: BeforeSendContext) => void | Promise<void>;
+  afterResponse?: (ctx: AfterResponseContext) => void | Promise<void>;
+  onError?: (ctx: OnErrorContext) => void | Promise<void>;
 }
 ```
 
-Interceptors run in registration order for `beforeSend` and reverse order for
-`afterResponse`/`onError`.
+Rules:
 
-Interceptors **must not** implement their own retry loops.
+- `beforeSend` is called in registration order for each attempt and may mutate `request`.
+- `afterResponse` is called in reverse registration order on successful responses.
+- `onError` is called in reverse registration order when an attempt throws.
+- Interceptor failures MUST NOT crash the client; they should be logged via `Logger` and swallowed unless explicitly designed otherwise.
 
-### 4.7 Caching
+### 6.2 Legacy hooks as bridge interceptor
+
+Implementations MUST internally construct a legacy bridge interceptor when `beforeRequest` or `afterResponse` are set in `HttpClientConfig`:
 
 ```ts
-export interface HttpCacheEntry<T = unknown> {
-  value: T;
-  expiresAt: number; // epoch millis
-}
-
-export interface HttpCache {
-  get<T = unknown>(key: string): Promise<HttpCacheEntry<T> | undefined>;
-  set<T = unknown>(key: string, entry: HttpCacheEntry<T>): Promise<void>;
-  delete?(key: string): Promise<void>;
+function buildLegacyInterceptor(config: HttpClientConfig): HttpRequestInterceptor | undefined {
+  if (!config.beforeRequest && !config.afterResponse) return undefined;
+  return {
+    beforeSend: async ({ request }) => {
+      await config.beforeRequest?.(request);
+    },
+    afterResponse: async ({ request, response }) => {
+      await config.afterResponse?.(request, response);
+    },
+  };
 }
 ```
 
-Core only defines the interface and simple semantics; in-memory implementation
-is optional.
+The bridge interceptor MUST be appended after user‑provided interceptors so that modern interceptors run first.
 
-### 4.8 Metrics & Tracing
+If `policyWrapper` is provided, implementations MUST wrap the entire request execution loop with this wrapper. The wrapper may apply additional policies or metrics but MUST NOT break the core resilience semantics.
+
+### 6.3 HttpTransport abstraction
+
+v0.8 formalises the transport abstraction used by `HttpClient`.
+
+```ts
+export interface TransportRequest {
+  url: string;
+  init: RequestInit;
+}
+
+export type HttpTransport = (req: TransportRequest) => Promise<Response>;
+```
+
+A default `fetchTransport` implementation MUST be provided that calls global `fetch`.
+
+`HttpClient` MUST use `transport` exclusively for network calls. This enables test transports (record / replay) and alternate transports (for example `undici`, `node-fetch`) without changing the client.
+
+---
+
+## 7. Resilience, Retries, Rate Limiting, Circuit Breaking
+
+### 7.1 Execution model
+
+`requestRaw` is the canonical implementation; all helpers delegate to it or reuse its pipeline.
+
+For a given `HttpRequestOptions`:
+
+1. Merge resilience:
+   - Start from `defaultResilience`.
+   - Overlay operation defaults if applicable.
+   - Overlay `opts.resilience` and legacy `opts.budget`.
+2. Compute `maxAttempts` and `overallDeadline`.
+3. For each attempt until completion or exhaustion:
+   - Clone `opts` to `attemptOpts` and set `attempt`.
+   - If `overallDeadline` is exceeded before attempting, throw `TimeoutError`.
+   - Build the URL and headers for this attempt.
+   - Create an `AbortController` for per‑attempt timeout.
+   - Run all `beforeSend` interceptors.
+   - If `rateLimiter` is configured, call its throttle method (see below) with the relevant context and honour any delay or deny decision.
+   - If `circuitBreaker` is configured, call its `beforeRequest` hook; if it indicates the circuit is open, short‑circuit with an appropriate `HttpError`.
+   - Call `transport` with the resolved URL and `RequestInit`.
+   - If a timeout is hit, throw a `TimeoutError`.
+   - Read response headers and optionally a text body for classification.
+   - Apply `responseClassifier` or `errorClassifier.classifyResponse` to determine whether this is an error.
+   - If the response is considered success:
+     - Update `rateLimiter` and `circuitBreaker` success hooks if present.
+     - Call `afterResponse` interceptors.
+     - Build `RequestOutcome` with `ok = true` and return `Response`.
+   - If the response is considered error:
+     - Update `rateLimiter` and `circuitBreaker` failure hooks.
+     - Call `onError` interceptors.
+     - Use the classifier result and `ResilienceProfile` to decide whether to retry.
+     - If not retryable, throw a `HttpError` and record metrics.
+     - If retryable and attempts remain and deadline permits:
+       - Compute a backoff delay, sleep, then continue to next attempt.
+
+Finally, compute a `RequestOutcome` summarising attempts and duration and pass it to `MetricsSink` and `TracingAdapter`.
+
+### 7.2 Rate limiting hooks
+
+The precise type signatures may vary between implementations; a recommended interface is:
+
+```ts
+export interface HttpRateLimiterContext {
+  clientName: string;
+  operation: string;
+  method: HttpMethod;
+  url: string;
+  correlation: CorrelationInfo;
+  agentContext?: AgentContext;
+  extensions?: Extensions;
+}
+
+export interface HttpRateLimiter {
+  beforeRequest(ctx: HttpRateLimiterContext): Promise<void> | void;
+  onSuccess?(ctx: HttpRateLimiterContext, outcome: RequestOutcome): Promise<void> | void;
+  onError?(ctx: HttpRateLimiterContext, outcome: RequestOutcome, error: unknown): Promise<void> | void;
+}
+```
+
+v0.8 requires that:
+
+- If a `HttpRateLimiter` is configured, it MUST be called before each attempt and on final success or failure.
+- The rate limiter MUST be able to veto a request by throwing an error; the client MUST propagate that as `HttpError` or a domain‑specific error.
+
+Existing implementations that use different method names may keep them but SHOULD alias them to this shape over time.
+
+### 7.3 Circuit breaker hooks
+
+Similarly, a recommended interface is:
+
+```ts
+export interface CircuitBreakerContext {
+  clientName: string;
+  operation: string;
+  method: HttpMethod;
+  url: string;
+}
+
+export interface CircuitBreaker {
+  beforeRequest(ctx: CircuitBreakerContext): Promise<void> | void;
+  onSuccess(ctx: CircuitBreakerContext): Promise<void> | void;
+  onFailure(ctx: CircuitBreakerContext, error: unknown): Promise<void> | void;
+}
+```
+
+Rules:
+
+- If `beforeRequest` throws (for example because the circuit is open), the client MUST treat this as a failure and skip the actual network call.
+- `onSuccess` and `onFailure` MUST be called for each attempted request that reaches the circuit breaker stage.
+
+### 7.4 Backoff and retry algorithm
+
+The backoff algorithm from v0.7 remains valid. Implementations may refine jitter behaviour but MUST obey the following:
+
+- Respect `ClassifiedError.suggestedBackoffMs` if present.
+- Respect `FallbackHint.retryAfterMs` and `Retry‑After` headers where present.
+- Use exponential backoff with jitter bounded by `baseBackoffMs`, `maxBackoffMs`, and `jitterFactorRange`.
+
+---
+
+## 8. Caching
+
+Caching remains as in v0.7 and MUST be implemented.
+
+```ts
+export interface HttpCache {
+  get<T>(key: string): Promise<T | undefined>;
+  set<T>(key: string, value: T, ttlMs: number): Promise<void>;
+}
+```
+
+Request options:
+
+```ts
+export interface HttpRequestOptions {
+  cacheKey?: string;
+  cacheTtlMs?: number;
+}
+```
+
+Rules:
+
+- Only `requestJson` and `requestJsonResponse` participate in caching.
+- When `cache`, `cacheKey`, and `cacheTtlMs > 0` are present:
+  - Attempt to read from cache first; on hit, return cached value and record metrics with `cacheHit = true`.
+  - On miss, run the normal pipeline and write the result into cache asynchronously.
+- Cache errors MUST be logged but must not fail the HTTP request.
+
+---
+
+## 9. Metrics and Tracing
+
+### 9.1 MetricsSink
 
 ```ts
 export interface MetricsRequestInfo {
-  operation?: string;
+  clientName: string;
+  operation: string;
   method: HttpMethod;
   url: string;
-  correlation?: CorrelationInfo;
+
+  status?: number;
+  errorCategory?: ErrorCategory;
+  durationMs: number;
+  attempts: number;
+
+  cacheHit?: boolean;
+  rateLimitFeedback?: RateLimitFeedback;
+
+  correlation: CorrelationInfo;
   agentContext?: AgentContext;
   extensions?: Extensions;
-  outcome: RequestOutcome;
 }
 
 export interface MetricsSink {
-  recordRequest(info: MetricsRequestInfo): void | Promise<void>;
+  recordRequest?(info: MetricsRequestInfo): Promise<void> | void;
+}
+```
+
+A v0.8 implementation MUST call `recordRequest` once per logical request with final metrics.
+
+### 9.2 Logger and TracingAdapter
+
+The logger and tracing types are unchanged from v0.7 and MUST be implemented.
+
+```ts
+export interface Logger {
+  debug(message: string, meta?: Record<string, unknown>): void;
+  info(message: string, meta?: Record<string, unknown>): void;
+  warn(message: string, meta?: Record<string, unknown>): void;
+  error(message: string, meta?: Record<string, unknown>): void;
 }
 
 export interface TracingSpan {
-  setAttribute(key: string, value: string | number | boolean): void;
-  recordException(error: Error): void;
+  end(): void;
+  recordException?(err: unknown): void;
 }
 
 export interface TracingAdapter {
-  startSpan(info: MetricsRequestInfo): TracingSpan | undefined;
-  endSpan(span: TracingSpan, outcome: RequestOutcome): void | Promise<void>;
+  startSpan(
+    name: string,
+    ctx: {
+      attributes?: Record<string, string | number | boolean | null>;
+      agentContext?: AgentContext;
+      extensions?: Extensions;
+    },
+  ): TracingSpan | undefined;
 }
 ```
 
-### 4.9 HttpClientConfig & HttpClient
+Implementations SHOULD create a span for each logical request with attributes that include client, operation, method, and correlation IDs.
+
+---
+
+## 10. Streaming Guidance
+
+v0.8 does not change the core to a streaming API but provides guidance:
+
+- `requestRaw` MAY be used for streaming responses where the body is consumed progressively.
+- `perAttemptTimeoutMs` SHOULD be interpreted as a connect and headers timeout, not a total stream duration.
+- Implementations MAY add optional streaming‑specific resilience profile fields in a backwards‑compatible way, but they are not required by this spec.
+- For LLM and SSE‑style streaming, higher‑level libraries (for example `@airnub/http-llm-openai`) SHOULD build on `requestRaw` and manage stream lifecycles while still feeding `RequestOutcome` and `RateLimitFeedback` back into metrics.
+
+---
+
+## 11. Out‑of‑the‑Box Templates
+
+v0.8 requires a simple, zero‑deps default client factory for ease of adoption.
+
+### 11.1 createDefaultHttpClient
 
 ```ts
-export interface HttpClientConfig {
+export interface DefaultHttpClientOptions {
+  clientName: string;
   baseUrl?: string;
-  transport?: HttpTransport;
-  defaultHeaders?: HttpHeaders;
-  defaultExtensions?: Extensions;
   defaultResilience?: ResilienceProfile;
-  cache?: HttpCache;
-  metricsSink?: MetricsSink;
-  tracingAdapter?: TracingAdapter;
-  interceptors?: HttpRequestInterceptor[];
-  errorClassifier?: ErrorClassifier;
-}
-
-export class HttpClient {
-  constructor(config?: HttpClientConfig);
-
-  requestRaw<T = unknown>(opts: HttpRequestOptions): Promise<HttpResponse<T>>;
-
-  requestJson<T = unknown>(opts: HttpRequestOptions): Promise<HttpResponse<T>>;
-
-  requestJsonBody<T = unknown>(opts: HttpRequestOptions): Promise<T>;
-
-  getJson<T = unknown>(
-    urlOrParts: string | UrlParts,
-    opts?: Omit<HttpRequestOptions, "method" | "url" | "urlParts">
-  ): Promise<T>;
-
-  // Additional convenience methods: postJson, putJson, deleteJson, etc.
-}
-```
-
-Implementation requirements:
-
-- Enforce `url` XOR `urlParts`.
-- Resolve `UrlParts` into a full URL.
-- Merge default headers and extensions.
-- Merge `ResilienceProfile` layers (client defaults + request overrides).
-- Generate `requestId` and `correlationId` if missing.
-- Implement a single retry loop with per-attempt and overall timeouts.
-- Use `ErrorClassifier` to classify failures and decide retry.
-- Use cache when configured and `cacheMode` is not `"bypass"`.
-- Emit metrics/tracing once per logical request.
-
-### 4.10 Default Client Factory
-
-```ts
-export interface DefaultClientOptions {
-  baseUrl?: string;
-  enableConsoleLogging?: boolean; // default: false
+  logger?: Logger;
 }
 
 export function createDefaultHttpClient(
-  options?: DefaultClientOptions
+  options: DefaultHttpClientOptions,
 ): HttpClient;
 ```
 
 Requirements:
 
-- Uses fetch-based transport with sensible defaults.
-- Configures sane resilience defaults (as described in ResilienceProfile).
-- Uses a built-in classifier that:
-  - Maps 429 → `rate_limit` (retryable with `retryAfterMs`).
-  - Maps 5xx (except 501/505) → `transient`.
-  - Maps 4xx auth errors → `auth`; other 4xx → `validation`.
-- If `enableConsoleLogging` is true, attaches a console logging interceptor and
-  a simple metrics sink that logs request outcomes.
+- Uses `fetchTransport`.
+- Uses reasonable default resilience (for example, 3 attempts for transient errors, per‑attempt timeout and overall timeout values set to safe defaults).
+- Uses a default `ErrorClassifier` implementation.
+- Configures no cache, rate limiter, or circuit breaker by default.
+- Configures no external telemetry backends; logs may go to console if a logger is provided.
 
-### 4.11 Standard Interceptors (Recommended)
+### 11.2 Example higher‑level templates (non‑normative)
 
-Core includes **recommended** interceptors as separate exports:
+This spec recommends, but does not require, additional factory helpers in separate modules or satellites:
 
-```ts
-export interface AuthInterceptorOptions {
-  getToken: () => Promise<string | null> | string | null;
-  headerName?: string; // default: "Authorization"
-  formatToken?: (token: string) => string; // default: (t) => `Bearer ${t}`
-}
+- `createEnterpriseHttpClient` — wraps a default client with policy interceptors and telemetry integrations.
+- `createAgentRuntime` — in higher‑level packages, wires `HttpClient` with conversation core, LLM providers, and browser guardrails.
 
-export function createAuthInterceptor(
-  opts: AuthInterceptorOptions
-): HttpRequestInterceptor;
-
-export interface JsonBodyInterceptorOptions {
-  defaultContentType?: string; // default: "application/json"
-}
-
-export function createJsonBodyInterceptor(
-  opts?: JsonBodyInterceptorOptions
-): HttpRequestInterceptor;
-
-export interface IdempotencyInterceptorOptions {
-  headerName?: string; // default: "Idempotency-Key"
-}
-
-export function createIdempotencyInterceptor(
-  opts?: IdempotencyInterceptorOptions
-): HttpRequestInterceptor;
-```
-
-These interceptors are optional but codified to address auth and body
-serialization concerns in a standard way.
+These are mentioned here to show how core is expected to fit into the wider ecosystem; their detailed specs live in satellite documents.
 
 ---
 
-## 5. Policies – `@airnub/resilient-http-policies` v0.4.0
+## 12. Legacy Features and Deprecation Policy
 
-### 5.1 Policy Model
+The following features are **legacy but required** in v0.8:
 
-```ts
-export interface PolicyScope {
-  clientName?: string;
-  operation?: string;
-  method?: HttpMethod;
-  tenantId?: string;
-  requestClass?: RequestClass;
-  aiProvider?: string;
-  aiModel?: string;
-}
+- `HttpRequestOptions.path`, `query`, `pageSize`, `pageOffset`.
+- `HttpRequestOptions.budget` (`RequestBudget`).
+- `HttpClientConfig.beforeRequest`, `afterResponse`, and `policyWrapper`.
 
-export type PolicyEffect = "allow" | "deny";
+Rules:
 
-export interface RateLimitRule {
-  requestsPerInterval?: number;
-  intervalMs?: number;
-  tokensPerInterval?: number;
-  tokenIntervalMs?: number;
-}
-
-export interface ConcurrencyRule {
-  maxConcurrent?: number;
-  maxQueueSize?: number; // 0 = no queue
-}
-
-export interface ResilienceOverride {
-  maxAttempts?: number;
-  perAttemptTimeoutMs?: number;
-  overallTimeoutMs?: number;
-}
-
-export interface PolicyDefinition {
-  id: string;
-  description?: string;
-  match: PolicyScope & { operationPattern?: string };
-  effect: PolicyEffect;
-  rateLimit?: RateLimitRule;
-  concurrency?: ConcurrencyRule;
-  resilienceOverride?: ResilienceOverride;
-  denyMessage?: string;
-}
-
-export interface PolicyDecision {
-  effect: PolicyEffect;
-  policyId?: string;
-  reason?: string;
-  delayBeforeSendMs?: number;
-  resilienceOverride?: ResilienceOverride;
-}
-
-export interface PolicyRequestContext {
-  scope: PolicyScope;
-  request: HttpRequestOptions;
-}
-
-export interface PolicyResultContext {
-  scope: PolicyScope;
-  request: HttpRequestOptions;
-  outcome: RequestOutcome;
-}
-
-export interface PolicyEngine {
-  evaluate(ctx: PolicyRequestContext): Promise<PolicyDecision>;
-  onResult?(ctx: PolicyResultContext): Promise<void> | void;
-}
-```
-
-### 5.2 PolicyStore Abstraction
-
-```ts
-export interface PolicyStore {
-  getPolicies(): Promise<PolicyDefinition[]>;
-  putPolicies(policies: PolicyDefinition[]): Promise<void>;
-
-  // Optional fine-grained methods
-  addPolicy?(policy: PolicyDefinition): Promise<void>;
-  removePolicy?(id: string): Promise<void>;
-}
-```
-
-The in-memory engine can keep policies directly in memory; a more advanced
-engine can load policies from a `PolicyStore` backed by Redis/SQL/etc.
-
-### 5.3 In-memory PolicyEngine
-
-```ts
-export interface InMemoryPolicyEngineOptions {
-  policies: PolicyDefinition[];
-  failOpenOnError?: boolean; // default: true
-}
-
-export function createInMemoryPolicyEngine(
-  options: InMemoryPolicyEngineOptions
-): PolicyEngine;
-```
-
-### 5.4 Policy Interceptor
-
-```ts
-export interface PolicyInterceptorOptions {
-  engine: PolicyEngine;
-  clientName: string;
-}
-
-export function createPolicyInterceptor(
-  options: PolicyInterceptorOptions
-): HttpRequestInterceptor;
-```
-
-Behaviour:
-
-- `beforeSend`:
-  - Derives `PolicyScope` from `HttpRequestOptions`.
-  - Calls `engine.evaluate`.
-  - On deny → throws `HttpError` with `quota` or `rate_limit` category.
-  - On `delayBeforeSendMs` → awaits.
-  - On `resilienceOverride` → merges into `request.resilience`.
-
-- `afterResponse` / `onError`:
-  - Calls `engine.onResult` with final `RequestOutcome`.
-
-### 5.5 Policy Presets
-
-```ts
-export function createSimpleRateLimitPolicy(opts: {
-  clientName: string;
-  requestsPerMinute: number;
-}): PolicyDefinition;
-
-export function createSimpleConcurrencyPolicy(opts: {
-  clientName: string;
-  maxConcurrent: number;
-  maxQueueSize?: number;
-}): PolicyDefinition;
-```
+- Implementations MUST support these fields and hooks as described.
+- New code SHOULD prefer `url` or `urlParts`, `resilience`, and interceptors.
+- Future major versions may remove these legacy surfaces, but only with a documented migration path.
 
 ---
 
-## 6. Pagination – `@airnub/resilient-http-pagination` v0.4.0
-
-```ts
-export interface PaginationLimits {
-  maxPages?: number;
-  maxItems?: number;
-  maxDurationMs?: number;
-}
-
-export interface Page<TItem> {
-  items: TItem[];
-  rawResponse: HttpResponse<unknown>;
-}
-
-export interface PaginationResult<TItem> {
-  pages: Page<TItem>[];
-  totalItems: number;
-  truncated: boolean;
-  truncatedReason?: "maxPages" | "maxItems" | "maxDuration";
-  durationMs: number;
-}
-
-export interface PaginateOptions<TItem> {
-  client: HttpClient;
-  initialRequest: HttpRequestOptions;
-  extractItems: (response: HttpResponse<unknown>) => TItem[];
-  getNextRequest: (
-    prevRequest: HttpRequestOptions,
-    prevResponse: HttpResponse<unknown>,
-    pageIndex: number
-  ) => HttpRequestOptions | undefined;
-  limits?: PaginationLimits;
-}
-
-export async function paginate<TItem>(
-  options: PaginateOptions<TItem>
-): Promise<PaginationResult<TItem>>;
-
-export async function* paginateStream<TItem>(
-  options: PaginateOptions<TItem>
-): AsyncGenerator<Page<TItem>, PaginationResult<TItem>, void>;
-```
-
-### 6.1 Strategy Helpers
-
-```ts
-export function createOffsetLimitStrategy(
-  pageSize: number
-): {
-  initial: HttpRequestOptions;
-  getNextRequest: PaginateOptions<unknown>["getNextRequest"];
-};
-
-export function createCursorStrategy(
-  cursorParamName: string,
-  extractCursor: (response: HttpResponse<unknown>) => string | undefined
-): {
-  initial: HttpRequestOptions;
-  getNextRequest: PaginateOptions<unknown>["getNextRequest"];
-};
-```
-
----
-
-## 7. Conversation Core – `@airnub/agent-conversation-core` v0.3.0
-
-### 7.1 Types
-
-```ts
-export type Role = "user" | "assistant" | "system" | "tool" | "function";
-
-export interface MessagePart {
-  type: "text" | "tool-call" | "tool-result";
-  text?: string;
-  toolCall?: ProviderToolCall;
-  toolResult?: unknown;
-}
-
-export interface ConversationMessage {
-  id: string;
-  role: Role;
-  parts: MessagePart[];
-  createdAt: Date;
-}
-
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-}
-
-export interface ProviderToolCall {
-  id: string;
-  name: string;
-  arguments: unknown;
-}
-
-export interface ProviderCallRecord {
-  provider: string;
-  model: string;
-  operation: string;
-  startedAt: Date;
-  finishedAt: Date;
-  usage?: TokenUsage;
-  rawResponse?: unknown;
-}
-
-export interface ConversationTurn {
-  id: string;
-  messages: ConversationMessage[];
-  providerCalls: ProviderCallRecord[];
-  createdAt: Date;
-}
-
-export interface Conversation {
-  id: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-### 7.2 Store & History
-
-```ts
-export interface ConversationStore {
-  getConversation(id: string): Promise<Conversation | null>;
-  createConversation(initial?: Partial<Conversation>): Promise<Conversation>;
-  appendTurn(conversationId: string, turn: ConversationTurn): Promise<void>;
-  listTurns(conversationId: string): Promise<ConversationTurn[]>;
-}
-
-export interface HistoryBudget extends BudgetHints {
-  maxMessages?: number;
-  maxTurns?: number;
-}
-
-export interface HistoryBuilder {
-  buildHistory(
-    conversationId: string,
-    store: ConversationStore,
-    budget?: HistoryBudget
-  ): Promise<ConversationMessage[]>;
-}
-
-export class RecentNTurnsHistoryBuilder implements HistoryBuilder {
-  constructor(maxTurns: number);
-  buildHistory(
-    conversationId: string,
-    store: ConversationStore,
-    budget?: HistoryBudget
-  ): Promise<ConversationMessage[]>;
-}
-```
-
-### 7.3 ProviderAdapter & Engine
-
-```ts
-export interface ProviderAdapterConfig {
-  provider: string;
-  model: string;
-}
-
-export interface ProviderToolDefinition {
-  name: string;
-  description?: string;
-  jsonSchema: unknown;
-}
-
-export interface ProviderCallInput {
-  systemMessages: ConversationMessage[];
-  history: ConversationMessage[];
-  userMessage: ConversationMessage;
-  tools?: ProviderToolDefinition[];
-  budget?: BudgetHints;
-}
-
-export interface ProviderCallResult {
-  messages: ConversationMessage[];
-  usage?: TokenUsage;
-  rawResponse?: unknown;
-}
-
-export interface ProviderAdapter {
-  complete(
-    config: ProviderAdapterConfig,
-    input: ProviderCallInput
-  ): Promise<ProviderCallResult>;
-
-  completeStream?(
-    config: ProviderAdapterConfig,
-    input: ProviderCallInput
-  ): AsyncGenerator<ProviderCallResult, ProviderCallResult, void>;
-}
-
-export interface ConversationEngineConfig {
-  store: ConversationStore;
-  historyBuilder: HistoryBuilder;
-  provider: ProviderAdapter;
-  defaultModel: string;
-  defaultProvider?: string;
-}
-
-export class ConversationEngine {
-  constructor(config: ConversationEngineConfig);
-
-  processTurn(
-    conversationId: string | null,
-    userMessage: Omit<ConversationMessage, "id" | "createdAt">,
-    opts?: { model?: string; tools?: ProviderToolDefinition[]; budget?: HistoryBudget }
-  ): Promise<{ conversationId: string; turn: ConversationTurn }>;
-
-  processTurnStream(
-    conversationId: string | null,
-    userMessage: Omit<ConversationMessage, "id" | "createdAt">,
-    opts?: { model?: string; tools?: ProviderToolDefinition[]; budget?: HistoryBudget }
-  ): AsyncGenerator<
-    { conversationId: string; partialTurn: ConversationTurn },
-    { conversationId: string; turn: ConversationTurn },
-    void
-  >;
-}
-```
-
----
-
-## 8. OpenAI HTTP Client – `@airnub/http-llm-openai` v0.3.0
-
-```ts
-export interface OpenAIHttpClientConfig {
-  httpClient: HttpClient;
-  baseUrl: string;
-  apiKey: string;
-  defaultModel: string;
-}
-
-export interface OpenAIResponsesCreateInput {
-  model?: string;
-  input: unknown;
-  tools?: ProviderToolDefinition[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  [key: string]: unknown;
-}
-
-export interface OpenAIResponseObject {
-  id: string;
-  model: string;
-  createdAt: Date;
-  outputText?: string;
-  messages: ConversationMessage[];
-  toolCalls?: ProviderToolCall[];
-  usage?: TokenUsage;
-  rawResponse: unknown;
-}
-
-export interface OpenAIStreamEvent {
-  type: "text-delta" | "tool-call" | "done";
-  textDelta?: string;
-  toolCall?: ProviderToolCall;
-  finalResponse?: OpenAIResponseObject;
-}
-
-export interface OpenAIStream {
-  [Symbol.asyncIterator](): AsyncIterator<OpenAIStreamEvent>;
-  final: Promise<OpenAIResponseObject>;
-}
-
-export class OpenAIHttpClient {
-  constructor(config: OpenAIHttpClientConfig);
-
-  responses: {
-    create(input: OpenAIResponsesCreateInput): Promise<OpenAIResponseObject>;
-    createStream(input: OpenAIResponsesCreateInput): Promise<OpenAIStream>;
-  };
-}
-
-export function createOpenAIProviderAdapter(
-  client: OpenAIHttpClient
-): ProviderAdapter;
-```
-
-Implementation notes:
-
-- Use `HttpClient` with `operation = "openai.responses.create"`.
-- Set `extensions["ai.provider"] = "openai"`, `extensions["ai.model"] = model`.
-- Map raw responses into `OpenAIResponseObject` consistently for streaming and
-  non-streaming.
-
----
-
-## 9. Browser Guardrails – `@airnub/agent-browser-guardrails` v0.3.0
-
-```ts
-export interface GuardrailScope {
-  method: HttpMethod;
-  url: string;
-  agentContext?: AgentContext;
-  extensions?: Extensions;
-}
-
-export type GuardrailEffect = "allow" | "deny";
-
-export interface HeaderGuardConfig {
-  stripHeaders?: string[];
-}
-
-export interface BodyGuardConfig {
-  maxBodyBytes?: number;
-}
-
-export interface GuardrailRule {
-  id: string;
-  description?: string;
-  hostPattern?: string;
-  protocol?: "http" | "https";
-  methods?: HttpMethod[];
-  agentName?: string;
-  tenantId?: string;
-  effect: GuardrailEffect;
-  headers?: HeaderGuardConfig;
-  body?: BodyGuardConfig;
-}
-
-export interface GuardrailDecision {
-  effect: GuardrailEffect;
-  ruleId?: string;
-  reason?: string;
-  headersToStrip?: string[];
-}
-
-export interface GuardrailEngine {
-  evaluate(scope: GuardrailScope): GuardrailDecision;
-}
-
-export interface InMemoryGuardrailEngineOptions {
-  rules: GuardrailRule[];
-  defaultEffect?: GuardrailEffect; // default: "deny"
-}
-
-export function createInMemoryGuardrailEngine(
-  opts: InMemoryGuardrailEngineOptions
-): GuardrailEngine;
-
-export interface GuardrailInterceptorOptions {
-  engine: GuardrailEngine;
-}
-
-export function createHttpGuardrailInterceptor(
-  options: GuardrailInterceptorOptions
-): HttpRequestInterceptor;
-
-export interface BrowserNavigationGuard {
-  checkNavigation(
-    url: string,
-    ctx?: { agent?: AgentContext; extensions?: Extensions }
-  ): void;
-}
-
-export function createBrowserNavigationGuard(
-  engine: GuardrailEngine
-): BrowserNavigationGuard;
-
-export interface DefaultGuardrailOptions {
-  allowInternalHosts?: string[];  // e.g. ["api.myapp.local"]
-  allowReadOnlyWeb?: boolean;     // if true, allow GET/HEAD to https hosts
-}
-
-export function createDefaultGuardrailEngine(
-  opts?: DefaultGuardrailOptions
-): GuardrailEngine;
-```
-
----
-
-## 10. Testing – `@airnub/resilient-http-testing` v0.1.0
-
-### 10.1 Recording & Replay Transports
-
-```ts
-export interface RecordedRequest {
-  request: TransportRequest;
-  response: RawHttpResponse;
-}
-
-export interface RecordingTransportOptions {
-  underlying: HttpTransport;
-  onRecord: (entry: RecordedRequest) => void | Promise<void>;
-}
-
-export function createRecordingTransport(
-  opts: RecordingTransportOptions
-): HttpTransport;
-
-export interface ReplayTransportOptions {
-  recordings: RecordedRequest[];
-  match?: (req: TransportRequest, rec: RecordedRequest) => boolean;
-}
-
-export function createReplayTransport(
-  opts: ReplayTransportOptions
-): HttpTransport;
-```
-
-### 10.2 Test HttpClient Factory
-
-```ts
-export interface TestHttpClientOptions {
-  baseUrl?: string;
-  recordings?: RecordedRequest[];
-  recordNew?: boolean;
-  seed?: string; // for deterministic IDs
-}
-
-export function createTestHttpClient(
-  opts?: TestHttpClientOptions
-): { client: HttpClient; recordings: RecordedRequest[] };
-```
-
-Requirements:
-
-- No retries by default (maxAttempts = 1) to keep tests deterministic.
-- Deterministic `requestId` generation based on `seed`.
-- In replay mode, throw if a matching recording is not found.
-
----
-
-## 11. Opinionated Agent Runtime – `@airnub/agent-runtime` v0.1.0
-
-### 11.1 Purpose
-
-Provide a one-call runtime factory for typical agentic apps that want:
-
-- Resilient HttpClient
-- OpenAI client
-- Policies
-- Guardrails
-- Conversation engine
-
-### 11.2 Types & Factory
-
-```ts
-export interface AgentRuntimeConfig {
-  openai: {
-    apiKey: string;
-    baseUrl?: string;   // default: "https://api.openai.com/v1"
-    defaultModel: string;
-  };
-
-  policies?: {
-    definitions?: PolicyDefinition[];
-  };
-
-  guardrails?: DefaultGuardrailOptions;
-
-  history?: {
-    maxTurns?: number;
-  };
-}
-
-export interface AgentRuntime {
-  httpClient: HttpClient;
-  openaiClient: OpenAIHttpClient;
-  conversationEngine: ConversationEngine;
-  guardrails: GuardrailEngine;
-  policyEngine: PolicyEngine;
-}
-
-export function createDefaultAgentRuntime(
-  config: AgentRuntimeConfig
-): AgentRuntime;
-```
-
-Implementation guidelines:
-
-- Use `createDefaultHttpClient` for httpClient.
-- Use `createInMemoryPolicyEngine` with given definitions (or empty).
-- Wrap httpClient with `createPolicyInterceptor` and `createHttpGuardrailInterceptor`.
-- Create `OpenAIHttpClient` and `createOpenAIProviderAdapter`.
-- Use an in-memory ConversationStore (simple array-based) and
-  `RecentNTurnsHistoryBuilder`.
-
----
-
-## 12. Implementation Checklist
-
-A library is v0.8-compliant when:
-
-1. Core HttpClient and all related types are implemented per this spec.
-2. Default client factory behaves as specified.
-3. Standard interceptors (auth/json/idempotency) exist.
-4. Policies, pagination, conversation core, OpenAI client, and guardrails match
-   their sections.
-5. Testing helpers (record/replay, test client) are present.
-6. Agent runtime factory is implemented and composes the ecosystem correctly.
-7. TypeScript builds under `strict: true`.
-8. Tests cover retry, timeouts, classification, caching, policies, guardrails,
-   pagination, conversation engine, OpenAI mapping, testing transports, and
-   agent runtime wiring.
-
-This v0.8 spec is self-contained and suitable as a single source of truth for
-building the entire resilient HTTP ecosystem and runtime from scratch—while
-remaining an evolution of v0.7 rather than a redesign.
-
----
-
-## 13. Migration from v0.7 → v0.8 (Normative Guidance)
-
-This appendix is **normative guidance** for implementers who already have a
-v0.7‑aligned client. It describes how to treat v0.8 as a **controlled refactor**
-rather than a rewrite.
-
-### 13.1 What to Keep (Execution Model)
-
-If you already implemented v0.7, keep the core pipeline:
-
-- The retry loop and how it applies `ResilienceProfile`.
-- The way you:
-  - start logical requests,
-  - track attempts,
-  - enforce per‑attempt and overall timeouts,
-  - emit metrics/tracing once per logical request.
-- The basic semantics of interceptors.
-
-v0.8 expects the same behaviour; only the **types and public API shapes** evolve.
-
-### 13.2 What to Remove (Deprecated v0.7 Fields/Concepts)
-
-Remove these from your implementation and public surface:
-
-- Legacy URL and pagination fields on `HttpRequestOptions`:
-  - `path`, `pageSize`, `pageOffset`.
-- Legacy budgeting type:
-  - `RequestBudget`.
-- Legacy hook surfaces:
-  - `beforeRequest`, `afterResponse` config hooks that are not the v0.8
-    `HttpRequestInterceptor` interface.
-- `policyWrapper`:
-  - All policy application should happen via the v0.8 `PolicyEngine` and
-    `PolicyInterceptor` satellite, not a core wrapper.
-
-These removals are deliberately **surgical**. They should not require you to
-redesign the core pipeline.
-
-### 13.3 What to Adapt (Types & Wrappers)
-
-1. **HttpResponse<T>**
-   - Introduce `HttpResponse<T>` as defined in this spec.
-   - At the end of your existing v0.7 execution path (where you previously
-     returned `Response` or decoded body), instead:
-     - Decode the body as needed.
-     - Compute `RequestOutcome` (you likely have equivalent metrics data).
-     - Return a `HttpResponse<T>` wrapping status, headers, decoded body, and
-       outcome.
-
-2. **Public methods**
-   - Update `requestJson<T>` to return `Promise<HttpResponse<T>>` instead of
-     `Promise<T>`.
-   - Implement `requestJsonBody<T>` as a thin convenience wrapper over
-     `requestJson<T>` that returns `.body`.
-   - For call sites that only care about the body, migrate from
-     `requestJson<T>` to `requestJsonBody<T>`.
-
-3. **Budgeting**
-   - Replace the old `RequestBudget` type with the new `BudgetHints` type.
-   - Map your existing budget fields into `BudgetHints`’ `maxTokens`,
-     `maxCostCents`, `maxRequests`, and `attributes` fields where relevant.
-
-4. **Error classification**
-   - Implement the new `ErrorClassifier.classify(ctx)` method.
-   - If you previously had `classifyNetworkError` and `classifyResponse`, simply
-     wrap them inside `classify(ctx)` based on whether `ctx.error` or
-     `ctx.response` is present.
-
-5. **URL handling**
-   - Where you previously used `path`/`pageSize`/`pageOffset`, switch to:
-     - `url` or `urlParts` + `query` for URL construction.
-     - The pagination satellite (`@airnub/resilient-http-pagination`) for
-       page/offset handling.
-
-### 13.4 What to Add (New v0.8 Functionality)
-
-1. **Standard interceptors**
-   - Implement `createAuthInterceptor`, `createJsonBodyInterceptor`, and
-     `createIdempotencyInterceptor` exactly as specified, on top of your
-     existing interceptor chain.
-
-2. **Testing package**
-   - Add the `@airnub/resilient-http-testing` package with:
-     - `createRecordingTransport`, `createReplayTransport`, and
-       `createTestHttpClient`.
-   - These build on the existing `HttpTransport` abstraction; no pipeline change
-     is needed.
-
-3. **Agent runtime**
-   - Add `@airnub/agent-runtime` and implement `createDefaultAgentRuntime`,
-     wiring together:
-     - `HttpClient` (via `createDefaultHttpClient`),
-     - Policies (`PolicyEngine` + interceptor),
-     - Guardrails (`GuardrailEngine` + interceptor),
-     - `OpenAIHttpClient` + provider adapter,
-     - `ConversationEngine` with an in‑memory store and
-       `RecentNTurnsHistoryBuilder`.
-   - This is an **additive** layer on top of core; HttpClient does not change.
-
-### 13.5 Recommended Migration Order
-
-To keep the refactor manageable:
-
-1. **Introduce `HttpResponse<T>` and adapt core to return it.**
-2. **Add `requestJsonBody<T>` and migrate body-only call sites.**
-3. **Swap `RequestBudget` → `BudgetHints`.**
-4. **Remove deprecated URL fields and `policyWrapper`.**
-5. **Update `ErrorClassifier` to the unified `classify(ctx)` interface.**
-6. **Implement standard interceptors.**
-7. **Add testing and agent runtime packages.**
-
-Following this order allows you to keep the working v0.7 pipeline intact while
-incrementally evolving the surface to match v0.8.
-
----
-
-## 14. Summary
-
-- v0.8 keeps the v0.7 `HttpClient` execution model **unchanged** and focuses on:
-  - Type refinement (`HttpResponse<T>`, `BudgetHints`).
-  - Deprecation cleanup (`path`/`pageSize`/`pageOffset`, `RequestBudget`,
-    legacy hooks, `policyWrapper`).
-  - Adding satellites (policies, pagination, conversation, OpenAI client,
-    guardrails), testing utilities, and an agent runtime.
-- Existing v0.7‑aligned implementations should treat this as a **refactor**,
-  not a rewrite: reuse the retry/metrics pipeline, adapt types, and layer on the
-  new packages.
+## 13. Implementation Checklist (v0.8)
+
+A `@airnub/resilient-http-core` implementation is considered v0.8 complete when:
+
+1. All v0.7 types and behaviours are present and tested.
+2. `HttpTransport` is implemented and all network calls go through it.
+3. `HttpClient` exposes the v0.7 helper methods unchanged and the new `*Response` helpers.
+4. The retry and backoff loop conforms to the resilience model and still calls rate limiter and circuit breaker hooks when configured.
+5. Caching behaves as documented, including error handling and metrics flags.
+6. Legacy hooks and options are implemented via bridge interceptor and compatibility logic.
+7. Metrics and tracing are wired to final `RequestOutcome` per logical request.
+8. `createDefaultHttpClient` is implemented with a zero‑deps configuration.
+9. The library compiles under strict TypeScript settings and has tests covering:
+   - Retry and backoff semantics.
+   - Timeouts and deadlines.
+   - Rate limiting and circuit breaking hooks.
+   - Caching behaviour.
+   - Interceptor ordering and error handling.
+   - Error classification.
+   - Metrics and tracing metadata.
+
+This document is the canonical specification for `@airnub/resilient-http-core` v0.8 and SHOULD be stored as:
+
+`docs/specs/resilient_http_core_spec_v_0_8.md`
 
