@@ -694,7 +694,7 @@ export interface AfterResponseContext<TBody = unknown> {
 export interface OnErrorContext {
   request: HttpRequestOptions;
   attempt: number;
-  error: HttpError | Error;
+  error: Error | unknown;
 }
 
 /**
