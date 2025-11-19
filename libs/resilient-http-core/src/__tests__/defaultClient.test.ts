@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { createDefaultHttpClient, HttpClient } from '../HttpClient';
+import { createDefaultHttpClient } from '../factories';
+import { HttpClient } from '../HttpClient';
 import type { HttpRequestOptions } from '../types';
 
 describe('createDefaultHttpClient', () => {

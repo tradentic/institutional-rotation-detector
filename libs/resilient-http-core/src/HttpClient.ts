@@ -206,6 +206,7 @@ interface ExecuteResult<T> {
   outcome: RequestOutcome;
   status: number;
   headers: HttpHeaders;
+  rawResponse?: Response;
 }
 
 type AttemptHttpRequestOptions = HttpRequestOptions & { headers: Record<string, string> };
@@ -264,7 +265,6 @@ export class HttpClient {
 
   async requestJson<T>(opts: HttpRequestOptions): Promise<T> {
     const preparedOpts = this.prepareRequestOptions(opts);
-    const span = this.startSpan(preparedOpts);
     const cache = this.config.cache;
     const cacheKey = preparedOpts.cacheKey;
     const cacheTtlMs = preparedOpts.cacheTtlMs ?? 0;
@@ -303,9 +303,6 @@ export class HttpClient {
             attempts: 0,
           });
           this.logger?.debug('http.cache.hit', this.baseLogMeta(preparedOpts));
-          if (span) {
-            this.endSpan(span, cacheOutcome);
-          }
           return cacheEntry.value;
         }
       } catch (error) {
@@ -316,37 +313,24 @@ export class HttpClient {
       }
     }
 
-    try {
-      const result = await this.executeWithRetries<T>(preparedOpts, {
-        parseJson: true,
-        allowRetries: this.getIdempotent(preparedOpts),
-      });
+    // DRY: Call requestJsonResponse and extract body
+    const response = await this.requestJsonResponse<T>(opts);
 
-      // Store in cache if enabled
-      if (cache && cacheKey && cacheTtlMs > 0) {
-        const cacheEntry = {
-          value: result,
-          expiresAt: Date.now() + cacheTtlMs,
-        };
-        Promise.resolve(cache.set(cacheKey, cacheEntry)).catch((error) =>
-          this.logger?.warn('http.cache.set.error', {
-            ...this.baseLogMeta(preparedOpts),
-            error: error instanceof Error ? error.message : error,
-          }),
-        );
-      }
-
-      if (span) {
-        // Span will be ended by executeWithRetries, but we need to handle it here for consistency
-        // Actually, we need to track outcomes properly - this is handled in executeWithRetries
-      }
-      return result;
-    } catch (error) {
-      if (span && error instanceof Error) {
-        span.recordException(error);
-      }
-      throw error;
+    // Store in cache if enabled
+    if (cache && cacheKey && cacheTtlMs > 0) {
+      const cacheEntry = {
+        value: response.body,
+        expiresAt: Date.now() + cacheTtlMs,
+      };
+      Promise.resolve(cache.set(cacheKey, cacheEntry)).catch((error) =>
+        this.logger?.warn('http.cache.set.error', {
+          ...this.baseLogMeta(preparedOpts),
+          error: error instanceof Error ? error.message : error,
+        }),
+      );
     }
+
+    return response.body;
   }
 
   async requestRaw(opts: HttpRequestOptions): Promise<Response> {
@@ -371,13 +355,13 @@ export class HttpClient {
   /**
    * Performs an HTTP request and resolves with the raw text body.
    *
-   * This is a thin wrapper around {@link requestRaw}, so it inherits the same
+   * This is a thin wrapper around {@link requestTextResponse}, so it inherits the same
    * retry, tracing, metrics, classification, and hook behaviour. Use it when an
    * endpoint returns plain text (CSV, NDJSON, etc.).
    */
   async requestText(opts: HttpRequestOptions): Promise<string> {
-    const response = await this.requestRaw(opts);
-    return response.text();
+    const response = await this.requestTextResponse(opts);
+    return response.body;
   }
 
   /**
@@ -385,12 +369,12 @@ export class HttpClient {
    * body.
    *
    * Like {@link requestText}, this method simply delegates to
-   * {@link requestRaw} to ensure all resilience features apply consistently
+   * {@link requestArrayBufferResponse} to ensure all resilience features apply consistently
    * before decoding the payload into binary form.
    */
   async requestArrayBuffer(opts: HttpRequestOptions): Promise<ArrayBuffer> {
-    const response = await this.requestRaw(opts);
-    return response.arrayBuffer();
+    const response = await this.requestArrayBufferResponse(opts);
+    return response.body;
   }
 
   /**
@@ -429,6 +413,9 @@ export class HttpClient {
       headers: result.headers,
       body: result.value,
       outcome: result.outcome,
+      correlation: this.getCorrelationInfo(preparedOpts),
+      agentContext: preparedOpts.agentContext,
+      extensions: preparedOpts.extensions,
     };
   }
 
@@ -458,6 +445,10 @@ export class HttpClient {
       headers: result.headers,
       body: text,
       outcome: result.outcome,
+      rawResponse: result.rawResponse,
+      correlation: this.getCorrelationInfo(preparedOpts),
+      agentContext: preparedOpts.agentContext,
+      extensions: preparedOpts.extensions,
     };
   }
 
@@ -487,6 +478,10 @@ export class HttpClient {
       headers: result.headers,
       body: arrayBuffer,
       outcome: result.outcome,
+      rawResponse: result.rawResponse,
+      correlation: this.getCorrelationInfo(preparedOpts),
+      agentContext: preparedOpts.agentContext,
+      extensions: preparedOpts.extensions,
     };
   }
 
@@ -521,6 +516,10 @@ export class HttpClient {
       headers: result.headers,
       body: rawResponse,
       outcome: result.outcome,
+      rawResponse: result.rawResponse,
+      correlation: this.getCorrelationInfo(preparedOpts),
+      agentContext: preparedOpts.agentContext,
+      extensions: preparedOpts.extensions,
     };
   }
 
@@ -720,6 +719,7 @@ export class HttpClient {
           outcome: aggregateOutcome,
           status: attemptResult.status,
           headers: headersToPlainObject(response.headers),
+          rawResponse: response,
         };
       } catch (error) {
         lastError = error;
@@ -1248,6 +1248,10 @@ export class HttpClient {
       headers: headersToPlainObject(response.headers),
       body: undefined, // We don't have the parsed body yet at this point
       outcome: tempOutcome,
+      rawResponse: response,
+      correlation: this.getCorrelationInfo(opts),
+      agentContext: opts.agentContext,
+      extensions: opts.extensions,
     };
 
     for (const interceptor of this.interceptors) {
@@ -1709,88 +1713,4 @@ export class TimeoutError extends Error {
     super(message);
     this.name = 'TimeoutError';
   }
-}
-
-/**
- * Console logger implementation for use with createDefaultHttpClient.
- * Logs to console.debug, console.info, console.warn, and console.error.
- */
-class ConsoleLogger implements Logger {
-  debug(message: string, meta?: Record<string, unknown>): void {
-    console.debug(message, meta);
-  }
-  info(message: string, meta?: Record<string, unknown>): void {
-    console.info(message, meta);
-  }
-  warn(message: string, meta?: Record<string, unknown>): void {
-    console.warn(message, meta);
-  }
-  error(message: string, meta?: Record<string, unknown>): void {
-    console.error(message, meta);
-  }
-}
-
-/**
- * Creates an HttpClient with sensible, zero-dependency defaults suitable for most use cases.
- *
- * Defaults applied:
- * - Transport: fetch-based (via fetchTransport)
- * - Base URL: none (must be provided per-request or via config.baseUrl)
- * - Resilience: 3 max attempts, 30s timeout, exponential backoff with jitter
- * - Logger: console logger
- * - Error classifier: default classifier (maps status codes to error categories)
- * - No external dependencies (no Redis, no OTEL, no rate limiters)
- *
- * @example
- * ```typescript
- * const client = createDefaultHttpClient({
- *   clientName: 'my-api',
- *   baseUrl: 'https://api.example.com',
- * });
- *
- * const data = await client.requestJson({
- *   method: 'GET',
- *   operation: 'getUser',
- *   urlParts: { path: '/users/123' },
- * });
- * ```
- *
- * @param config - Partial HttpClientConfig; all fields optional except clientName
- * @returns HttpClient instance with default configuration
- */
-export function createDefaultHttpClient(
-  config: Partial<BaseHttpClientConfig> & { clientName: string }
-): HttpClient {
-  const defaultConfig: BaseHttpClientConfig = {
-    clientName: config.clientName,
-    baseUrl: config.baseUrl,
-    transport: config.transport ?? fetchTransport,
-    defaultHeaders: config.defaultHeaders,
-    defaultResilience: {
-      maxAttempts: 3,
-      retryEnabled: true,
-      perAttemptTimeoutMs: 30_000,
-      overallTimeoutMs: 90_000,
-      baseBackoffMs: 250,
-      maxBackoffMs: 60_000,
-      jitterFactorRange: [0.8, 1.2],
-      ...config.defaultResilience,
-    },
-    defaultAgentContext: config.defaultAgentContext,
-    interceptors: config.interceptors ?? [],
-    logger: config.logger ?? new ConsoleLogger(),
-    metrics: config.metrics,
-    tracing: config.tracing,
-    resolveBaseUrl: config.resolveBaseUrl,
-    cache: config.cache,
-    rateLimiter: config.rateLimiter,
-    circuitBreaker: config.circuitBreaker,
-    beforeRequest: config.beforeRequest,
-    afterResponse: config.afterResponse,
-    responseClassifier: config.responseClassifier,
-    errorClassifier: config.errorClassifier ?? new DefaultErrorClassifier(),
-    policyWrapper: config.policyWrapper,
-  };
-
-  return new HttpClient(defaultConfig);
 }

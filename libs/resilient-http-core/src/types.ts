@@ -668,6 +668,28 @@ export interface HttpResponse<TBody = unknown> {
   headers: HttpHeaders;
   body: TBody;
   outcome: RequestOutcome;
+
+  /**
+   * Optional access to the underlying Response object for advanced use cases.
+   * Available when using v0.7 compatibility mode or when needed for streaming, etc.
+   */
+  rawResponse?: Response;
+
+  /**
+   * Correlation information propagated with the request.
+   * Useful for distributed tracing and request correlation.
+   */
+  correlation: CorrelationInfo;
+
+  /**
+   * Agent context information for multi-tenant or agent-based systems.
+   */
+  agentContext?: AgentContext;
+
+  /**
+   * Extension fields for custom metadata.
+   */
+  extensions?: Extensions;
 }
 
 /**
